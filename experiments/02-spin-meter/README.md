@@ -305,11 +305,53 @@ saying the intended spin before each one:
 Frame the camera wide enough to see the first floor bounce: the bounce direction is a second,
 independent check of the spin type.
 
+## Using the line and dot: whole-marking consistency (`--method marks`, experimental)
+
+The pole method only uses the black half. `--method marks` keeps the pole method's rate
+(reliable) and finds the axis that makes the **whole marking** (black half, line, dot)
+self-consistent: un-spin every pixel by the candidate spin and check that observations of
+the same spot on the ball agree (equal-area bins on the sphere, with a degrees-of-freedom
+correction so a wrong spin can't look good by scattering observations thinly). It needs no
+knowledge of where the line and dot were drawn.
+
+**Simulated serves** (`axis_test.py`: 25 px ball, motion blur, noise, light from above):
+
+| Case | Pole: axis error | Marks: axis error |
+|---|---|---|
+| side-backspin 40° | 12° | 11° |
+| pure backspin | 3° | 4° |
+| pure topspin | 3° | 2° |
+| pure sidespin | 33° | **1°** |
+| random axis A | 25° | 13° |
+| random axis B | 21° | 8° |
+| axis 15° from black pole (pole method's blind spot) | 17° | 9° |
+| axis 30° from black pole | 15° | 11° |
+
+Average axis error drops from about 16° to about 7°; the rate is unchanged.
+
+**Real serves:**
+
+| Serve | Served | Pole method | Marks method |
+|---|---|---|---|
+| w1 | backspin | side-backspin: 17 back, 21 side, 24 gyro | sidespin: 2 back, 33 side, 16 gyro |
+| w2 | backspin | side-backspin: 22 back, 18 side, 14 gyro | side-backspin: 13 back, 26 side, 14 gyro |
+| w3 | topspin | topspin: 15 top, 0 side | topspin: 14 top, 1 side |
+| w4 | (error) | backspin: 33 back, 10 side | side-backspin: 24 back, 23 side |
+
+On w1 the consistency score clearly prefers sidespin (0.68) over pure backspin (0.21), so
+the marks method doesn't support "pure backspin" for w1/w2. Either those serves really
+carried a lot of sidespin (common for forehand serves aimed at backspin: the label is the
+intention, not a measurement), or something in real footage that the simulator lacks
+fools the consistency check. These clips can't tell which. **The app stays on the pole
+method** until a serve with a known axis decides it: the rolling-ball test, or the coach
+serving a deliberately pure backspin chop.
+
 ## Files
 
 - `spinmeter.py` — the meter (`--method pole` default for real footage; `3d` for large sharp balls; `2d` = v1; `--auto` finds the flight)
 - `spinsim.py` — synthetic clip renderer with ground truth
 - `sweep.py` — accuracy sweep, writes `sweep_results.csv`
+- `axis_test.py` — axis accuracy on simulated serves, pole vs marks method
 
 ## Sources
 

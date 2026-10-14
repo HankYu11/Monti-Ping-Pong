@@ -51,8 +51,10 @@ def parse_args():
     p.add_argument("--outer", type=float, default=0.80, help="outer polar radius (avoid the dark edge)")
     p.add_argument("--n-angle", type=int, default=360)
     p.add_argument("--n-radius", type=int, default=24)
-    p.add_argument("--method", choices=["pole", "3d", "2d"], default="pole",
-                   help="pole: track the black hemisphere's pole (robust to blur, small balls; needs a "
+    p.add_argument("--method", choices=["marks", "pole", "3d", "2d"], default="pole",
+                   help="marks: pole method for the rate, then the axis that makes the whole marking "
+                        "(black half, line, dot) most self-consistent; "
+                        "pole: track the black hemisphere's pole (robust to blur, small balls; needs a "
                         "half-black ball); 3d: match surface detail between frames (needs a sharp, "
                         "larger ball); 2d: in-image rotation only (v1)")
     p.add_argument("--out", help="write the result JSON here")
@@ -392,7 +394,7 @@ def measure_pole(frames, balls, fps, inner=0.92, shading_bins=10):
                 hi_map[a, b_] = np.percentile(sel, 95)
     lo_map = cv2.GaussianBlur(lo_map.astype(np.float32), (3, 3), 0.8)
     hi_map = cv2.GaussianBlur(hi_map.astype(np.float32), (3, 3), 0.8)
-    t_list, B = [], []
+    t_list, B, obs = [], [], []
     for i, D, ux, uy in rows:
         a = np.clip(((ux + 1) / 2 * nb).astype(int), 0, nb - 1)
         b_ = np.clip(((uy + 1) / 2 * nb).astype(int), 0, nb - 1)
@@ -413,10 +415,13 @@ def measure_pole(frames, balls, fps, inner=0.92, shading_bins=10):
         b = np.array([rho * mx / n, rho * my / n, bz]) if n > 1e-6 else np.array([0, 0, np.sign(bz)])
         t_list.append(i)
         B.append(b / np.linalg.norm(b))
+        obs.append((i, s, ux, uy))
     t = np.array(t_list, float)
     B = np.array(B)
 
-    return fit_rotating_vector(t, B, fps)
+    res = fit_rotating_vector(t, B, fps)
+    res["_obs"] = obs
+    return res
 
 
 def fit_rotating_vector(t, B, fps, step_rps=0.05):
@@ -467,6 +472,88 @@ def fit_rotating_vector(t, B, fps, step_rps=0.05):
             "pole_swing": round(swing, 2),
             "pole_track": {"frames": t.astype(int).tolist(), "pole": np.round(B, 3).tolist(),
                            "angle_deg": np.round(ang, 1).tolist()}}
+
+
+# ---------------------------------------------------------------- whole-marking consistency fit
+
+def _consistency_setup(obs, max_obs=6000, seed=0):
+    t = np.concatenate([np.full(len(sv), i, float) for i, sv, _, _ in obs])
+    sv = np.concatenate([o[1] for o in obs])
+    ux = np.concatenate([o[2] for o in obs])
+    uy = np.concatenate([o[3] for o in obs])
+    nz = np.sqrt(np.clip(1 - ux ** 2 - uy ** 2, 0, 1))
+    n = np.stack([ux, uy, nz], 1)
+    if len(sv) > max_obs:
+        k = np.random.default_rng(seed).choice(len(sv), max_obs, replace=False)
+        t, sv, n = t[k], sv[k], n[k]
+    return t, sv, n
+
+
+def consistency_score(t, sv, n, axis, rps, fps, nz_bins=16, nphi_bins=32):
+    """Un-spin every observation by the candidate spin and check how well observations of
+    the same surface spot agree. Returns an adjusted R^2 (1 = perfectly consistent).
+
+    Each pixel's surface normal n (camera frame) is rotated back by the spin angle at its
+    frame, giving its position q on the ball's own surface. Positions are binned on an
+    equal-area grid; within-bin variance of the (lighting-normalised) darkness is compared
+    with the total variance. The degrees-of-freedom correction stops a wrong spin from
+    looking good merely by scattering observations thinly over many bins."""
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    th = -2 * np.pi * rps / fps * t                      # rotate back
+    c, s_ = np.cos(th)[:, None], np.sin(th)[:, None]
+    q = n * c + np.cross(a, n) * s_ + np.outer(n @ a, a) * (1 - c)
+    iz = np.clip(((q[:, 2] + 1) / 2 * nz_bins).astype(int), 0, nz_bins - 1)
+    ip = np.clip(((np.arctan2(q[:, 1], q[:, 0]) + np.pi) / (2 * np.pi) * nphi_bins).astype(int), 0, nphi_bins - 1)
+    b = iz * nphi_bins + ip
+    nb = nz_bins * nphi_bins
+    cnt = np.bincount(b, minlength=nb)
+    sm_ = np.bincount(b, weights=sv, minlength=nb)
+    N = len(sv)
+    sst = float(((sv - sv.mean()) ** 2).sum())
+    occupied = int((cnt > 0).sum())
+    ssw = float((sv ** 2).sum() - (sm_[cnt > 0] ** 2 / cnt[cnt > 0]).sum())
+    if N - occupied <= 0 or sst <= 0:
+        return -1.0
+    return 1 - (ssw / (N - occupied)) / (sst / (N - 1))
+
+
+def fit_consistency(obs, fps, rate0, n_axes=900, rate_span=2.0, rate_step=0.25):
+    """Find the spin (axis + rate) under which the whole marking is most self-consistent.
+    The rate is searched near the pole method's rate (which is reliable); the axis over the
+    whole sphere (both signs, so the rotation sense is included)."""
+    t, sv, n = _consistency_setup(obs)
+    axes = fibonacci_sphere(n_axes)
+    rates = np.arange(max(0.5, rate0 - rate_span), rate0 + rate_span + 1e-9, rate_step)
+    best = (-np.inf, None, None)
+    for rps in rates:
+        for a in axes:
+            sc = consistency_score(t, sv, n, a, rps, fps)
+            if sc > best[0]:
+                best = (sc, a, rps)
+    # local refinement on the full observation set
+    t, sv, n = _consistency_setup(obs, max_obs=20000)
+    sc, a, rps = consistency_score(t, sv, n, best[1], best[2], fps), best[1].copy(), best[2]
+    step_a, step_r = 0.08, rate_step / 2
+    for _ in range(25):
+        improved = False
+        cands = []
+        for d in np.eye(3):
+            for sg in (-1, 1):
+                v = a + sg * step_a * d
+                cands.append((v / np.linalg.norm(v), rps))
+        cands += [(a, rps - step_r), (a, rps + step_r)]
+        for ca, cr in cands:
+            c2 = consistency_score(t, sv, n, ca, cr, fps)
+            if c2 > sc + 1e-6:
+                sc, a, rps, improved = c2, ca, cr, True
+        if not improved:
+            step_a *= 0.5
+            step_r *= 0.5
+            if step_a < 0.004:
+                break
+    # how much worse is the opposite rotation sense / the pole-method axis? (diagnostics)
+    return {"rps": float(rps), "axis": a.tolist(), "consistency": float(sc)}
 
 
 # ---------------------------------------------------------------- automatic flight finding
@@ -571,7 +658,7 @@ def measure(frames, fps, args):
     frames = deflicker(frames, background)
     background = np.median(np.stack(frames), axis=0)
     balls = [find_ball(g, background, args.min_radius) for g in frames]
-    if args.method in ("3d", "pole"):
+    if args.method in ("3d", "pole", "marks"):
         return measure_with_3d(frames, balls, fps, args.method, args)
     steps = []
     for i in range(len(frames) - 1):
@@ -728,6 +815,11 @@ def measure_with_3d(frames, balls, fps, method="3d", args=None):
         return {"error": "ball found in too few consecutive frames"}, []
     if "error" in r:
         return r, []
+    obs = r.pop("_obs", None)
+    if method == "marks" and obs and r["rps"] > 0:
+        cf = fit_consistency(obs, fps, r["rps"])
+        r["pole_axis"] = r["axis"]
+        r["axis"], r["rps"], r["consistency"] = cf["axis"], cf["rps"], cf["consistency"]
     axis = np.array(r["axis"])
     rps = r["rps"]
     xs = [b[0] for b in found]
@@ -770,7 +862,7 @@ def measure_with_3d(frames, balls, fps, method="3d", args=None):
         "fps": fps,
         "method": method,
     }
-    for k in ("angle_fit_r2", "angle_rms_deg", "pole_swing"):
+    for k in ("angle_fit_r2", "angle_rms_deg", "pole_swing", "consistency"):
         if k in r:
             result[k] = r[k]
     return result, ([r["pole_track"]] if "pole_track" in r else [])

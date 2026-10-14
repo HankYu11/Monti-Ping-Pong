@@ -40,6 +40,11 @@ def parse_args():
     p.add_argument("--noise", type=float, default=4.0, help="Gaussian noise, grey levels")
     p.add_argument("--size", type=int, nargs=2, default=[640, 360], help="frame width height")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--gravity", type=float, default=0.1,
+                   help="downward acceleration in px/frame^2 (0.1 ~ 9.8 m/s^2 for a 25 px ball at 240 fps)")
+    p.add_argument("--axis-near-pole", type=float, default=None, metavar="DEG",
+                   help="override --axis: spin axis this many degrees from the black half's pole "
+                        "(the hard case for pole tracking)")
     return p.parse_args()
 
 
@@ -109,10 +114,16 @@ def main():
     light = np.array([-0.3, -0.5, 0.8])
     light /= np.linalg.norm(light)
     R0 = rot_matrix(rng.normal(size=3), rng.uniform(0, 2 * np.pi))   # random starting orientation
+    if a.axis_near_pole is not None:
+        e = R0 @ np.array([-1.0, 0, 0])                 # black pole in camera coordinates at t=0
+        u = np.cross(e, rng.normal(size=3))
+        u /= np.linalg.norm(u)
+        d = np.radians(a.axis_near_pole)
+        axis = np.cos(d) * e + np.sin(d) * u
 
     writer = cv2.VideoWriter(a.out, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (W, H))
     start = np.array([radius + 20.0, H * 0.55])
-    vel = np.array([a.speed, -a.speed * 0.15])           # slight upward drift
+    vel = np.array([a.speed, -a.speed * 0.15 - a.gravity * a.frames / 2])   # rises, then falls
     centres = []
     max_frames = int((W - start[0] - radius - 5) / max(a.speed, 1e-6))
     if a.frames > max_frames:
@@ -122,13 +133,14 @@ def main():
         for s in range(a.blur_samples):
             t = (i + a.exposure * (s + 0.5) / a.blur_samples) / a.fps
             fpos = i + a.exposure * (s + 0.5) / a.blur_samples
-            c = start + vel * fpos
+            c = start + vel * fpos + np.array([0.0, 0.5 * a.gravity * fpos ** 2])
             R = rot_matrix(axis, omega * t) @ R0
             acc += render((W, H), c, radius, R, a.pattern, dots, light)
         img = acc / a.blur_samples + rng.normal(0, a.noise, (H, W))
         img = np.clip(img, 0, 255).astype(np.uint8)
         writer.write(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
-        centres.append((start + vel * (i + a.exposure / 2)).tolist())
+        fpos = i + a.exposure / 2
+        centres.append((start + vel * fpos + np.array([0.0, 0.5 * a.gravity * fpos ** 2])).tolist())
     writer.release()
 
     truth = {"rps": a.rps, "rpm": a.rps * 60, "axis": axis.tolist(), "fps": a.fps,

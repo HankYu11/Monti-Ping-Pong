@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 
 BASE = dict(rps=30, axis="0 0 1", fps=240, diameter=40, speed=8, exposure=0.25,
-            pattern="half+line", noise=4, frames=30)
+            pattern="half+line+dot", noise=4, frames=30)
 
 CASES = [
     ("baseline", {}),
@@ -39,6 +39,7 @@ CASES = [
     ("pure sidespin (axis vertical)", dict(axis="0 1 0")),
     ("side-backspin, axis 40° (typical serve)", dict(rps=-30, axis="0 -0.643 0.766")),
     ("side-backspin, full blur", dict(rps=-30, axis="0 -0.643 0.766", exposure=1.0)),
+    ("pattern: half + line (no dot)", dict(pattern="half+line")),
     ("pattern: half only", dict(pattern="half")),
     ("pattern: dots", dict(pattern="dots")),
     ("noise 12", dict(noise=12)),

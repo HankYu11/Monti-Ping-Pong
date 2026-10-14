@@ -35,7 +35,8 @@ def parse_args():
     p.add_argument("--exposure", type=float, default=0.25,
                    help="exposure as a fraction of the frame time (0.25 at 240 FPS ≈ 1/960 s)")
     p.add_argument("--blur-samples", type=int, default=6)
-    p.add_argument("--pattern", choices=["half", "line", "half+line", "dots"], default="half+line")
+    p.add_argument("--pattern", choices=["half", "line", "half+line", "half+line+dot", "dots"],
+                   default="half+line+dot")
     p.add_argument("--noise", type=float, default=4.0, help="Gaussian noise, grey levels")
     p.add_argument("--size", type=int, nargs=2, default=[640, 360], help="frame width height")
     p.add_argument("--seed", type=int, default=0)
@@ -53,11 +54,18 @@ def rot_matrix(axis, angle):
 def pattern_value(p, kind, dots):
     """Albedo (0 = black, 1 = white) for unit surface points p (N x 3) in the ball frame."""
     white = np.ones(len(p))
-    if kind in ("half", "half+line"):
+    if kind in ("half", "half+line", "half+line+dot"):
         white[p[:, 0] < 0] = 0.08                      # one hemisphere black
-    if kind in ("line", "half+line"):
+    if kind == "half+line+dot":
+        # a dot (~8 mm) on the white half, between the line and the seam: breaks the
+        # pattern's 180-degree symmetry about the white pole
+        c = np.array([0.5, 0.6, 0.62])
+        c = c / np.linalg.norm(c)
+        white[p @ c > np.cos(np.radians(11))] = 0.08
+    if kind in ("line", "half+line", "half+line+dot"):
         band = np.abs(p[:, 1]) < 0.12                  # great circle orthogonal to the half split
-        white[band & (p[:, 0] >= 0)] = 0.08
+        if kind != "line":
+            white[band & (p[:, 0] >= 0)] = 0.08
         if kind == "line":
             white[band] = 0.08
             white[(p[:, 2] > 0.93)] = 0.08             # one dot breaks the line's symmetry

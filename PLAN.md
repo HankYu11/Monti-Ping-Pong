@@ -5,7 +5,12 @@ serve**. After every serve it tells the player **what happened**: did it go in, 
 and was there real backspin. Every few serves it gives **one technique cue** about the
 most common fault.
 
-> **First step: [Experiment 01 — can the camera tell the spin from the contact?](experiments/01-spin-from-contact/README.md)**
+> **Step 1 now: [Experiment 02 — spin meter](experiments/02-spin-meter/README.md).**
+> Measure the ball's spin rate (RPM) and axis from one phone's 240 FPS video of a marked
+> ball, like a baseball spin-rate tracker. Works on synthetic video (±1.3 rps, ±6° axis);
+> next is real serves.
+>
+> **Then: [Experiment 01 — can the camera tell the spin from the contact?](experiments/01-spin-from-contact/README.md)**
 > Before building the serve coach, test offline whether slow-motion phone video of the
 > contact (racket angle, racket speed, contact point, ball speed) predicts the real spin,
 > measured with a marked ball. The answer decides whether the coach can explain *why* a

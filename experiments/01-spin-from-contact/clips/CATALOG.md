@@ -26,6 +26,15 @@ Frames from 10 downloaded Bilibili tutorials and 20 YouTube thumbnails were chec
    specifically about *why a beginner's backspin serve doesn't spin*, which is exactly the
    fault table we need.
 
+5. **30 FPS cannot show the contact.** Frame-by-frame check of a fixed-camera serve
+   practice clip ([BV1Znaw6EEEZ](https://www.bilibili.com/video/BV1Znaw6EEEZ), 852×480,
+   30 FPS, camera behind the far end): the whole racket swing through the ball takes about
+   3 frames, the racket is a smear in those frames, the ball is hidden behind the
+   racket/body at contact, and the next frame already shows the follow-through. Racket
+   angle and contact point can't be measured at 30 FPS, even with a better angle. The
+   experiment needs **at least 120 FPS, ideally 240 FPS**, which none of the downloadable
+   Bilibili clips have.
+
 So: **Tier A** is for testing measurement (racket angle, contact, ball rotation),
 **Tier B** for a rough spin vs no-spin test, **Tier C** for the beginner fault list.
 

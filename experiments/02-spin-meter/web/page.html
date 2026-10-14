@@ -1,0 +1,403 @@
+<meta charset="utf-8">
+<title>Serve Spin Meter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: one narrow column like a scorecard; the reading (RPM + spin type) leads, detail follows. */
+:root {
+  --bg: #eef3f8;          /* chalk-blue paper */
+  --surface: #ffffff;
+  --ink: #0e1a2b;
+  --muted: #586a82;
+  --line: #d3dde9;
+  --table: #1b4c86;       /* table-top blue: primary accent */
+  --table-ink: #ffffff;
+  --ball: #e2701f;        /* ball orange: readings */
+  --good: #1d7f4a;
+  --warn: #a8611a;
+  --soft: #e3ebf5;
+  --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a1424; --surface: #111f35; --ink: #e7eef7; --muted: #94a6bf; --line: #24395a;
+    --table: #5f97de; --table-ink: #08111f; --ball: #f2903f; --good: #4cc483; --warn: #e6a454; --soft: #172a46;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a1424; --surface: #111f35; --ink: #e7eef7; --muted: #94a6bf; --line: #24395a;
+  --table: #5f97de; --table-ink: #08111f; --ball: #f2903f; --good: #4cc483; --warn: #e6a454; --soft: #172a46;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 48px; display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+h1 { font-size: 2.4rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; }
+.label { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.8rem; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+header.top { display: grid; gap: 6px; }
+header.top .lede { color: var(--muted); max-width: 60ch; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.field { display: grid; gap: 4px; min-width: 0; flex: 1 1 200px; }
+select, input[type="number"] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+.pick { display: grid; place-items: center; gap: 4px; text-align: center; padding: 22px 16px; border: 2px dashed var(--table); border-radius: 14px; background: var(--soft); cursor: pointer; }
+.pick strong { font-family: var(--font-display); font-size: 1.35rem; color: var(--table); }
+.pick span { color: var(--muted); font-size: 0.92rem; }
+.pick:focus-within { outline: 3px solid var(--ball); outline-offset: 2px; }
+.pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.progress { display: grid; gap: 6px; }
+.bar { height: 8px; border-radius: 99px; background: var(--soft); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0%; background: var(--table); transition: width 0.2s; }
+.note { font-size: 0.92rem; color: var(--muted); }
+.err { color: var(--warn); font-weight: 500; }
+details.more summary { cursor: pointer; color: var(--table); font-weight: 600; }
+details.more[open] summary { margin-bottom: 10px; }
+
+/* result */
+.result-head { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; justify-content: space-between; }
+.reading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.rpm { font-family: var(--font-display); font-weight: 700; font-size: 4.2rem; line-height: 0.9; color: var(--ball); }
+.rpm-unit { font-family: var(--font-display); font-weight: 600; font-size: 1.4rem; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.03em; font-size: 1rem; padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg); }
+.chip.type { background: var(--table); color: var(--table-ink); border-color: var(--table); font-size: 1.15rem; }
+.chip.ok { color: var(--good); border-color: currentColor; }
+.chip.low { color: var(--warn); border-color: currentColor; }
+.chip.example { color: var(--muted); border-style: dashed; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 18px; align-items: center; }
+@media (max-width: 560px) { .grid2 { grid-template-columns: minmax(0, 1fr); } .compass { max-width: 260px; justify-self: center; } }
+.compass { width: 100%; height: auto; display: block; }
+.compass text { font-family: var(--font-display); font-size: 11px; fill: var(--muted); letter-spacing: 0.04em; }
+.compass .ringline { fill: none; stroke: var(--line); }
+.compass .axisline { stroke: var(--line); }
+.compass .dot { fill: var(--ball); }
+.compass .vec { stroke: var(--ball); stroke-width: 2.5; }
+.comp { display: grid; gap: 10px; }
+.comp-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 4.2em; gap: 10px; align-items: center; }
+.comp-row .name { font-weight: 600; }
+.comp-row .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.track { height: 10px; background: var(--soft); border-radius: 99px; overflow: hidden; }
+.track > i { display: block; height: 100%; background: var(--table); border-radius: 99px; }
+.track.gyro > i { background: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 480px) { .fact b { font-size: 1.15rem; } .fact { padding: 8px 10px; } }
+.fact { background: var(--bg); border-radius: 10px; padding: 10px 12px; display: grid; gap: 2px; }
+.fact b { font-family: var(--font-display); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.panel > *, .wrap > * { min-width: 0; }
+.film { overflow-x: auto; border-radius: 10px; background: #000; max-width: 100%; }
+.film img, .film canvas { display: block; height: 56px; max-width: none; image-rendering: auto; }
+.trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
+.trust b { font-weight: 600; }
+
+/* session */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--font-display); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.8rem; color: var(--muted); }
+td.num { text-align: right; }
+.btn { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--table); background: var(--table); color: var(--table-ink); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--table); }
+.btn:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
+
+/* how-to */
+.howto { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 480px) { .howto { grid-template-columns: minmax(0, 1fr); } }
+.howto ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.ballsvg { width: 120px; max-width: 100%; height: auto; display: block; }
+.ballsvg circle.white { fill: #f4f4f1; stroke: var(--line); }
+.ballsvg path, .ballsvg .mark { fill: #121212; }
+@media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <span class="label">Table tennis · marked ball · 240 fps</span>
+    <h1>Serve Spin Meter</h1>
+    <p class="lede">Film a serve in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
+  </header>
+
+  <section class="panel" aria-labelledby="measure-h">
+    <h2 id="measure-h">Measure a serve</h2>
+    <div class="row">
+      <div class="field">
+        <label class="label" for="intended">Spin the server intended</label>
+        <select id="intended">
+          <option value="">Not said</option>
+          <option>Backspin</option>
+          <option>Topspin</option>
+          <option>Sidespin, curves left</option>
+          <option>Sidespin, curves right</option>
+          <option>Side-backspin</option>
+          <option>Side-topspin</option>
+          <option>No spin</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label" for="server">Server</label>
+        <select id="server">
+          <option>Coach</option>
+          <option>Me</option>
+          <option>Other</option>
+        </select>
+      </div>
+    </div>
+    <label class="pick" for="file">
+      <input id="file" type="file" accept="video/*">
+      <strong>Choose a slow-motion video</strong>
+      <span>240 fps, phone in landscape, ball flying across a plain wall</span>
+    </label>
+    <div class="progress" id="progress" hidden>
+      <div class="bar"><i id="bar"></i></div>
+      <p class="note" id="step">Starting…</p>
+    </div>
+    <p class="note err" id="error" hidden></p>
+    <details class="more">
+      <summary>Settings</summary>
+      <div class="row">
+        <div class="field">
+          <label class="label" for="fps">Recorded at</label>
+          <select id="fps">
+            <option value="">Read from the video</option>
+            <option value="240">240 fps</option>
+            <option value="120">120 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="hfov">Camera field of view (°)</label>
+          <input id="hfov" type="number" min="40" max="120" step="1" value="68">
+        </div>
+      </div>
+      <p class="note">The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
+    </details>
+  </section>
+
+  <section class="panel" aria-labelledby="result-h" id="result">
+    <div class="result-head">
+      <h2 id="result-h">Reading</h2>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="reading">
+      <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
+      <span class="note num" id="rps">31.7 revolutions per second</span>
+    </div>
+    <div class="chips"><span class="chip type" id="type">Side-backspin, curves right</span></div>
+    <div class="grid2">
+      <svg class="compass" id="compass" viewBox="0 0 220 220" role="img" aria-label="Spin direction"></svg>
+      <div class="comp" id="comp"></div>
+    </div>
+    <div class="facts" id="facts"></div>
+    <div>
+      <span class="label">The ball, frame by frame</span>
+      <div class="film" id="film"></div>
+    </div>
+    <div class="trust">
+      <p><b>Revolutions per minute:</b> matched hand counts on 4 of 4 test serves (within about 5%).</p>
+      <p><b>Backspin or topspin:</b> correct on 3 of 3 labelled serves so far.</p>
+      <p><b>Sidespin amount:</b> experimental. On a dim, small ball the axis can be off by tens of degrees. Serves labelled by your coach will show how far.</p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="session-h">
+    <div class="result-head">
+      <h2 id="session-h">This session</h2>
+      <div class="row">
+        <button class="btn ghost" id="copy" type="button">Copy as text</button>
+        <button class="btn ghost" id="clear" type="button">Clear</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>#</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th></tr></thead>
+        <tbody id="log"></tbody>
+      </table>
+    </div>
+    <p class="note" id="copied" hidden>Copied. Paste it into a message to share the session.</p>
+    <textarea id="copybox" rows="6" class="note" hidden style="width:100%;font:inherit;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px"></textarea>
+  </section>
+
+  <section class="panel" aria-labelledby="howto-h">
+    <h2 id="howto-h">How to record</h2>
+    <div class="howto">
+      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Marked ball: one half black, one line and one dot on the white half">
+        <circle class="white" cx="60" cy="60" r="54"></circle>
+        <path d="M6 60 A54 54 0 0 1 114 60 Z"></path>
+        <rect class="mark" x="56" y="60" width="8" height="54"></rect>
+        <circle class="mark" cx="34" cy="84" r="7"></circle>
+      </svg>
+      <ol>
+        <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
+        <li><b>Slow motion at 240 fps</b>, phone in landscape on a tripod, level, at contact height.</li>
+        <li><b>Side-on</b>, about 1–1.5 m from the ball's path, so the ball is about 50 px across. A plain wall behind the flight; not white, not black.</li>
+        <li><b>Bright light</b>: daylight is best. Dim rooms make the marking soft.</li>
+        <li>Serve <b>across</b> the camera's view. The meter needs about 0.2 s of flight before the first bounce.</li>
+      </ol>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+<script>
+/*ENGINE*/
+</script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const EXAMPLE = {
+    example: true, rps: 31.65, rpm: 1899, spinType: "side-backspin (curves right)",
+    backspin: 21.6, topspin: 0, sidespin: 18.1, sideCurves: "right", gyro: 14.4, lift: 21.6, curve: 18.1,
+    fit: 0.946, reliable: true,
+    flight: { speed: 2.81, towardCameraDeg: -9.5, downAccel: 8.8 },
+    strip: "data:image/jpeg;base64,__W2_STRIP__",
+    caption: "Example: a backspin serve filmed on 14 Oct",
+  };
+
+  const fmt = (v, d = 0) => Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const typeText = (t) => cap(t.replace(" (curves ", ", curves ").replace(")", ""));
+
+  function drawCompass(res) {
+    const svg = $("compass"), C = 110, R = 92, max = 60;
+    const s = (v) => (Math.min(Math.abs(v), max) / max) * R * Math.sign(v);
+    const x = C + s(res.curve || 0), y = C - s(res.lift || 0);
+    const rings = [20, 40, 60].map((v) => `<circle class="ringline" cx="${C}" cy="${C}" r="${(v / max) * R}"></circle>`).join("");
+    svg.innerHTML = `
+      ${rings}
+      <line class="axisline" x1="${C}" y1="${C - R - 4}" x2="${C}" y2="${C + R + 4}"></line>
+      <line class="axisline" x1="${C - R - 4}" y1="${C}" x2="${C + R + 4}" y2="${C}"></line>
+      <text x="${C}" y="12" text-anchor="middle">BACKSPIN · LIFTS</text>
+      <text x="${C}" y="216" text-anchor="middle">TOPSPIN · DIPS</text>
+      <text x="4" y="${C - 6}">CURVES</text><text x="4" y="${C + 14}">LEFT</text>
+      <text x="216" y="${C - 6}" text-anchor="end">CURVES</text><text x="216" y="${C + 14}" text-anchor="end">RIGHT</text>
+      <text x="${C + 0.71 * (20 / max) * R + 2}" y="${C - 0.71 * (20 / max) * R - 2}">20</text>
+      <text x="${C + 0.71 * (40 / max) * R + 2}" y="${C - 0.71 * (40 / max) * R - 2}">40</text>
+      <text x="${C + 0.71 * R + 2}" y="${C - 0.71 * R - 2}">60 RPS</text>
+      <line class="vec" x1="${C}" y1="${C}" x2="${x}" y2="${y}"></line>
+      <circle class="dot" cx="${x}" cy="${y}" r="7"></circle>`;
+  }
+
+  function render(res) {
+    $("rpm").textContent = fmt(res.rpm);
+    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
+    $("type").textContent = typeText(res.spinType);
+    const chips = [];
+    if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
+    chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
+    $("chips").innerHTML = chips.join("");
+    const total = Math.max(res.rps, 1);
+    const rows = [
+      [res.lift >= 0 ? "Backspin" : "Topspin", Math.abs(res.lift), ""],
+      ["Sidespin", res.sidespin, res.sideCurves !== "none" ? `curves ${res.sideCurves}` : ""],
+      ["Corkscrew", res.gyro, "no curve"],
+    ];
+    $("comp").innerHTML = rows.map(([name, v, sub]) => `
+      <div class="comp-row">
+        <span class="name">${name}${sub ? `<br><span class="note">${sub}</span>` : ""}</span>
+        <span class="track ${name === "Corkscrew" ? "gyro" : ""}"><i style="width:${Math.min(100, (v / total) * 100).toFixed(0)}%"></i></span>
+        <span class="val">${fmt(v, 1)}<span class="note"> rps</span></span>
+      </div>`).join("");
+    const f = res.flight;
+    $("facts").innerHTML = `
+      <div class="fact"><span class="label">Ball speed</span><b>${fmt(f.speed, 1)} m/s</b></div>
+      <div class="fact"><span class="label">Fall rate</span><b>${fmt(f.downAccel, 1)} m/s²</b><span class="note">9.8 = no lift</span></div>
+      <div class="fact"><span class="label">Toward camera</span><b>${fmt(f.towardCameraDeg, 0)}°</b></div>`;
+    drawCompass(res);
+    const film = $("film");
+    film.innerHTML = "";
+    if (res.strip) { const img = new Image(); img.src = res.strip; img.alt = "Ball crops from the example serve"; film.appendChild(img); }
+    else if (res.crops && res.crops.length) film.appendChild(filmCanvas(res.crops));
+  }
+
+  function filmCanvas(crops) {
+    const H = 56, cv = document.createElement("canvas");
+    cv.width = H * crops.length; cv.height = H;
+    const ctx = cv.getContext("2d"), tmp = document.createElement("canvas"), tctx = tmp.getContext("2d");
+    crops.forEach((c, k) => {
+      tmp.width = c.size; tmp.height = c.size;
+      const img = tctx.createImageData(c.size, c.size);
+      for (let p = 0; p < c.data.length; p++) { img.data[4 * p] = img.data[4 * p + 1] = img.data[4 * p + 2] = c.data[p]; img.data[4 * p + 3] = 255; }
+      tctx.putImageData(img, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(tmp, k * H, 0, H, H);
+    });
+    return cv;
+  }
+
+  // ---------------------------------------------------------- session log (this browser only)
+  const KEY = "serve-spin-meter.session.v1";
+  let log = [];
+  try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
+  function renderLog() {
+    const tb = $("log");
+    if (!log.length) { tb.innerHTML = `<tr><td colspan="6" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
+    tb.innerHTML = log.map((e, i) => `<tr>
+      <td class="num">${i + 1}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
+      <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type)}</td>
+      <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td></tr>`).join("");
+  }
+  function asText() {
+    const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile";
+    return [head].concat(log.map((e, i) => [i + 1, e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
+      e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
+      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file].join("\t"))).join("\n");
+  }
+  $("copy").addEventListener("click", () => {
+    const text = asText(), box = $("copybox");
+    const done = () => { $("copied").hidden = false; setTimeout(() => ($("copied").hidden = true), 2500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => { box.hidden = false; box.value = text; box.select(); });
+    } else { box.hidden = false; box.value = text; box.select(); }
+  });
+  let clearArmed = false;
+  $("clear").addEventListener("click", (ev) => {
+    if (!clearArmed) { clearArmed = true; ev.target.textContent = "Tap again to clear"; setTimeout(() => { clearArmed = false; ev.target.textContent = "Clear"; }, 3000); return; }
+    log = []; save(); renderLog(); clearArmed = false; ev.target.textContent = "Clear";
+  });
+
+  // ---------------------------------------------------------- analysis
+  $("file").addEventListener("change", async (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    $("error").hidden = true; $("progress").hidden = false; $("bar").style.width = "0%";
+    const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
+    try {
+      const res = await window.SpinMeter.analyze(file, {
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
+      });
+      const entry = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
+      if (res.error) {
+        $("error").textContent = res.error; $("error").hidden = false;
+        log.push(Object.assign(entry, { error: res.error }));
+      } else {
+        render(res);
+        log.push(Object.assign(entry, { rpm: res.rpm, type: res.spinType, lift: res.lift, curve: res.curve, gyro: res.gyro, reliable: res.reliable }));
+        if (!res.captureFpsDetected && !fpsSel) { $("error").textContent = "The video didn't say its frame rate, so 240 fps was assumed. Change it under Settings if it was different."; $("error").hidden = false; }
+        $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      save(); renderLog();
+    } catch (e) {
+      $("error").textContent = e && e.message ? e.message : "The video could not be analysed.";
+      $("error").hidden = false;
+    } finally {
+      $("progress").hidden = true; ev.target.value = "";
+    }
+  });
+
+  render(EXAMPLE);
+  renderLog();
+})();
+</script>

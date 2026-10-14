@@ -41,13 +41,17 @@ def parse_args():
     p.add_argument("--end", type=int, default=None, help="last frame (exclusive)")
     p.add_argument("--roi", type=int, nargs=4, metavar=("X", "Y", "W", "H"),
                    help="only look inside this rectangle (pixels, after the phone's rotation)")
+    p.add_argument("--auto", action="store_true",
+                   help="find the serve's flight automatically (overrides --start/--end/--roi)")
     p.add_argument("--min-radius", type=float, default=6.0, help="pixels")
     p.add_argument("--inner", type=float, default=0.15, help="inner polar radius, fraction of ball radius")
     p.add_argument("--outer", type=float, default=0.80, help="outer polar radius (avoid the dark edge)")
     p.add_argument("--n-angle", type=int, default=360)
     p.add_argument("--n-radius", type=int, default=24)
-    p.add_argument("--method", choices=["3d", "2d"], default="3d",
-                   help="3d: fit the full 3D rotation (axis + rate); 2d: in-image rotation only (v1)")
+    p.add_argument("--method", choices=["pole", "3d", "2d"], default="pole",
+                   help="pole: track the black hemisphere's pole (robust to blur, small balls; needs a "
+                        "half-black ball); 3d: match surface detail between frames (needs a sharp, "
+                        "larger ball); 2d: in-image rotation only (v1)")
     p.add_argument("--out", help="write the result JSON here")
     p.add_argument("--plot", help="write an angle-vs-time plot here")
     return p.parse_args()
@@ -72,6 +76,20 @@ def read_frames(path, start, end, roi=None):
         i += 1
     cap.release()
     return frames
+
+
+def deflicker(frames, background):
+    """Mains-powered lights pulse at twice the mains frequency; at 240 FPS that makes
+    frames alternately brighter and darker, often in horizontal bands (rolling shutter).
+    Rescale every row of every frame to match the background's brightness. The ball is
+    small, so a per-row median ratio is unaffected by it."""
+    out = []
+    bg = np.maximum(background, 1.0)
+    for g in frames:
+        ratio = np.median(g / bg, axis=1)
+        ratio = cv2.GaussianBlur(ratio.reshape(-1, 1).astype(np.float32), (1, 0), 9).ravel()
+        out.append(g / np.maximum(ratio, 0.2)[:, None])
+    return out
 
 
 def find_ball(gray, background, min_radius):
@@ -296,13 +314,237 @@ def measure_3d(frames, balls, fps, n_axes=300, angle_step_deg=4.0, max_pairs=10)
             "score": float(score), "runner_up_score": float(second), "pairs": len(pairs)}
 
 
+# ---------------------------------------------------------------- pole tracking
+
+def smooth_centres(balls, deg=2, tol=2.5):
+    """A ball in flight moves smoothly, so fit x(t) and y(t) with low-order polynomials.
+    This removes the jitter caused by the detector seeing mostly the black half."""
+    t = np.array([i for i, b in enumerate(balls) if b is not None], dtype=float)
+    xy = np.array([b[:2] for b in balls if b is not None])
+    keep = np.ones(len(t), bool)
+    for _ in range(3):
+        cx = np.polyfit(t[keep], xy[keep, 0], deg)
+        cy = np.polyfit(t[keep], xy[keep, 1], deg)
+        res = np.hypot(np.polyval(cx, t) - xy[:, 0], np.polyval(cy, t) - xy[:, 1])
+        keep = res < max(tol, 2.5 * np.median(res[keep]))
+    return cx, cy
+
+
+def measure_pole(frames, balls, fps, inner=0.92):
+    """Track the direction of the black hemisphere's pole, b(t), and fit its rotation.
+
+    For a ball with one black hemisphere seen by a distant camera:
+      - the black share of the visible disc is f = (1 + b_z) / 2 (exactly linear), and
+      - the black area's centre lies toward (b_x, b_y) in the image.
+    So each frame gives the pole's 3D direction from coarse, blur-tolerant measurements.
+    The pole then turns around the spin axis: fit a plane to b(t) (its normal is the axis)
+    and a straight line to the angle around the axis over time (its slope is the rate).
+    """
+    idx = [i for i, b in enumerate(balls) if b is not None]
+    if len(idx) < 8:
+        return None
+    cxp, cyp = smooth_centres(balls)
+    r = float(np.median([balls[i][2] for i in idx]))
+    H, W = frames[0].shape
+    yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+
+    D_all, rows = [], []
+    for i in idx:
+        cx, cy = np.polyval(cxp, i), np.polyval(cyp, i)
+        x0, x1 = int(max(0, cx - 2.6 * r)), int(min(W, cx + 2.6 * r + 1))
+        y0, y1 = int(max(0, cy - 2.6 * r)), int(min(H, cy + 2.6 * r + 1))
+        g = frames[i][y0:y1, x0:x1]
+        dx, dy = xx[y0:y1, x0:x1] - cx, yy[y0:y1, x0:x1] - cy
+        rr = np.hypot(dx, dy)
+        disc = rr <= inner * r
+        ring = (rr >= 1.6 * r) & (rr <= 2.5 * r)
+        if disc.sum() < 20 or ring.sum() < 20:
+            continue
+        wall = float(np.median(g[ring]))                 # per-frame: cancels light flicker
+        D = np.clip(1.0 - g[disc] / max(wall, 1.0), 0, 1)
+        D_all.append(D)
+        rows.append((i, D, dx[disc] / r, dy[disc] / r))
+    if len(rows) < 8:
+        return None
+    Dcat = np.concatenate(D_all)
+    d_white, d_black = np.percentile(Dcat, 10), np.percentile(Dcat, 95)
+    if d_black - d_white < 0.15:
+        return {"error": "marking contrast too low"}
+    t_list, B = [], []
+    for i, D, ux, uy in rows:
+        s = np.clip((D - d_white) / (d_black - d_white), 0, 1)
+        f = float(s.mean())
+        bz = float(np.clip(2 * f - 1, -0.98, 0.98))
+        w = s.sum()
+        if w > 1e-6:
+            mx, my = float((s * ux).sum() / w), float((s * uy).sum() / w)
+        else:
+            mx, my = 0.0, 0.0
+        n = np.hypot(mx, my)
+        rho = np.sqrt(1 - bz * bz)
+        b = np.array([rho * mx / n, rho * my / n, bz]) if n > 1e-6 else np.array([0, 0, np.sign(bz)])
+        t_list.append(i)
+        B.append(b / np.linalg.norm(b))
+    t = np.array(t_list, float)
+    B = np.array(B)
+
+    return fit_rotating_vector(t, B, fps)
+
+
+def fit_rotating_vector(t, B, fps, step_rps=0.05):
+    """Fit b(t) = c + cos(w t) P + sin(w t) Q to the pole track for every spin rate w.
+
+    A unit vector turning about axis a has exactly this form (c along a, P and Q
+    perpendicular to a), and for a fixed w it is a linear least-squares problem. Scanning
+    w from 0.5 rps up to half the frame rate and keeping the best fit never loses count
+    of turns. The axis is P x Q (rotation goes from P toward Q)."""
+    n = len(t)
+    var = float(((B - B.mean(0)) ** 2).sum())
+    if var / n < 0.02:                                     # pole hardly moves: no spin
+        return {"rps": 0.0, "axis": [0.0, 0.0, 1.0], "deg_per_frame": 0.0, "score": 1.0,
+                "runner_up_score": float("nan"), "pairs": n - 1, "angle_fit_r2": None,
+                "angle_rms_deg": None, "pole_swing": round(float(np.sqrt(var / n)), 3),
+                "pole_track": {"frames": t.astype(int).tolist(), "pole": np.round(B, 3).tolist(),
+                               "angle_deg": [0.0] * n}}
+    rates = np.arange(0.5, fps / 2, step_rps)
+    best = None
+    resid = np.empty(len(rates))
+    for k, rps in enumerate(rates):
+        w = 2 * np.pi * rps / fps                          # radians per frame
+        X = np.column_stack([np.ones(n), np.cos(w * t), np.sin(w * t)])
+        coef, *_ = np.linalg.lstsq(X, B, rcond=None)
+        res = float(((X @ coef - B) ** 2).sum())
+        resid[k] = res
+        if best is None or res < best[0]:
+            best = (res, rps, coef)
+    res, rps, coef = best
+    c, P, Q = coef
+    a = np.cross(P, Q)
+    a = a / (np.linalg.norm(a) + 1e-12)
+    r2 = 1 - res / var
+    # second-best rate that is clearly a different answer (not a neighbour of the best)
+    far = np.abs(rates - rps) > 2.0
+    runner = 1 - float(resid[far].min()) / var if far.any() else float("nan")
+    w = 2 * np.pi * rps / fps
+    ang = np.degrees(w * t)
+    swing = float(0.5 * (np.linalg.norm(P) + np.linalg.norm(Q)))
+    rms_deg = float(np.degrees(np.sqrt(res / n)))
+    # quality: good fit, clearly better than any other rate, and the pole visibly swings
+    score = float(max(0.0, r2) * min(1.0, swing / 0.4))
+    if np.isfinite(runner) and runner > r2 - 0.05:
+        score *= 0.5                                       # ambiguous between two rates
+    return {"rps": float(rps), "axis": a.tolist(), "deg_per_frame": float(np.degrees(w)),
+            "score": score, "runner_up_score": runner, "pairs": n - 1,
+            "angle_fit_r2": round(float(r2), 4), "angle_rms_deg": round(rms_deg, 1),
+            "pole_swing": round(swing, 2),
+            "pole_track": {"frames": t.astype(int).tolist(), "pole": np.round(B, 3).tolist(),
+                           "angle_deg": np.round(ang, 1).tolist()}}
+
+
+# ---------------------------------------------------------------- automatic flight finding
+
+def find_flight(path, scale=0.5, min_len=12, skip_after_contact=12, max_frames=40):
+    """Find the serve's flight automatically: the longest track of a small, round, moving
+    blob that travels mostly sideways. Returns (start, end, roi) in full-resolution frame
+    coordinates, or None. The first frames after contact are skipped (racket nearby)."""
+    cap = cv2.VideoCapture(path)
+    small = []
+    while True:
+        ok, img = cap.read()
+        if not ok:
+            break
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        small.append(cv2.resize(g, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA))
+    cap.release()
+    if len(small) < min_len:
+        return None
+    bgf = np.median(np.stack(small[::4]), axis=0).astype(np.float32)
+    small = [np.clip(g, 0, 255).astype(np.uint8) for g in deflicker([g.astype(np.float32) for g in small], bgf)]
+    bg = np.median(np.stack(small[::4]), axis=0).astype(np.int16)
+    cands = []
+    for i, g in enumerate(small):
+        mask = (np.abs(g.astype(np.int16) - bg) > 30).astype(np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+        n, lab, st, cen = cv2.connectedComponentsWithStats(mask, 8)
+        frame_c = []
+        for k in range(1, n):
+            x, y, w, h, area = st[k]
+            if not (12 <= area <= 900):
+                continue
+            if max(w, h) / max(1, min(w, h)) > 1.7 or area / float(w * h) < 0.5:
+                continue
+            frame_c.append((float(cen[k][0]), float(cen[k][1]), float(np.sqrt(area / np.pi))))
+        cands.append(frame_c)
+    # greedy linking with a constant-velocity guess
+    tracks, active = [], []
+    for i, cs in enumerate(cands):
+        used = set()
+        for tr in active:
+            (f1, x1, y1, r1) = tr[-1]
+            if len(tr) > 1:
+                f0, x0, y0, _ = tr[-2]
+                px, py = x1 + (x1 - x0) / max(1, f1 - f0) * (i - f1), y1 + (y1 - y0) / max(1, f1 - f0) * (i - f1)
+            else:
+                px, py = x1, y1
+            best, bd = None, 25.0
+            for j, (x, y, r) in enumerate(cs):
+                d = np.hypot(x - px, y - py)
+                if j not in used and d < bd:
+                    best, bd = j, d
+            if best is not None:
+                used.add(best)
+                tr.append((i,) + cs[best])
+        still = [tr for tr in active if i - tr[-1][0] <= 2]
+        tracks += [tr for tr in active if i - tr[-1][0] > 2]
+        active = still + [[(i,) + c] for j, c in enumerate(cs) if j not in used]
+    tracks += active
+    good = []
+    for tr in tracks:
+        if len(tr) < min_len:
+            continue
+        dx = tr[-1][1] - tr[0][1]
+        dy = tr[-1][2] - tr[0][2]
+        if abs(dx) > 60 and abs(dx) > abs(dy):
+            good.append(tr)
+    if not good:
+        return None
+    tr = max(good, key=len)
+    # keep only the steady sideways flight after contact: the longest run of frames moving
+    # in the flight direction (this drops the toss before contact and the bounce after)
+    sign = np.sign(tr[-1][1] - tr[0][1])
+    runs, cur = [], [tr[0]]
+    for a, b in zip(tr[:-1], tr[1:]):
+        step = (b[1] - a[1]) / max(1, b[0] - a[0])
+        if sign * step > 1.5:
+            cur.append(b)
+        else:
+            if len(cur) > 1:
+                runs.append(cur)
+            cur = [b]
+    runs.append(cur)
+    tr = max(runs, key=len)
+    tr = tr[skip_after_contact:skip_after_contact + max_frames]
+    if len(tr) < 8:
+        return None
+    xs = np.array([p[1] for p in tr]) / scale
+    ys = np.array([p[2] for p in tr]) / scale
+    r = float(np.median([p[3] for p in tr])) / scale
+    pad = 4 * r
+    H, W = small[0].shape
+    x0, y0 = int(max(0, xs.min() - pad)), int(max(0, ys.min() - pad))
+    x1, y1 = int(min(W / scale, xs.max() + pad)), int(min(H / scale, ys.max() + pad))
+    return tr[0][0], tr[-1][0] + 1, (x0, y0, x1 - x0, y1 - y0)
+
+
 # ---------------------------------------------------------------- main
 
 def measure(frames, fps, args):
     background = np.median(np.stack(frames), axis=0)
+    frames = deflicker(frames, background)
+    background = np.median(np.stack(frames), axis=0)
     balls = [find_ball(g, background, args.min_radius) for g in frames]
-    if args.method == "3d":
-        return measure_with_3d(frames, balls, fps)
+    if args.method in ("3d", "pole"):
+        return measure_with_3d(frames, balls, fps, args.method)
     steps = []
     for i in range(len(frames) - 1):
         b0, b1 = balls[i], balls[i + 1]
@@ -352,13 +594,15 @@ def measure(frames, fps, args):
     return result, steps
 
 
-def measure_with_3d(frames, balls, fps):
+def measure_with_3d(frames, balls, fps, method="3d"):
     found = [b for b in balls if b is not None]
     if len(found) < 4:
         return {"error": "ball found in fewer than 4 frames", "frames_with_ball": len(found)}, []
-    r = measure_3d(frames, balls, fps)
+    r = measure_3d(frames, balls, fps) if method == "3d" else measure_pole(frames, balls, fps)
     if r is None:
-        return {"error": "fewer than 3 consecutive frame pairs with the ball"}, []
+        return {"error": "ball found in too few consecutive frames"}, []
+    if "error" in r:
+        return r, []
     axis = np.array(r["axis"])
     rps = r["rps"]
     xs = [b[0] for b in found]
@@ -393,9 +637,12 @@ def measure_with_3d(frames, balls, fps):
         "flight_direction": flight,
         "max_measurable_rps": fps / 2,
         "fps": fps,
-        "method": "3d",
+        "method": method,
     }
-    return result, []
+    for k in ("angle_fit_r2", "angle_rms_deg", "pole_swing"):
+        if k in r:
+            result[k] = r[k]
+    return result, ([r["pole_track"]] if "pole_track" in r else [])
 
 
 def classify(top_back, side, gyro):
@@ -435,14 +682,49 @@ def plot(steps, fps, path, result):
 
 def main():
     args = parse_args()
+    if args.auto:
+        found = find_flight(args.video)
+        if found is None:
+            print(json.dumps({"error": "no ball flight found automatically; use --start/--end/--roi"}))
+            return
+        args.start, args.end, args.roi = found
     frames = read_frames(args.video, args.start, args.end, args.roi)
     result, steps = measure(frames, args.fps, args)
+    result["segment"] = {"start": args.start, "end": args.end, "roi": list(args.roi) if args.roi else None}
     print(json.dumps(result, indent=2))
     if args.out:
         with open(args.out, "w") as f:
             json.dump({"result": result, "steps": steps}, f, indent=2)
     if args.plot and steps:
-        plot(steps, args.fps, args.plot, result)
+        if "pole" in steps[0]:
+            plot_pole(steps[0], args.fps, args.plot, result)
+        else:
+            plot(steps, args.fps, args.plot, result)
+
+
+def plot_pole(track, fps, path, result):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    t = np.array(track["frames"]) / fps * 1000
+    B = np.array(track["pole"])
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 3.6))
+    for k, lab in enumerate(["x (right)", "y (down)", "z (to camera)"]):
+        a1.plot(t, B[:, k], "o-", ms=3, label=lab)
+    a1.set_xlabel("time (ms)")
+    a1.set_ylabel("black pole direction")
+    a1.set_title("Pole of the black half, per frame")
+    a1.legend(fontsize=8)
+    ang = np.array(track["angle_deg"])
+    a2.plot(t, ang / 360.0, "o", ms=3)
+    k, c = np.polyfit(t, ang / 360.0, 1)
+    a2.plot(t, k * t + c, "r-", lw=1)
+    a2.set_xlabel("time (ms)")
+    a2.set_ylabel("revolutions about the spin axis")
+    a2.set_title(f"{result.get('rps', '?')} rps = {result.get('rpm', '?')} RPM, {result.get('spin_type', '')}")
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
 
 
 if __name__ == "__main__":

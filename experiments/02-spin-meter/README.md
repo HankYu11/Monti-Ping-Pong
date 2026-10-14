@@ -176,9 +176,58 @@ So the meter now reports `"reliable": false` with a warning when the fit score i
 5. Keep the plain wall behind the ball's path (already good), and keep the arm out of the
    ball's path after contact where possible.
 
+## Second recordings (2026-10-14): 240 FPS, landscape — first real spin numbers
+
+Four serves, Pixel 8 slow motion at **240 FPS**, landscape, side-on, plain wall, ball
+marked half black (some also with the line). Run fully automatically:
+
+```bash
+.venv/bin/python experiments/02-spin-meter/spinmeter.py serve.mp4 --fps 240 --auto --plot pole.png
+```
+
+| Clip | Meter (pole method) | RPM | Fit | Hand count (frames between "black side facing camera") | Agrees? |
+|---|---|---|---|---|---|
+| w1 | **35.7 rps** | 2,140 | 0.71 (just under 0.75) | ≈ 6.5 frames → ≈ 37 rps | ✓ |
+| w2 | **31.7 rps** | 1,900 | 0.88 | ≈ 7.2 frames → ≈ 33 rps | ✓ |
+| w3 | **17.2 rps** | 1,030 | 0.84 | ≈ 14 frames → ≈ 17 rps (faint marking) | ✓ |
+| w4 | **36.0 rps** | 2,160 | 0.90 | ≈ 6.7 frames → ≈ 36 rps | ✓ |
+
+**Spin rate: all four agree with an independent hand count within about 5%.** These are in
+the range reported for serves (14–63 rps). The split into backspin / sidespin / gyro is
+**not validated yet**: every clip shows a large "gyro" part, which may be real (pendulum
+serves often have some) or may come from the camera not being exactly side-on. That needs
+a reference: Spinsight, or a ball spun at a known axis and speed.
+
+### What it took to work on real footage
+
+1. **Pole tracking instead of matching surface detail** (`--method pole`, now the
+   default). The ball is only about 25 px across and soft from motion blur and
+   compression, so fine detail is gone. But two coarse measurements survive: the share
+   of the ball that looks black gives how much the black half's pole points at the camera
+   (exactly `f = (1 + b_z) / 2` for a hemisphere), and where the dark area sits gives the
+   pole's sideways direction. Every rate from 0.5 rps to half the frame rate is then tested
+   with a linear fit of a rotating vector, which never loses count of turns. On the
+   simulator: within 0.1 rps from 8 to 90 rps, axis within about 5–13°.
+2. **Light flicker correction.** Room lights pulse with the mains power. At 240 FPS frames
+   alternate brighter/darker in bands, which made the ball detector miss every other
+   frame. Each frame's rows are now rescaled to the background brightness.
+3. **Automatic flight finding** (`--auto`): the longest track of a small round moving blob
+   that travels sideways. Then the steady part after contact is kept, skipping 12 frames
+   next to the racket, for at most 40 frames (≈ 0.17 s, before any bounce).
+4. **Trajectory smoothing** of the ball centre (the detector sees mostly the black half,
+   so raw centres jitter as the ball turns).
+
+### Still to improve
+
+- Light: the room is dim, so the white half is barely brighter than the wall (w3's marking
+  is faint). Daylight would give cleaner readings.
+- Axis validation against a reference (see above).
+- w1 is just under the reliability threshold because its segment still starts near the
+  racket.
+
 ## Files
 
-- `spinmeter.py` — the meter (`--method 3d` default, `2d` = v1)
+- `spinmeter.py` — the meter (`--method pole` default for real footage; `3d` for large sharp balls; `2d` = v1; `--auto` finds the flight)
 - `spinsim.py` — synthetic clip renderer with ground truth
 - `sweep.py` — accuracy sweep, writes `sweep_results.csv`
 

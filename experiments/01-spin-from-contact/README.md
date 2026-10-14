@@ -82,6 +82,12 @@ not need the marked ball at all.
   (predicting before the hit, from full-body video), but it's a warning that the wrist
   proxy (Q2) may not be enough and the racket itself probably needs to be measured.
 
+**Online clips:** [`clips/CATALOG.md`](clips/CATALOG.md) lists serve videos from
+Chinese, Japanese, Korean and English sources, sorted into tiers: real high-speed footage
+of the contact, spin vs no-spin comparisons, and beginner-fault tutorials. None of them
+give measured spin, so they are for building tools and rough tests; real numbers still
+need an own recording.
+
 ## 3. Setup
 
 | Item | Setting |

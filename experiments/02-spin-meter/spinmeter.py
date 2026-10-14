@@ -648,13 +648,35 @@ def flight_geometry(balls, fps, frame_width, hfov_deg):
     r_med = float(np.median(rr))
     mm_px = 40.0 / (2 * r_med)
     to_ms = mm_px / 1000 * fps
+    # Which way is down? A flying ball accelerates downward (gravity, give or take ~25% from
+    # spin), so the acceleration's dominant image direction tells whether the video is
+    # upright, upside down or sideways, whatever the file's rotation metadata did.
+    turn = upright_rotation(ax, ay)
+    fdir = turn @ fdir
+    acc = turn @ np.array([ax, ay, 0.0])
     return {
         "flight_dir_camera": fdir,
+        "upright_turn": turn,
+        "video_rotated_deg": int(round(np.degrees(np.arctan2(turn[1, 0], turn[0, 0])))) % 360,
         "speed_in_image_m_s": float(np.hypot(vx, vy) * to_ms),
         "toward_camera_deg": float(np.degrees(np.arcsin(np.clip(fdir[2], -1, 1)))),
-        "down_accel_m_s2": float(ay * to_ms * fps),
+        "down_accel_m_s2": float(acc[1] * to_ms * fps),
         "mm_per_px": mm_px,
     }
+
+
+def upright_rotation(ax, ay):
+    """Rotation about the viewing axis that turns the measured acceleration to image-down
+    (+y). Snaps to 0/90/180/270 degrees; returns the identity if the acceleration is tiny."""
+    if np.hypot(ax, ay) < 1e-6:
+        return np.eye(3)
+    if abs(ay) >= abs(ax):
+        if ay > 0:
+            return np.eye(3)
+        return np.array([[-1.0, 0, 0], [0, -1.0, 0], [0, 0, 1.0]])       # upside down
+    if ax > 0:                                                          # down is image-right
+        return np.array([[0, -1.0, 0], [1.0, 0, 0], [0, 0, 1.0]])
+    return np.array([[0, 1.0, 0], [-1.0, 0, 0], [0, 0, 1.0]])          # down is image-left
 
 
 def spin_components(rps, axis, fdir, up_img=(0.0, -1.0, 0.0)):
@@ -713,6 +735,7 @@ def measure_with_3d(frames, balls, fps, method="3d", args=None):
     width = getattr(args, "frame_width", None) or frames[0].shape[1]
     hfov = getattr(args, "hfov", 68.0)
     geo = flight_geometry(balls, fps, width, hfov)
+    axis = geo["upright_turn"] @ axis
     lift, curve, gyro, tilt = spin_components(rps, axis, geo["flight_dir_camera"])
     result = {
         "rps": round(rps, 2),
@@ -730,6 +753,7 @@ def measure_with_3d(frames, balls, fps, method="3d", args=None):
             "toward_camera_deg": round(geo["toward_camera_deg"], 1),
             "speed_m_s": round(geo["speed_in_image_m_s"], 2),
             "down_accel_m_s2": round(geo["down_accel_m_s2"], 1),
+            "video_rotated_deg": geo["video_rotated_deg"],
             "note": "gravity alone = 9.8; less = lift (backspin), more = dip (topspin); "
                     "rough, the scale comes from the ball's size in pixels",
         },

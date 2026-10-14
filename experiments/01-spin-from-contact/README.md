@@ -57,6 +57,31 @@ not need the marked ball at all.
 
 ---
 
+## 2b. Existing datasets checked
+
+**SPIN (Google Robotics, 2019, arXiv 1912.06640) — not usable for this experiment.**
+- **No download found.** The paper mentions releasing the data, but there is no link in
+  the paper or on arXiv, Semantic Scholar or ResearchGate, and no GitHub repository or
+  storage bucket turned up in searches.
+- **Rallies, not serves**, from competitive play.
+- **No backspin label.** Spin is not measured; it is derived from the ball's flight and
+  sorted into 3 clusters: no spin, light topspin, heavy topspin. The authors say there
+  weren't enough backspin balls to form a cluster.
+- **No contact measurements**, such as racket angle.
+
+**Still useful from the paper:**
+- **Their spin measure is the Q5 method:** the change in forward speed at the bounce
+  (10 frames before vs after) plus the ball's vertical acceleration from a fitted
+  parabola. At 150 FPS this clearly separated the spin types, which supports measuring
+  spin from the ball's flight.
+- **Amateur balls fell at a steady 9.8 m/s²** with consistent bounces, meaning very
+  little spin. Expect beginners' serves to cluster near "no spin", so the protocol's
+  deliberate heavy-brush block (C) matters.
+- **Predicting spin from the player's body alone was hard:** 62% accuracy on 3 classes,
+  72.8% with pose and ball tracking, with 53 hours of data. Their task was harder
+  (predicting before the hit, from full-body video), but it's a warning that the wrist
+  proxy (Q2) may not be enough and the racket itself probably needs to be measured.
+
 ## 3. Setup
 
 | Item | Setting |
@@ -161,6 +186,8 @@ the tools and analysis. Stage 2 (automatic) adds about 1–2 days, only if Q1 sa
 ---
 
 ## Sources
+
+- SPIN dataset paper (Schwarcz et al., 2019) — https://arxiv.org/abs/1912.06640
 
 - Tamaki, Yamagata & Hashizume (2024), serve spin from the ball logo in T-League matches — https://reference-global.com/article/10.2478/ijcss-2024-0003
 - Serve spin rates of 2009 World Championship quarter-finalists (Yoshida thesis abstract) — https://jair.repo.nii.ac.jp/record/2003238/files/SDO0012-engabs.pdf

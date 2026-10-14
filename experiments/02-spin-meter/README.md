@@ -251,13 +251,44 @@ scale uncertainty, so this check is weak.
 
 | Serve | Meter | Back / top | Side | Gyro | Flight toward camera | Fall accel. | Check |
 |---|---|---|---|---|---|---|---|
-| w1 | side-backspin (curves right) + gyro, 35.7 rps | 22 back | 16 | 23 | −6° | 9.6 | ? (no lift seen) |
+| w1 | side-backspin (curves right) + gyro, 35.7 rps | 22 back | 16 | 23 | −6° | 9.6 | ? (no lift seen); see ground truth below |
 | w2 | side-backspin (curves right), 31.7 rps | 24 back | 16 | 13 | −10° | 8.8 | ✓ lift |
 | w3 | side-topspin (curves left), 17.2 rps | 9 top | 12 | 8 | +15° | 12.3 | ✓ dip |
 | w4 | sidespin (curves right), 36.0 rps | 13 back | 33 | 6 | +7° | 9.6 | ✓ (little lift expected) |
 
 On the simulator, the components come out within about 2 rps for sharp balls and about
 7 rps for small, heavily blurred ones.
+
+### Ground truth from the player (2026-10-14)
+
+w1 and w2 were served as **backspin**, w3 as **topspin**, w4 was a serve error.
+
+| Serve | Served | Meter v1 (wall-level black share) | Meter v2 (per-spot lighting reference) |
+|---|---|---|---|
+| w1 | backspin | side-backspin: 22 back, 16 side, 23 gyro | side-backspin: 17 back, 21 side, 24 gyro |
+| w2 | backspin | side-backspin: 24 back, 16 side, 13 gyro | side-backspin: 22 back, 18 side, 14 gyro |
+| w3 | topspin | side-topspin: 9 top, **12 side** | **topspin: 15 top, 0 side** ✓ |
+| w4 | (error) | sidespin: 13 back, 33 side | backspin: 33 back, 10 side |
+
+- **Backspin vs topspin: correct 3/3.** The fall acceleration agrees (w2 lift, w3 dip).
+- v1 showed the sidespin flipping direction between the backspin and topspin serves, the
+  signature of a measurement bias rather than technique. The cause: light from above
+  makes the white half look darker at the bottom, which couples the pole's up/down
+  direction with how much black faces the camera. v2 normalises each spot on the ball by
+  its own white/black levels, which removed w3's false sidespin.
+- **Not yet trustworthy: the sidespin and gyro amounts.** w4 changed from "sidespin" to
+  "backspin" between v1 and v2, so on this footage (ball about 25 px, dim light, soft
+  marking) the axis can still swing by tens of degrees. The w1/w2 sidespin may be real
+  (beginners' backspin serves often have some) or residual error.
+
+**To pin the axis down:**
+1. **Known-answer test:** roll the marked ball across the floor in front of the camera.
+   The axis is known (horizontal, across the roll) and so is the rate
+   (speed ÷ ball circumference, 125.7 mm). 5 rolls each way.
+2. **Bigger ball in the image:** move the camera closer so the ball is about 50 px across
+   (the frame about 1.2 m wide). 40 frames of flight at 4 m/s is about 0.7 m, which still fits.
+3. **More light** (daylight) for a sharper, higher-contrast marking.
+4. **Labelled set:** 5 serves each of backspin, topspin, sidespin left/right and no spin.
 
 ### Validating the spin type (next recording)
 

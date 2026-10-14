@@ -333,7 +333,7 @@ def smooth_centres(balls, deg=2, tol=2.5):
     return cx, cy
 
 
-def measure_pole(frames, balls, fps, inner=0.92):
+def measure_pole(frames, balls, fps, inner=0.92, shading_bins=10):
     """Track the direction of the black hemisphere's pole, b(t), and fit its rotation.
 
     For a ball with one black hemisphere seen by a distant camera:
@@ -370,12 +370,37 @@ def measure_pole(frames, balls, fps, inner=0.92):
     if len(rows) < 8:
         return None
     Dcat = np.concatenate(D_all)
-    d_white, d_black = np.percentile(Dcat, 10), np.percentile(Dcat, 95)
-    if d_black - d_white < 0.15:
+    if np.percentile(Dcat, 95) - np.percentile(Dcat, 10) < 0.15:
         return {"error": "marking contrast too low"}
+    # Lighting varies across the ball (lit from above: top bright, bottom in shadow). As the
+    # ball turns, every spot shows both white and black, so per spot on the disc, how dark
+    # "white" and "black" look there can be read off all frames. Normalising each pixel by
+    # its own spot's levels removes the lighting gradient, which otherwise couples the
+    # pole's up/down direction with its toward-camera component and tilts the axis.
+    nb = shading_bins
+    UX = np.concatenate([row[2] for row in rows])
+    UY = np.concatenate([row[3] for row in rows])
+    bi = np.clip(((UX + 1) / 2 * nb).astype(int), 0, nb - 1)
+    bj = np.clip(((UY + 1) / 2 * nb).astype(int), 0, nb - 1)
+    lo_map = np.full((nb, nb), np.percentile(Dcat, 10))
+    hi_map = np.full((nb, nb), np.percentile(Dcat, 95))
+    for a in range(nb):
+        for b_ in range(nb):
+            sel = Dcat[(bi == a) & (bj == b_)]
+            if len(sel) >= 30:
+                lo_map[a, b_] = np.percentile(sel, 10)
+                hi_map[a, b_] = np.percentile(sel, 95)
+    lo_map = cv2.GaussianBlur(lo_map.astype(np.float32), (3, 3), 0.8)
+    hi_map = cv2.GaussianBlur(hi_map.astype(np.float32), (3, 3), 0.8)
     t_list, B = [], []
     for i, D, ux, uy in rows:
-        s = np.clip((D - d_white) / (d_black - d_white), 0, 1)
+        a = np.clip(((ux + 1) / 2 * nb).astype(int), 0, nb - 1)
+        b_ = np.clip(((uy + 1) / 2 * nb).astype(int), 0, nb - 1)
+        if shading_bins > 1:
+            dw, db = lo_map[a, b_], hi_map[a, b_]
+        else:
+            dw, db = np.percentile(Dcat, 10), np.percentile(Dcat, 95)
+        s = np.clip((D - dw) / np.maximum(db - dw, 0.05), 0, 1)
         f = float(s.mean())
         bz = float(np.clip(2 * f - 1, -0.98, 0.98))
         w = s.sum()

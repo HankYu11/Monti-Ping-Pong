@@ -54,7 +54,6 @@ So: **Tier A** is for testing measurement (racket angle, contact, ball rotation)
 | A8 | EN | [Table Tennis Backspin Serve Slowmotion](https://www.youtube.com/watch?v=luWJofKQUqY) — Sam Humphreys | 9 minutes of backspin serves in slow motion; check FPS |
 | A9 | EN | [table tennis serves in 8x slow motion](https://www.youtube.com/watch?v=dolQO-M8LJE) — kroliknor | Filmed at 240 FPS |
 | A10 | EN | [A ball tracking system - Table Tennis Service](https://www.youtube.com/watch?v=2y2WpX1p2LE) — ouxgmt | Research demo: ball tracking on a serve, with plotted trajectory |
-| A11 | CN | [【乒乓球慢镜】超慢速拍下旋发球瞬间的](https://www.bilibili.com/video/BV1QP4y1W7iJ) — bby52 (Bilibili) | "Ultra-slow shot of the backspin serve moment". Download failed here; retry locally. |
 | A12 | JP | [DITECT multi-angle super slow — table tennis](https://www.youtube.com/watch?v=yfug_BlwvT0) — DITECT (high-speed camera maker) | Professional high-speed, but rallies, not serves. For tool testing only. |
 
 ## Tier B — same motion, labelled spin vs no spin (rough classification test)
@@ -69,6 +68,7 @@ So: **Tier A** is for testing measurement (racket angle, contact, ball rotation)
 | B6 | CN | [死转？不转？超实用发球教学](https://www.bilibili.com/video/BV1hBpA6WE1X) — Top创乒社 (Bilibili) | Screened: 30 FPS, rear/oblique views; serves land on table with visible outcome |
 | B7 | JP | [下回転・ナックルサーブ見極め](https://www.youtube.com/watch?v=RuYhHx3s9-Y) — 卓球三昧 | Telling backspin from knuckle (no-spin) |
 | B8 | EN | [The Fake Motion Serve: Spin vs No Spin](https://www.youtube.com/watch?v=plg3Cxc6MBs) — Table Tennis Teacher | |
+| B10 | JP (CN re-upload) | [【乒乓球慢镜】超慢速拍下旋发球瞬间的](https://www.bilibili.com/video/BV1QP4y1W7iJ) — re-upload of a WRM-TV video (Bilibili) | Downloaded and screened: 1280×720 at 24 FPS, so not raw high-speed. Each serve is labelled ○/× "Spin" / "No Spin", with diagrams of where the ball should touch the rubber (start low near the handle and brush toward the tip, versus hitting the centre). Also 6 numbered fault topics: Tier C material too. |
 | B9 | EN | [Spin/No-Spin Serve Secrets: Same Motion](https://www.youtube.com/watch?v=Ag0VJBfgQLw) — Table Tennis Decoded | |
 
 Caution: these serves are *designed* to look the same, so they are the hardest case, not

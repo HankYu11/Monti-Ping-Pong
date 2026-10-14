@@ -39,6 +39,8 @@ def parse_args():
     p.add_argument("--fps", type=float, required=True, help="real capture frame rate (e.g. 240)")
     p.add_argument("--start", type=int, default=0, help="first frame")
     p.add_argument("--end", type=int, default=None, help="last frame (exclusive)")
+    p.add_argument("--roi", type=int, nargs=4, metavar=("X", "Y", "W", "H"),
+                   help="only look inside this rectangle (pixels, after the phone's rotation)")
     p.add_argument("--min-radius", type=float, default=6.0, help="pixels")
     p.add_argument("--inner", type=float, default=0.15, help="inner polar radius, fraction of ball radius")
     p.add_argument("--outer", type=float, default=0.80, help="outer polar radius (avoid the dark edge)")
@@ -53,7 +55,7 @@ def parse_args():
 
 # ---------------------------------------------------------------- ball finding
 
-def read_frames(path, start, end):
+def read_frames(path, start, end, roi=None):
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise SystemExit(f"cannot open {path}")
@@ -63,6 +65,9 @@ def read_frames(path, start, end):
         if not ok or (end is not None and i >= end):
             break
         if i >= start:
+            if roi is not None:
+                x, y, w, h = roi
+                img = img[y:y + h, x:x + w]
             frames.append(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32))
         i += 1
     cap.release()
@@ -135,6 +140,7 @@ def rotation_between(P0, P1):
 # ---------------------------------------------------------------- 3D rotation fit
 
 CANON = 64          # canonical ball patch size (pixels)
+RELIABLE_FIT = 0.75  # below this the reading is not trustworthy (see README: real recordings)
 CANON_R = 28.0      # ball radius inside the canonical patch
 
 
@@ -377,6 +383,10 @@ def measure_with_3d(frames, balls, fps):
         "spin_type": classify(top_back, comp[1], comp[0]),
         "deg_per_frame": round(r["deg_per_frame"], 2),
         "fit_score": round(r["score"], 3),
+        "reliable": bool(r["score"] >= RELIABLE_FIT),
+        "warning": None if r["score"] >= RELIABLE_FIT else (
+            "low fit score: the marking is probably blurred or too small. Use 240 FPS, more light, "
+            "and check the ball is at least 20 px across. Don't trust this number."),
         "runner_up_score": round(r["runner_up_score"], 3),
         "frame_pairs_used": r["pairs"],
         "ball_radius_px": round(float(np.median([b[2] for b in found])), 1),
@@ -425,7 +435,7 @@ def plot(steps, fps, path, result):
 
 def main():
     args = parse_args()
-    frames = read_frames(args.video, args.start, args.end)
+    frames = read_frames(args.video, args.start, args.end, args.roi)
     result, steps = measure(frames, args.fps, args)
     print(json.dumps(result, indent=2))
     if args.out:

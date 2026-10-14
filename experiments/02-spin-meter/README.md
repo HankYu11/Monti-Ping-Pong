@@ -131,6 +131,51 @@ Trim each clip to the frames after contact and before the bounce (`--start`, `--
 **Checking against a reference:** compare a few serves with Spinsight, or spin a marked
 ball at a known speed on a drill or small motor and measure that.
 
+## First real recordings (2026-10-14)
+
+Five clips from a Pixel 8, side view against a plain light wall, marked ball
+(half black). Source: shared Drive folder "Table tennis" (not committed).
+
+| Clip | Capture | Notes |
+|---|---|---|
+| v1, v2, v4 | 60 FPS (v2, v4 in 4K) | Too slow for spin: limit is 30 rps, and heavy blur |
+| v3, v5 | **120 FPS** slow motion (saved as 30 FPS playback, 4× slower) | Usable for a first test. Read the real rate from the file's `com.android.capture.fps` tag. |
+
+**Results on v5** (`--fps 120 --roi 280 440 480 360`):
+
+| Segment | Frames | Meter | Fit | Verdict |
+|---|---|---|---|---|
+| Toss (falling ball) | 296–312 | **0.5 rps, no spin** | 0.895 | ✓ Correct: a legal toss has no spin. The marking is sharp, about 25 px across. |
+| After contact | 326–336 | 53 rps "backspin-sidespin-gyro" | 0.66 | ✗ Unreliable: the ball is a streak about 40 px long and the marking can't be read. |
+
+**Why:** indoors the phone keeps the shutter open for most of each frame. A fast serve moves
+about 28 px per frame here, so the ball smears by about 17 px, over half its diameter.
+The ball also left the frame after about 10 frames, because the phone was in portrait.
+
+**Simulated with the same conditions** (true spin: 30 rps side-backspin, 25 px ball):
+
+| Setting | Meter | Fit |
+|---|---|---|
+| Like the real clip: 120 FPS, shutter open 60% of the frame | 45 rps **topspin** (wrong) | 0.42 |
+| 120 FPS, shutter 15% of the frame (≈ 4× more light) | 29 rps backspin ✓ | 0.76 |
+| 240 FPS, same indoor light | 24 rps backspin (too low) | 0.59 |
+| **240 FPS + bright light** (shutter ≈ 1/1000 s) | **29.9 rps backspin ✓** | **0.91** |
+
+So the meter now reports `"reliable": false` with a warning when the fit score is below
+0.75, instead of a confident wrong number.
+
+### Re-recording checklist
+
+1. **240 FPS** slow motion (Pixel 8: Camera → Slow motion → 1/8×).
+2. **Much more light**: daytime outdoors (shade is fine) or right next to a big window;
+   indoors, two bright lamps aimed at the ball's path. Target shutter ≈ 1/1000 s or shorter.
+   Daylight is often 10–50× brighter than a room.
+3. **Landscape orientation**, so a horizontal flight stays in view for 30+ frames.
+4. **Camera about 2 m from the ball's path** in landscape 1080p: the ball stays about
+   30 px across and the view covers about 2.4 m of flight.
+5. Keep the plain wall behind the ball's path (already good), and keep the arm out of the
+   ball's path after contact where possible.
+
 ## Files
 
 - `spinmeter.py` — the meter (`--method 3d` default, `2d` = v1)

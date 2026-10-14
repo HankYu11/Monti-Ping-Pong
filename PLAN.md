@@ -5,6 +5,12 @@ serve**. After every serve it tells the player **what happened**: did it go in, 
 and was there real backspin. Every few serves it gives **one technique cue** about the
 most common fault.
 
+> **First step: [Experiment 01 — can the camera tell the spin from the contact?](experiments/01-spin-from-contact/README.md)**
+> Before building the serve coach, test offline whether slow-motion phone video of the
+> contact (racket angle, racket speed, contact point, ball speed) predicts the real spin,
+> measured with a marked ball. The answer decides whether the coach can explain *why* a
+> serve had no spin, or only report *that* it had none.
+
 The rally-stroke (forehand loop) plan is postponed to
 [`docs/later-forehand-plan.md`](docs/later-forehand-plan.md). Its findings on pose FPS,
 target lock, coaching cadence and "no pro player needed" still apply here.
@@ -160,6 +166,10 @@ frames for things the rules can't see, like the racket face angle.
 ---
 
 ## 6. Build plan
+
+### Step −1 — Experiment 01: spin from contact (2–4 days)
+- See [`experiments/01-spin-from-contact/README.md`](experiments/01-spin-from-contact/README.md).
+  Its result decides how the technique cues in Step 3 are built.
 
 ### Step 0 — Record serves (half a day)
 1. Record **50–100 forehand backspin serves** at 240 FPS (slow motion) from the tripod

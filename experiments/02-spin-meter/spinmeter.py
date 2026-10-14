@@ -41,6 +41,9 @@ def parse_args():
     p.add_argument("--end", type=int, default=None, help="last frame (exclusive)")
     p.add_argument("--roi", type=int, nargs=4, metavar=("X", "Y", "W", "H"),
                    help="only look inside this rectangle (pixels, after the phone's rotation)")
+    p.add_argument("--hfov", type=float, default=68.0,
+                   help="camera's horizontal field of view in degrees (for the toward/away-from-camera "
+                        "part of the flight); Pixel 8 main camera in 16:9 video is roughly 68")
     p.add_argument("--auto", action="store_true",
                    help="find the serve's flight automatically (overrides --start/--end/--roi)")
     p.add_argument("--min-radius", type=float, default=6.0, help="pixels")
@@ -544,7 +547,7 @@ def measure(frames, fps, args):
     background = np.median(np.stack(frames), axis=0)
     balls = [find_ball(g, background, args.min_radius) for g in frames]
     if args.method in ("3d", "pole"):
-        return measure_with_3d(frames, balls, fps, args.method)
+        return measure_with_3d(frames, balls, fps, args.method, args)
     steps = []
     for i in range(len(frames) - 1):
         b0, b1 = balls[i], balls[i + 1]
@@ -594,7 +597,82 @@ def measure(frames, fps, args):
     return result, steps
 
 
-def measure_with_3d(frames, balls, fps, method="3d"):
+def flight_geometry(balls, fps, frame_width, hfov_deg):
+    """3D flight direction and real-world speed/acceleration from the ball's image track.
+
+    Sideways motion comes from the image velocity; motion toward/away from the camera comes
+    from the ball's apparent size (radius grows as 1/distance). The ball's known size
+    (40 mm) gives the scale in mm per pixel. Camera axes: x right, y down, z toward camera.
+    """
+    t = np.array([i for i, b in enumerate(balls) if b is not None], float)
+    xy = np.array([b[:2] for b in balls if b is not None])
+    rr = np.array([b[2] for b in balls if b is not None])
+    keep = np.ones(len(t), bool)
+    for _ in range(3):
+        px = np.polyfit(t[keep], xy[keep, 0], 2)
+        py = np.polyfit(t[keep], xy[keep, 1], 2)
+        res = np.hypot(np.polyval(px, t) - xy[:, 0], np.polyval(py, t) - xy[:, 1])
+        keep = res < max(2.5, 3 * np.median(res[keep]))
+    tm = t.mean()
+    vx, vy = np.polyval(np.polyder(px), tm), np.polyval(np.polyder(py), tm)    # px / frame
+    ax, ay = 2 * px[0], 2 * py[0]                                              # px / frame^2
+    dlnr = np.polyfit(t[keep], np.log(rr[keep]), 1)[0]                         # per frame
+    f_px = (frame_width / 2) / np.tan(np.radians(hfov_deg) / 2)
+    fdir = np.array([vx / f_px, vy / f_px, dlnr])          # z: toward the camera
+    fdir /= np.linalg.norm(fdir)
+    r_med = float(np.median(rr))
+    mm_px = 40.0 / (2 * r_med)
+    to_ms = mm_px / 1000 * fps
+    return {
+        "flight_dir_camera": fdir,
+        "speed_in_image_m_s": float(np.hypot(vx, vy) * to_ms),
+        "toward_camera_deg": float(np.degrees(np.arcsin(np.clip(fdir[2], -1, 1)))),
+        "down_accel_m_s2": float(ay * to_ms * fps),
+        "mm_per_px": mm_px,
+    }
+
+
+def spin_components(rps, axis, fdir, up_img=(0.0, -1.0, 0.0)):
+    """Split the spin by what it does to the flight (Magnus effect), relative to the real
+    3D flight direction:
+      backspin(+)/topspin(-): rotation about the horizontal axis across the flight -> lift/dip
+      sidespin: rotation about the vertical axis -> the ball curves left(-)/right(+), as seen by
+                the server looking along the flight
+      gyro: rotation about the flight direction itself (corkscrew) -> no curve
+    Assumes the camera is level (image up = real up)."""
+    w = rps * np.asarray(axis, float)
+    f = np.asarray(fdir, float)
+    u = np.asarray(up_img, float)
+    u = u - (u @ f) * f
+    u /= np.linalg.norm(u)
+    right = -np.cross(f, u)            # server's right (see README: camera axes are x right, y down, z to camera)
+    magnus = np.cross(w, f)            # direction of the Magnus force (up to a positive factor)
+    lift = float(magnus @ u)           # > 0: lift = backspin
+    curve = float(magnus @ right)      # > 0: curves to the server's right
+    gyro = float(w @ f)
+    tilt = float(np.degrees(np.arctan2(curve, lift)))   # 0 = pure backspin, +-90 = pure sidespin, 180 = topspin
+    return lift, curve, gyro, tilt
+
+
+def spin_label(total, lift, curve, gyro, no_spin_rps=3.0):
+    if total < no_spin_rps:
+        return "no spin"
+    parts = []
+    if abs(curve) >= 0.35 * total:
+        parts.append("side")
+    if abs(lift) >= 0.35 * total:
+        parts.append("back" if lift > 0 else "top")
+    if not parts:
+        return "gyro (corkscrew)" if abs(gyro) >= 0.5 * total else "mixed"
+    label = "-".join(parts) + "spin"
+    if abs(curve) >= 0.35 * total:
+        label += f" (curves {'right' if curve > 0 else 'left'})"
+    if abs(gyro) >= 0.5 * total:
+        label += " + gyro"
+    return label
+
+
+def measure_with_3d(frames, balls, fps, method="3d", args=None):
     found = [b for b in balls if b is not None]
     if len(found) < 4:
         return {"error": "ball found in fewer than 4 frames", "frames_with_ball": len(found)}, []
@@ -607,24 +685,29 @@ def measure_with_3d(frames, balls, fps, method="3d"):
     rps = r["rps"]
     xs = [b[0] for b in found]
     flight = "right" if xs[-1] > xs[0] else "left"
-    fwd = 1.0 if flight == "right" else -1.0
-    # Components in camera axes (x right, y down, z toward camera), as signed rps.
-    # z: rotation in the image plane, positive = clockwise in the image.
-    # With a side-on camera: z = topspin(+)/backspin(-) for a ball flying right,
-    # y (vertical axis) = sidespin, x (along the flight) = "gyro"/corkscrew spin.
-    comp = axis * rps
-    top_back = comp[2] * fwd          # + topspin, - backspin
+    width = getattr(args, "frame_width", None) or frames[0].shape[1]
+    hfov = getattr(args, "hfov", 68.0)
+    geo = flight_geometry(balls, fps, width, hfov)
+    lift, curve, gyro, tilt = spin_components(rps, axis, geo["flight_dir_camera"])
     result = {
         "rps": round(rps, 2),
         "rpm": round(rps * 60, 0),
+        "spin_type": spin_label(rps, lift, curve, gyro),
+        "backspin_rps": round(max(0.0, lift), 1),
+        "topspin_rps": round(max(0.0, -lift), 1),
+        "sidespin_rps": round(abs(curve), 1),
+        "sidespin_curves": ("right" if curve > 0 else "left") if abs(curve) >= 1.0 else "none",
+        "gyro_rps": round(abs(gyro), 1),
+        "axis_tilt_deg": round(tilt, 0),
         "axis_camera_xyz": [round(v, 3) for v in axis],
-        "backspin_rps": round(max(0.0, -top_back), 2),
-        "topspin_rps": round(max(0.0, top_back), 2),
-        "sidespin_rps": round(abs(comp[1]), 2),
-        "sidespin_direction_in_image": ("clockwise seen from above" if comp[1] < 0 else
-                                        "counter-clockwise seen from above") if abs(comp[1]) > 0.5 else "none",
-        "gyro_rps": round(abs(comp[0]), 2),
-        "spin_type": classify(top_back, comp[1], comp[0]),
+        "flight": {
+            "direction_in_image": flight,
+            "toward_camera_deg": round(geo["toward_camera_deg"], 1),
+            "speed_m_s": round(geo["speed_in_image_m_s"], 2),
+            "down_accel_m_s2": round(geo["down_accel_m_s2"], 1),
+            "note": "gravity alone = 9.8; less = lift (backspin), more = dip (topspin); "
+                    "rough, the scale comes from the ball's size in pixels",
+        },
         "deg_per_frame": round(r["deg_per_frame"], 2),
         "fit_score": round(r["score"], 3),
         "reliable": bool(r["score"] >= RELIABLE_FIT),
@@ -634,7 +717,6 @@ def measure_with_3d(frames, balls, fps, method="3d"):
         "runner_up_score": round(r["runner_up_score"], 3),
         "frame_pairs_used": r["pairs"],
         "ball_radius_px": round(float(np.median([b[2] for b in found])), 1),
-        "flight_direction": flight,
         "max_measurable_rps": fps / 2,
         "fps": fps,
         "method": method,
@@ -688,6 +770,10 @@ def main():
             print(json.dumps({"error": "no ball flight found automatically; use --start/--end/--roi"}))
             return
         args.start, args.end, args.roi = found
+    cap = cv2.VideoCapture(args.video)
+    ok, first = cap.read()
+    cap.release()
+    args.frame_width = first.shape[1] if ok else None
     frames = read_frames(args.video, args.start, args.end, args.roi)
     result, steps = measure(frames, args.fps, args)
     result["segment"] = {"start": args.start, "end": args.end, "roi": list(args.roi) if args.roi else None}

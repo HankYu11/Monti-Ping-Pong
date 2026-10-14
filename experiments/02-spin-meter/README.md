@@ -225,6 +225,55 @@ a reference: Spinsight, or a ball spun at a known axis and speed.
 - w1 is just under the reliability threshold because its segment still starts near the
   racket.
 
+## Spin type: back, top, side, gyro or no spin
+
+The meter reports the spin as players think of it: by what it does to the flight (the
+Magnus effect), relative to the ball's **real 3D flight direction**.
+
+| Output | Meaning |
+|---|---|
+| `backspin_rps` / `topspin_rps` | rotation about the horizontal axis across the flight: lifts / dips the ball |
+| `sidespin_rps` + `sidespin_curves` | rotation about the vertical axis: the ball curves left / right, as seen by the server looking along the flight |
+| `gyro_rps` | rotation about the flight direction (corkscrew): no curve |
+| `axis_tilt_deg` | the axis seen along the flight: 0° = pure backspin, ±90° = pure sidespin, 180° = pure topspin |
+| `spin_type` | label, e.g. "side-backspin (curves right)"; "no spin" below 3 rps |
+
+**Flight direction in 3D:** sideways from the image velocity; toward/away from the camera
+from the ball's apparent size, which grows as it approaches (`--hfov`, the camera's
+horizontal field of view, converts between them; Pixel 8 ≈ 68°). This matters: if the ball
+flies 15° toward the camera and this is ignored, part of the backspin is mislabelled as gyro.
+The camera is assumed level (image up = real up).
+
+**Independent physical check:** the ball's real size (40 mm) gives mm per pixel, so the
+trajectory gives the real downward acceleration. Gravity alone is 9.8 m/s²; backspin lift
+makes it less, topspin more. At serve speeds the effect is only about 1 m/s², close to the
+scale uncertainty, so this check is weak.
+
+| Serve | Meter | Back / top | Side | Gyro | Flight toward camera | Fall accel. | Check |
+|---|---|---|---|---|---|---|---|
+| w1 | side-backspin (curves right) + gyro, 35.7 rps | 22 back | 16 | 23 | −6° | 9.6 | ? (no lift seen) |
+| w2 | side-backspin (curves right), 31.7 rps | 24 back | 16 | 13 | −10° | 8.8 | ✓ lift |
+| w3 | side-topspin (curves left), 17.2 rps | 9 top | 12 | 8 | +15° | 12.3 | ✓ dip |
+| w4 | sidespin (curves right), 36.0 rps | 13 back | 33 | 6 | +7° | 9.6 | ✓ (little lift expected) |
+
+On the simulator, the components come out within about 2 rps for sharp balls and about
+7 rps for small, heavily blurred ones.
+
+### Validating the spin type (next recording)
+
+The rate is confirmed by hand counts; the type needs a reference. Record **5 serves of each**,
+saying the intended spin before each one:
+
+| Spin | How | Visible check on the floor bounce |
+|---|---|---|
+| Backspin | chop under the ball, racket open | skids, stops or rolls back |
+| Topspin | brush up the back of the ball | kicks forward, low |
+| Sidespin left / right | pendulum / reverse pendulum, brush the side | kicks sideways |
+| No spin | flat push, or just drop the ball | normal bounce |
+
+Frame the camera wide enough to see the first floor bounce: the bounce direction is a second,
+independent check of the spin type.
+
 ## Files
 
 - `spinmeter.py` — the meter (`--method pole` default for real footage; `3d` for large sharp balls; `2d` = v1; `--auto` finds the flight)

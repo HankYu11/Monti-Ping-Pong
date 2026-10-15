@@ -531,6 +531,11 @@
     const defl = samples.map((g) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
     const bg = medianFrames(defl, sw * sh);
     for (let p = 0; p < bg.length; p++) bg[p] = Math.trunc(bg[p]);
+    if (opt.onScene) {                        // setup check: overall light, and how much of the view keeps changing
+      let sum = 0; for (let p = 0; p < bg.length; p++) sum += bg[p];
+      const moving = defl.map((d) => { let n = 0; for (let p = 0; p < d.length; p++) if (Math.abs(d[p] - bg[p]) > 30) n++; return n / d.length; });
+      opt.onScene({ light: sum / bg.length, moving: median(moving) });
+    }
     const cands = new Array(nFrames).fill(null).map(() => []);
     // the per-frame search runs on worker threads when the browser allows it, else here
     const pool = await scanPool({ bgf, bg, sw, sh, W: R.W, H: R.H });
@@ -595,7 +600,9 @@
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
       segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] });
     }
-    return segs.sort((a, b) => a.start - b.start);
+    segs.sort((a, b) => a.start - b.start);
+    segs.ballFrames = cands.filter((c) => c.length).length;   // for the "no serve found" diagnosis
+    return segs;
   }
 
   // ------------------------------------------------------------ 2. ball + pole per frame
@@ -631,12 +638,12 @@
     return { cx, cy, t, keep };
   }
 
-  function measurePole(frames, balls, W, H, fps, inner = 0.92, nb = 10) {
+  function measurePole(frames, balls, W, H, fps, inner = 0.92, nb = 10, stats = {}) {
     const idx = balls.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     if (idx.length < 8) return null;
     const { cx: cxp, cy: cyp } = smoothFit(balls, 2.5, 2.5);
     const r = median(idx.map((i) => balls[i][2]));
-    const rows = [], Dall = [];
+    const rows = [], Dall = [], walls = [];
     for (const i of idx) {
       const cx = polyval(cxp, i), cy = polyval(cyp, i);
       const x0 = Math.trunc(Math.max(0, cx - 2.6 * r)), x1 = Math.trunc(Math.min(W, cx + 2.6 * r + 1));
@@ -650,6 +657,7 @@
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const rr = Math.hypot(x - cx, y - cy); if (rr <= inner * r) discN++; }
       if (discN < 20 || ring.length < 20) continue;
       const wall = median(ring);
+      walls.push(wall);
       for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
         const dx = x - cx, dy = y - cy;
         if (Math.hypot(dx, dy) <= inner * r) {
@@ -660,7 +668,8 @@
       rows.push({ i, D, UX, UY });
     }
     if (rows.length < 8) return null;
-    if (percentile(Dall, 95) - percentile(Dall, 10) < 0.15) return { error: "The marking is too faint to read. Use more light and a fully black half." };
+    stats.wall = median(walls); stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
+    if (stats.contrast < 0.15) return { error: "The marking is too faint to read. Use more light and a fully black half." };
     // per-spot white/black levels (removes the lighting gradient across the ball)
     const binsLo = Array.from({ length: nb * nb }, () => []);
     const bin = (u) => clamp(Math.trunc((u + 1) / 2 * nb), 0, nb - 1);
@@ -768,6 +777,62 @@
     return label;
   }
 
+  // ------------------------------------------------------------ setup check
+  // Each check: { key, status: "ok" | "warn" | "bad", title, text }. Thresholds come from the
+  // test serves: good light ≈ 135–145 brightness, ball 21–28 px across, all read correctly.
+  const chk = (key, status, title, text = "") => ({ key, status, title, text });
+  function videoChecks(meta, R, opts) {
+    const out = [], cf = meta.captureFps, pf = meta.playbackFps;
+    if (opts.captureFps) out.push(chk("fps", opts.captureFps >= 200 ? "ok" : "warn", `Frame rate set by hand: ${Math.round(opts.captureFps)} fps`));
+    else if (cf >= 200 || (!cf && pf >= 200)) out.push(chk("fps", "ok", `Slow motion, ${Math.round(cf || pf)} fps`));
+    else if (cf >= 100) out.push(chk("fps", "warn", `Only ${Math.round(cf)} fps`, `Spins above about ${Math.round(cf / 4 * 60).toLocaleString("en-US")} RPM can't be measured. Use 240 fps slow motion.`));
+    else if (cf) out.push(chk("fps", "bad", `Not slow motion (${Math.round(cf)} fps)`, "Record with the camera's slow-motion mode at 240 fps."));
+    else out.push(chk("fps", "warn", "Frame rate not in the file", "Edited or shared copies lose it, so 240 fps is assumed. Use the original video, or set the rate under Settings."));
+    const rot = Math.abs(meta.rotation || 0) % 180 === 90, w = rot ? R.H : R.W, h = rot ? R.W : R.H;
+    if (h > w) out.push(chk("orient", "bad", "Portrait video", "Hold the phone sideways (landscape) so the ball flies across the long side of the picture."));
+    else if (Math.min(w, h) < 720) out.push(chk("orient", "warn", `Low resolution (${w}×${h})`, "Use 1080p so the marking stays sharp."));
+    else out.push(chk("orient", "ok", `Landscape, ${w}×${h}`));
+    return out;
+  }
+  function sceneChecks(s) {
+    const out = [], L = Math.round(s.light);
+    if (s.light < 50) out.push(chk("light", "bad", "Too dark", `Brightness ${L} of 255. Add light: daylight or more lamps.`));
+    else if (s.light < 85) out.push(chk("light", "warn", "Dim", `Brightness ${L} of 255. More light gives a sharper marking.`));
+    else out.push(chk("light", "ok", "Enough light", `Brightness ${L} of 255`));
+    const m = Math.round(100 * s.moving);
+    if (s.moving > 0.3) out.push(chk("steady", "bad", "Camera moving, or a busy view", `${m}% of the picture keeps changing. Use a tripod and a plain wall behind the flight.`));
+    else if (s.moving > 0.12) out.push(chk("steady", "warn", "Lots of movement in view", `${m}% of the picture keeps changing. Keep people and other balls out of the background.`));
+    else out.push(chk("steady", "ok", "Camera steady"));
+    return out;
+  }
+  function flightCheck(segs) {
+    if (segs.length) return chk("flight", "ok", segs.length > 1 ? `${segs.length} serves found` : "Serve found");
+    if (segs.ballFrames < 12) return chk("flight", "bad", "No ball found", "Nothing ball-sized moved in view. Check the light, the distance (ball about 50 px across) and the plain wall behind the flight.");
+    return chk("flight", "bad", "No flight across the picture", "Something ball-sized moved, but not sideways across the view. Serve across the camera's view.");
+  }
+  function serveChecks(s) {
+    const out = [];
+    if (s.ballR) {
+      const d = Math.round(2 * s.ballR);
+      if (s.ballR < 7) out.push(chk("size", "bad", `Ball too small (${d} px across)`, "Move the camera closer: about 1–1.5 m from the ball's path, so the ball is 25–50 px across."));
+      else if (s.ballR < 10) out.push(chk("size", "warn", `Ball small (${d} px across)`, "Move a little closer: 25–50 px across works best."));
+      else out.push(chk("size", "ok", `Ball size good (${d} px across)`));
+    }
+    if (s.frames < 20) out.push(chk("frames", "warn", `Ball seen in only ${s.frames} frames`, "Keep more of the flight in view before the first bounce."));
+    if (s.contrast !== undefined) {
+      const c = `Contrast ${Math.round(100 * s.contrast)}%. `;
+      if (s.contrast < 0.15) out.push(chk("marks", "bad", "Marking not visible", c + "Use more light, and colour the black half fully."));
+      else if (s.contrast < 0.3) out.push(chk("marks", "warn", "Marking faint", c + "More light, or a darker marker, makes the reading surer."));
+      else out.push(chk("marks", "ok", "Marking clear", `Contrast ${Math.round(100 * s.contrast)}%`));
+    }
+    if (s.wall !== undefined) {
+      if (s.wall > 215) out.push(chk("wall", "warn", "Wall too bright", "The white half blends into the wall. Use a mid-tone wall."));
+      else if (s.wall < 35) out.push(chk("wall", "warn", "Wall too dark", "The black half blends into the wall. Use a mid-tone wall."));
+      else out.push(chk("wall", "ok", "Wall behind the ball works"));
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ 3. measure one serve
   async function measureSegment(R, seg, fps, hfov) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
@@ -778,11 +843,12 @@
     frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
     bg = medianFrames(frames, rw * rh);
     const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
-    const found = balls.filter(Boolean);
-    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg };
-    const r = measurePole(frames, balls, rw, rh, fps);
-    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg };
-    if (r.error) return { error: r.error, segment: seg };
+    const found = balls.filter(Boolean), stats = { frames: found.length };
+    if (found.length) stats.ballR = median(found.map((b) => b[2]));
+    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, checks: serveChecks(stats) };
+    const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats);
+    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, checks: serveChecks(stats) };
+    if (r.error) return { error: r.error, segment: seg, checks: serveChecks(stats) };
     const geo = flightGeometry(balls, fps, R.W, hfov);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
@@ -794,7 +860,7 @@
       axis, fit: r.score, reliable: r.score >= 0.75, runnerUp: r.runner,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
-      segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn),
+      segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
   }
 
@@ -813,12 +879,16 @@
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
+    const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
+    emit();
     try {
-      const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps) }, opts));
+      const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
+        onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
+      checks.push(flightCheck(segs)); emit();
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
-      if (!segs.length) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", serves: [], meta: timing() };
+      if (!segs.length) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", serves: [], checks, meta: timing() };
       const serves = [];
       for (let k = 0; k < segs.length; k++) {
         progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
@@ -826,7 +896,7 @@
       }
       progress("Done", 1);
       const first = serves.find((s) => !s.error);
-      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, meta: timing() };
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing() };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();

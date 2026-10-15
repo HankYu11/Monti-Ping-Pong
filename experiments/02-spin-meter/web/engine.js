@@ -308,8 +308,8 @@
     let info = null; const samples = [];
     mp4.onReady = (i) => { info = i; };
     mp4.onSamples = (id, user, ss) => { for (const x of ss) samples.push(x); };
-    const ab = buf.slice(0); ab.fileStart = 0;
-    mp4.appendBuffer(ab); mp4.flush();
+    buf.fileStart = 0;                        // no copy: long multi-serve videos can be hundreds of MB
+    mp4.appendBuffer(buf); mp4.flush();
     if (!info || !info.videoTracks.length) return null;
     const track = info.videoTracks[0];
     mp4.setExtractionOptions(track.id, null, { nbSamples: track.nb_samples });
@@ -512,8 +512,8 @@
     };
   }
 
-  // ------------------------------------------------------------ 1. find the flight
-  async function findFlight(R, progress, opt) {
+  // ------------------------------------------------------------ 1. find the flights (one per serve)
+  async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 12, maxFrames = opt.maxFrames ?? 40, minLen = 12;
     const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
     const stride = Math.max(4, Math.ceil(nFrames / 40));
@@ -571,22 +571,31 @@
       const dx = tr[tr.length - 1][1] - tr[0][1], dy = tr[tr.length - 1][2] - tr[0][2];
       return Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy);
     });
-    if (!good.length) return null;
-    let tr = good.reduce((a, b) => (b.length > a.length ? b : a));
-    const sign = Math.sign(tr[tr.length - 1][1] - tr[0][1]);
-    const runs = []; let cur = [tr[0]];
-    for (let k = 1; k < tr.length; k++) {
-      const a = tr[k - 1], b = tr[k], step = (b[1] - a[1]) / Math.max(1, b[0] - a[0]);
-      if (sign * step > 1.5) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+    // One serve per flight. Tracks closer than `gap` frames in time are pieces of the same
+    // flight (or the ball coming back); keep the longest. Serves are seconds apart.
+    const gap = opt.serveGap ?? 120, flights = [];
+    for (const tr of good.slice().sort((a, b) => b.length - a.length)) {
+      const s = tr[0][0], e = tr[tr.length - 1][0];
+      if (flights.every((f) => s > f[f.length - 1][0] + gap || e < f[0][0] - gap)) flights.push(tr);
     }
-    runs.push(cur);
-    tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter, skipAfter + maxFrames);
-    if (tr.length < 8) return null;
-    const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
-    const r = median(tr.map((p) => p[3])) / 0.5, pad = 4 * r;
-    const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
-    const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-    return { start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] };
+    const segs = [];
+    for (let tr of flights) {
+      const sign = Math.sign(tr[tr.length - 1][1] - tr[0][1]);
+      const runs = []; let cur = [tr[0]];
+      for (let k = 1; k < tr.length; k++) {
+        const a = tr[k - 1], b = tr[k], step = (b[1] - a[1]) / Math.max(1, b[0] - a[0]);
+        if (sign * step > 1.5) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+      }
+      runs.push(cur);
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter, skipAfter + maxFrames);
+      if (tr.length < 8) continue;
+      const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
+      const r = median(tr.map((p) => p[3])) / 0.5, pad = 4 * r;
+      const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
+      const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
+      segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] });
+    }
+    return segs.sort((a, b) => a.start - b.start);
   }
 
   // ------------------------------------------------------------ 2. ball + pole per frame
@@ -759,7 +768,39 @@
     return label;
   }
 
+  // ------------------------------------------------------------ 3. measure one serve
+  async function measureSegment(R, seg, fps, hfov) {
+    const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
+    let frames = new Array(seg.end - seg.start);
+    await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
+    frames = frames.filter(Boolean);
+    let bg = medianFrames(frames, rw * rh);
+    frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
+    bg = medianFrames(frames, rw * rh);
+    const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
+    const found = balls.filter(Boolean);
+    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg };
+    const r = measurePole(frames, balls, rw, rh, fps);
+    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg };
+    if (r.error) return { error: r.error, segment: seg };
+    const geo = flightGeometry(balls, fps, R.W, hfov);
+    const axis = matvec(geo.turn, r.axis);
+    const c = spinComponents(r.rps, axis, geo.f);
+    return {
+      rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
+      backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
+      sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
+      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
+      axis, fit: r.score, reliable: r.score >= 0.75, runnerUp: r.runner,
+      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
+      ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
+      segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn),
+    };
+  }
+
   // ------------------------------------------------------------ main entry
+  // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
+  // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     const progress = opts.onProgress || (() => {});
     const hfov = opts.hfov || 68, tStart = performance.now();
@@ -773,41 +814,20 @@
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
     try {
-      const seg = await findFlight(R, progress, opts);
+      const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps) }, opts));
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
-      if (!seg) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", meta: timing() };
-      progress("Measuring the spin", 0.86);
-      const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
-      let frames = new Array(seg.end - seg.start);
-      await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
-      frames = frames.filter(Boolean);
-      let bg = medianFrames(frames, rw * rh);
-      frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
-      bg = medianFrames(frames, rw * rh);
-      const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
-      const found = balls.filter(Boolean);
-      if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, meta: timing() };
-      const r = measurePole(frames, balls, rw, rh, fps);
-      if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, meta: timing() };
-      if (r.error) return { error: r.error, segment: seg, meta: timing() };
-      const geo = flightGeometry(balls, fps, R.W, hfov);
-      const axis = matvec(geo.turn, r.axis);
-      const c = spinComponents(r.rps, axis, geo.f);
-      const reliable = r.score >= 0.75;
-      const crops = makeCrops(frames, balls, rw, rh, geo.turn);
+      if (!segs.length) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", serves: [], meta: timing() };
+      const serves = [];
+      for (let k = 0; k < segs.length; k++) {
+        progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
+        serves.push(await measureSegment(R, segs[k], fps, hfov));
+      }
       progress("Done", 1);
-      return {
-        rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
-        backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
-        sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
-        gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
-        axis, fit: r.score, reliable, runnerUp: r.runner,
-        flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
-        ballRadiusPx: median(found.map((b) => b[2])), fps, captureFpsDetected: !!meta.captureFps,
-        segment: seg, meta: timing(), crops,
-      };
+      const first = serves.find((s) => !s.error);
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, meta: timing() };
+      return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();
     }

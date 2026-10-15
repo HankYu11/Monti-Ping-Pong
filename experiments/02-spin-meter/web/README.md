@@ -19,6 +19,10 @@ browser: the video is analysed on the device and never uploaded.
 3. Finds the serve's flight, the ball in each frame, the black half's pole, scans every
    spin rate, and splits the spin into back/top, side (with curve direction) and gyro.
 4. Detects which way is down from gravity, so upside-down or rotated videos read correctly.
+5. **Several serves per video (v2).** Every flight in the video becomes its own reading.
+   Ball tracks closer than 0.5 s apart count as one flight (the longest piece is kept), so
+   leave a second or two between serves. The result panel lists the serves (average and
+   range of RPM, tap one to see it), and the session log gets one row per serve.
 
 The page keeps a session log in the browser (intended spin vs. measured) that can be
 copied as tab-separated text, for comparing against what the server meant.
@@ -34,6 +38,15 @@ Same four serves (VP9 in MP4, headless Chromium, no GPU):
 | w3 | 16.9 rps, topspin | 17.1 rps, topspin + gyro (gyro share 0.52, cut-off 0.5) | 25 → 10 s |
 | w4 | 36.1 rps, backspin | 36.1 rps, backspin | 49 → 19 s |
 | w2 upside down | – | 31.7 rps, side-backspin | 54 → 21 s |
+
+## Several serves in one video
+
+Test clip: w1, w2 and w4 joined into one video (1903 frames). Each serve reads the same as
+its own clip: 36.1 rps side-backspin + gyro (low), 31.7 rps side-backspin, 36.1 rps
+backspin. w1 joined to itself reads 36.0 and 35.9 rps. Time grows with the video's length
+(about 73 s headless for the three serves), so a long set takes minutes on a phone. The
+whole file is read into memory once (no extra copy), so keep a set to roughly 20–30 s of
+recording.
 
 ## Speed
 

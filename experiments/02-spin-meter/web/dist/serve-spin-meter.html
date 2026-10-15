@@ -96,6 +96,14 @@ details.more[open] summary { margin-bottom: 10px; }
 .panel > *, .wrap > * { min-width: 0; }
 .film { overflow-x: auto; border-radius: 10px; background: #000; max-width: 100%; }
 .film img, .film canvas { display: block; height: 56px; max-width: none; image-rendering: auto; }
+.serves { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 4px; }
+.serves button { font: inherit; text-align: left; display: grid; gap: 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; min-width: 0; }
+.serves button b { font-family: var(--font-display); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.serves button span { font-size: 0.85rem; color: var(--muted); }
+.serves button[aria-pressed="true"] { border-color: var(--table); background: var(--table); color: var(--table-ink); }
+.serves button[aria-pressed="true"] span { color: inherit; opacity: 0.85; }
+.serves button.bad { color: var(--warn); }
+.serves button:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
 .trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
 .trust b { font-weight: 600; }
 
@@ -124,12 +132,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   <header class="top">
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
-    <p class="lede">Film a serve in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note">v1</p>
+    <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
+    <p class="note">v2 · several serves per video</p>
   </header>
 
   <section class="panel" aria-labelledby="measure-h">
-    <h2 id="measure-h">Measure a serve</h2>
+    <h2 id="measure-h">Measure serves</h2>
     <div class="row">
       <div class="field">
         <label class="label" for="intended">Spin the server intended</label>
@@ -156,7 +164,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <label class="pick" for="file">
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
-      <span>240 fps, phone in landscape, ball flying across a plain wall</span>
+      <span>240 fps, phone in landscape, ball flying across a plain wall. One serve or a whole set in one video.</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
@@ -189,7 +197,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
-    <div class="reading">
+    <div id="servesbox" hidden>
+      <span class="label" id="serves-label">Serves in this video</span>
+      <p class="note num" id="serves-sum"></p>
+      <div class="serves" id="serves" role="group" aria-labelledby="serves-label"></div>
+    </div>
+    <p class="note err" id="serve-error" hidden></p>
+    <div class="reading" id="readingbox">
       <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
       <span class="note num" id="rps">31.7 revolutions per second</span>
     </div>
@@ -221,7 +235,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>#</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th><th class="num">Time</th></tr></thead>
+        <thead><tr><th>#</th><th>Serve</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th><th class="num">Time</th></tr></thead>
         <tbody id="log"></tbody>
       </table>
     </div>
@@ -244,6 +258,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         <li><b>Side-on</b>, about 1–1.5 m from the ball's path, so the ball is about 50 px across. A plain wall behind the flight; not white, not black.</li>
         <li><b>Bright light</b>: daylight is best. Dim rooms make the marking soft.</li>
         <li>Serve <b>across</b> the camera's view. The meter needs about 0.2 s of flight before the first bounce.</li>
+        <li><b>Several serves in one video</b> is fine: leave a second or two between serves and keep the camera still. Each serve gets its own reading.</li>
       </ol>
     </div>
   </section>
@@ -561,8 +576,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     let info = null; const samples = [];
     mp4.onReady = (i) => { info = i; };
     mp4.onSamples = (id, user, ss) => { for (const x of ss) samples.push(x); };
-    const ab = buf.slice(0); ab.fileStart = 0;
-    mp4.appendBuffer(ab); mp4.flush();
+    buf.fileStart = 0;                        // no copy: long multi-serve videos can be hundreds of MB
+    mp4.appendBuffer(buf); mp4.flush();
     if (!info || !info.videoTracks.length) return null;
     const track = info.videoTracks[0];
     mp4.setExtractionOptions(track.id, null, { nbSamples: track.nb_samples });
@@ -765,8 +780,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     };
   }
 
-  // ------------------------------------------------------------ 1. find the flight
-  async function findFlight(R, progress, opt) {
+  // ------------------------------------------------------------ 1. find the flights (one per serve)
+  async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 12, maxFrames = opt.maxFrames ?? 40, minLen = 12;
     const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
     const stride = Math.max(4, Math.ceil(nFrames / 40));
@@ -824,22 +839,31 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       const dx = tr[tr.length - 1][1] - tr[0][1], dy = tr[tr.length - 1][2] - tr[0][2];
       return Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy);
     });
-    if (!good.length) return null;
-    let tr = good.reduce((a, b) => (b.length > a.length ? b : a));
-    const sign = Math.sign(tr[tr.length - 1][1] - tr[0][1]);
-    const runs = []; let cur = [tr[0]];
-    for (let k = 1; k < tr.length; k++) {
-      const a = tr[k - 1], b = tr[k], step = (b[1] - a[1]) / Math.max(1, b[0] - a[0]);
-      if (sign * step > 1.5) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+    // One serve per flight. Tracks closer than `gap` frames in time are pieces of the same
+    // flight (or the ball coming back); keep the longest. Serves are seconds apart.
+    const gap = opt.serveGap ?? 120, flights = [];
+    for (const tr of good.slice().sort((a, b) => b.length - a.length)) {
+      const s = tr[0][0], e = tr[tr.length - 1][0];
+      if (flights.every((f) => s > f[f.length - 1][0] + gap || e < f[0][0] - gap)) flights.push(tr);
     }
-    runs.push(cur);
-    tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter, skipAfter + maxFrames);
-    if (tr.length < 8) return null;
-    const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
-    const r = median(tr.map((p) => p[3])) / 0.5, pad = 4 * r;
-    const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
-    const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-    return { start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] };
+    const segs = [];
+    for (let tr of flights) {
+      const sign = Math.sign(tr[tr.length - 1][1] - tr[0][1]);
+      const runs = []; let cur = [tr[0]];
+      for (let k = 1; k < tr.length; k++) {
+        const a = tr[k - 1], b = tr[k], step = (b[1] - a[1]) / Math.max(1, b[0] - a[0]);
+        if (sign * step > 1.5) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+      }
+      runs.push(cur);
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter, skipAfter + maxFrames);
+      if (tr.length < 8) continue;
+      const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
+      const r = median(tr.map((p) => p[3])) / 0.5, pad = 4 * r;
+      const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
+      const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
+      segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] });
+    }
+    return segs.sort((a, b) => a.start - b.start);
   }
 
   // ------------------------------------------------------------ 2. ball + pole per frame
@@ -1012,7 +1036,39 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return label;
   }
 
+  // ------------------------------------------------------------ 3. measure one serve
+  async function measureSegment(R, seg, fps, hfov) {
+    const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
+    let frames = new Array(seg.end - seg.start);
+    await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
+    frames = frames.filter(Boolean);
+    let bg = medianFrames(frames, rw * rh);
+    frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
+    bg = medianFrames(frames, rw * rh);
+    const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
+    const found = balls.filter(Boolean);
+    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg };
+    const r = measurePole(frames, balls, rw, rh, fps);
+    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg };
+    if (r.error) return { error: r.error, segment: seg };
+    const geo = flightGeometry(balls, fps, R.W, hfov);
+    const axis = matvec(geo.turn, r.axis);
+    const c = spinComponents(r.rps, axis, geo.f);
+    return {
+      rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
+      backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
+      sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
+      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
+      axis, fit: r.score, reliable: r.score >= 0.75, runnerUp: r.runner,
+      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
+      ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
+      segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn),
+    };
+  }
+
   // ------------------------------------------------------------ main entry
+  // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
+  // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     const progress = opts.onProgress || (() => {});
     const hfov = opts.hfov || 68, tStart = performance.now();
@@ -1026,41 +1082,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
     try {
-      const seg = await findFlight(R, progress, opts);
+      const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps) }, opts));
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
-      if (!seg) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", meta: timing() };
-      progress("Measuring the spin", 0.86);
-      const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
-      let frames = new Array(seg.end - seg.start);
-      await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
-      frames = frames.filter(Boolean);
-      let bg = medianFrames(frames, rw * rh);
-      frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
-      bg = medianFrames(frames, rw * rh);
-      const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
-      const found = balls.filter(Boolean);
-      if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, meta: timing() };
-      const r = measurePole(frames, balls, rw, rh, fps);
-      if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, meta: timing() };
-      if (r.error) return { error: r.error, segment: seg, meta: timing() };
-      const geo = flightGeometry(balls, fps, R.W, hfov);
-      const axis = matvec(geo.turn, r.axis);
-      const c = spinComponents(r.rps, axis, geo.f);
-      const reliable = r.score >= 0.75;
-      const crops = makeCrops(frames, balls, rw, rh, geo.turn);
+      if (!segs.length) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", serves: [], meta: timing() };
+      const serves = [];
+      for (let k = 0; k < segs.length; k++) {
+        progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
+        serves.push(await measureSegment(R, segs[k], fps, hfov));
+      }
       progress("Done", 1);
-      return {
-        rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
-        backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
-        sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
-        gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
-        axis, fit: r.score, reliable, runnerUp: r.runner,
-        flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
-        ballRadiusPx: median(found.map((b) => b[2])), fps, captureFpsDetected: !!meta.captureFps,
-        segment: seg, meta: timing(), crops,
-      };
+      const first = serves.find((s) => !s.error);
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, meta: timing() };
+      return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();
     }
@@ -1124,7 +1159,17 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <circle class="dot" cx="${x}" cy="${y}" r="7"></circle>`;
   }
 
+  const readingParts = ["readingbox", "type", "compass", "comp", "facts"];
   function render(res) {
+    $("serve-error").hidden = !res.error;
+    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = !!res.error; });
+    if (res.error) {
+      $("serve-error").textContent = res.error;
+      const mt = res.meta || {};
+      $("chips").innerHTML = `<span class="chip low">No reading: re-record</span>`;
+      $("film").innerHTML = ""; $("perf").hidden = true;
+      return;
+    }
     $("rpm").textContent = fmt(res.rpm);
     $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
     $("type").textContent = typeText(res.spinType);
@@ -1162,6 +1207,26 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     else if (res.crops && res.crops.length) film.appendChild(filmCanvas(res.crops));
   }
 
+  function renderServes(res, pick) {
+    const list = res.serves || [];
+    $("servesbox").hidden = list.length < 2;
+    if (list.length < 2) return;
+    const ok = list.filter((s) => !s.error), rpm = ok.map((s) => s.rpm);
+    $("serves-sum").textContent = !ok.length ? `${list.length} serves found, none could be read.` :
+      `${list.length} serves · ${ok.length} read · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
+      (ok.length > 1 ? ` · range ${fmt(Math.min(...rpm))}–${fmt(Math.max(...rpm))}` : "") + ". Tap a serve to see it.";
+    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error ? "bad" : ""}">
+      <b>${k + 1} · ${s.error ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error ? "no reading" : typeText(s.spinType) + (s.reliable ? "" : " · low")}</span></button>`).join("");
+  }
+  $("serves").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-k]");
+    if (!b || !current) return;
+    const k = +b.dataset.k;
+    render(Object.assign({}, current.serves[k], { meta: current.meta }));
+    renderServes(current, k);
+  });
+  let current = null;
+
   function filmCanvas(crops) {
     const H = 56, cv = document.createElement("canvas");
     cv.width = H * crops.length; cv.height = H;
@@ -1184,15 +1249,15 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
   function renderLog() {
     const tb = $("log");
-    if (!log.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
+    if (!log.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
     tb.innerHTML = log.map((e, i) => `<tr>
-      <td class="num">${i + 1}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
+      <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
       <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type)}</td>
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
-    return [head].concat(log.map((e, i) => [i + 1, e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
+    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
+    return [head].concat(log.map((e, i) => [i + 1, e.serve ? e.serve + "/" + e.of : "", e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
       e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : ""].join("\t"))).join("\n");
   }
@@ -1220,13 +1285,21 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
-      const entry = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
-      if (res.error) {
-        $("error").textContent = res.error; $("error").hidden = false;
-        log.push(Object.assign(entry, { error: res.error, secs: res.meta && res.meta.seconds }));
+      const base = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
+      const secs = res.meta && res.meta.seconds;
+      const serves = res.serves || [];
+      if (!serves.length) {
+        $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
+        log.push(Object.assign(base, { error: res.error || "No serve found.", secs }));
       } else {
-        render(res);
-        log.push(Object.assign(entry, { rpm: res.rpm, type: res.spinType, lift: res.lift, curve: res.curve, gyro: res.gyro, reliable: res.reliable, secs: res.meta && res.meta.seconds }));
+        serves.forEach((s, k) => {
+          const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
+          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable }));
+        });
+        current = res;
+        const pick = Math.max(0, serves.findIndex((s) => !s.error));
+        render(Object.assign({}, serves[pick], { meta: res.meta }));
+        renderServes(res, pick);
         if (!res.captureFpsDetected && !fpsSel) { $("error").textContent = "The video didn't say its frame rate, so 240 fps was assumed. Change it under Settings if it was different."; $("error").hidden = false; }
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }

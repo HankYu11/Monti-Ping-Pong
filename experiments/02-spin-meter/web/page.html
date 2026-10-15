@@ -125,6 +125,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film a serve in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
+    <p class="note">Version 3 · faster analysis</p>
   </header>
 
   <section class="panel" aria-labelledby="measure-h">
@@ -220,7 +221,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>#</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th></tr></thead>
+        <thead><tr><th>#</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th><th class="num">Time</th></tr></thead>
         <tbody id="log"></tbody>
       </table>
     </div>
@@ -296,6 +297,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
+    const mt = res.meta || {};
+    if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
     $("chips").innerHTML = chips.join("");
     const total = Math.max(res.rps, 1);
     const rows = [
@@ -347,11 +350,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
   function renderLog() {
     const tb = $("log");
-    if (!log.length) { tb.innerHTML = `<tr><td colspan="6" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
+    if (!log.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
     tb.innerHTML = log.map((e, i) => `<tr>
       <td class="num">${i + 1}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
       <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type)}</td>
-      <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td></tr>`).join("");
+      <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
     const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";

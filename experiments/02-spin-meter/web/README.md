@@ -65,6 +65,43 @@ The service worker keeps the shared video only until the page picks it up, and k
 mp4box.js and fonts for offline use. Checked in headless Chromium: installable with no errors,
 works offline, and a video posted to `./share` is analysed.
 
+## Busy backgrounds and filming from the end of the table (2.2)
+
+Real halls have no plain wall. Clips filmed there (Pixel 8 originals, 15 Oct) found no serve in
+2.1. What changed, and why:
+- **Colour.** The search used brightness only, so the ball's black half and the blue table
+  were the same grey and half the ball vanished. Pixels now count as "not background" when
+  their brightness *or colour* (the decoder's chroma planes, no extra cost) differs.
+- **Linking.** Flickering lights at 240 fps leave hundreds of specks. Tracks now take their best
+  match first (near the predicted spot, similar size), so a speck can't take the ball's place,
+  and a flight must move steadily (≥ 1 px per frame at half size, mostly straight).
+- **Any direction.** Flights toward or away from the camera count, not only across. Not a
+  flight: a toss (mostly upward) or a straight drop that doesn't come closer.
+- **Bounces.** A bounce changes the spin, so the flight is cut where its velocity jumps and the
+  longest stretch between bounces is measured (a ball coming closer speeds up smoothly, which
+  doesn't count). From the end of the table that is the spin after the first bounce.
+- **Growing ball.** The ball's size is fitted per frame (1/size is linear in time).
+- **Reference white.** Darkness is judged against the background when it is even around the
+  ball (a plain wall, the table top); otherwise against the ball's own white half. This keeps
+  every earlier result unchanged.
+- **Direction and down from 3D.** The ball's distance comes from its size, so the flight
+  direction and gravity are taken from its path in space. Judged from the picture alone, a
+  ball coming closer drifts outward and seems to curve, which turned "down" by 90°.
+
+Results (headless Chromium; the new clips converted to VP9 for the test browser):
+
+| Clip | 2.1 | 2.2 |
+|---|---|---|
+| p4, hall, from the far end (coach: backspin with a little side) | no serve | **36.9 rps backspin, clear** (count by eye 37.5) |
+| p3, same view, hand-held | no serve | wrong object, marked low |
+| p1, p2, from behind the server | no serve | no serve (ball small and blurred) |
+| w1 | 35.8 side-backspin + gyro, low | same, now clear (fit 0.74, next rate 0.29) |
+| w2, w2 upside down, w3, w4 | | same rates and labels |
+| w1+w2+w4 in one video | 3 serves | same 3 serves |
+
+"Clear" now also means a fit ≥ 0.5 that is ≥ 0.2 ahead of the best other spin rate.
+The Python meter (`../spinmeter.py`) doesn't have these changes yet.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

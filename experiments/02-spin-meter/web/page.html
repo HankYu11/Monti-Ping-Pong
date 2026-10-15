@@ -178,7 +178,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
       <!--APP_PICK_HINT-->
-      <span>240 fps, phone in landscape, ball flying across a plain wall. One serve or a whole set in one video.</span>
+      <span>240 fps, phone in landscape and held still. One serve or a whole set in one video.</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
@@ -237,8 +237,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <p class="note" id="perf" hidden></p>
     </div>
     <div class="trust">
-      <p><b>Revolutions per minute:</b> matched hand counts on 4 of 4 test serves (within about 5%).</p>
-      <p><b>Backspin or topspin:</b> correct on 3 of 3 labelled serves so far.</p>
+      <p><b>Revolutions per minute:</b> matched hand counts on 5 of 5 test serves (within about 5%).</p>
+      <p><b>Backspin or topspin:</b> correct on 4 of 4 labelled serves so far.</p>
+      <p><b>Filmed from the end of the table:</b> the reading is the spin after the first bounce, which is what the receiver faces. The bounce takes off a little spin.</p>
       <p><b>Sidespin amount:</b> experimental. On a dim, small ball the axis can be off by tens of degrees. Serves labelled by your coach will show how far.</p>
     </div>
   </section>
@@ -272,10 +273,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       </svg>
       <ol>
         <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
-        <li><b>Slow motion at 240 fps</b>, phone in landscape on a tripod, level, at contact height.</li>
-        <li><b>Side-on</b>, about 1–1.5 m from the ball's path, so the ball is 25–50 px across. A plain wall behind the flight; not white, not black.</li>
-        <li><b>Bright light</b>: daylight is best. Dim rooms make the marking soft.</li>
-        <li>Serve <b>across</b> the camera's view. The meter needs about 0.2 s of flight before the first bounce.</li>
+        <li><b>Slow motion at 240 fps</b>, phone in landscape, <b>held still</b>: on a tripod, or leaned against something solid.</li>
+        <li><b>From the far end of the table</b>, a little to one side, looking back at the server: the ball comes toward the camera over the table. Works in a busy hall, because the table is behind the ball.</li>
+        <li>Or <b>side-on</b>, about 1–1.5 m from the ball's path, with a plain wall behind the flight.</li>
+        <li><b>Not from behind the server</b>: the ball flies away, gets small and blurs.</li>
+        <li><b>Bright light</b>: daylight or extra lamps. Dim light blurs the marking.</li>
         <li><b>Several serves in one video</b> is fine: leave a second or two between serves and keep the camera still. Each serve gets its own reading.</li>
       </ol>
     </div>
@@ -340,6 +342,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
+    if (res.afterBounce) chips.push(`<span class="chip">After the bounce</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
     $("chips").innerHTML = chips.join("");

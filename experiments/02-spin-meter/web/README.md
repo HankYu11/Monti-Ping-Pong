@@ -50,6 +50,9 @@ background median. Changes:
   from this same file. If the page isn't allowed to start workers, it runs on the main
   thread as before.
 
+On the Pixel 8 (Chrome): about 60 s per clip before, **16 s** after, with direct frame
+reading (the software decoder's frames are readable, so the canvas fallback isn't needed).
+
 Small differences from the earlier numbers come from reading brightness directly (video
 range Y mapped to 0–255) instead of the canvas' RGB-to-gray conversion. The result shows
 "Analysed in N s · direct / canvas frame reading" and the session log has a `seconds`

@@ -65,6 +65,87 @@ The service worker keeps the shared video only until the page picks it up, and k
 mp4box.js and fonts for offline use. Checked in headless Chromium: installable with no errors,
 works offline, and a video posted to `./share` is analysed.
 
+## Busy backgrounds and filming from the end of the table (2.2)
+
+Real halls have no plain wall. Clips filmed there (Pixel 8 originals, 15 Oct) found no serve in
+2.1. What changed, and why:
+- **Colour.** The search used brightness only, so the ball's black half and the blue table
+  were the same grey and half the ball vanished. Pixels now count as "not background" when
+  their brightness *or colour* (the decoder's chroma planes, no extra cost) differs.
+- **Linking.** Flickering lights at 240 fps leave hundreds of specks. Tracks now take their best
+  match first (near the predicted spot, similar size), so a speck can't take the ball's place,
+  and a flight must move steadily (≥ 1 px per frame at half size, mostly straight).
+- **Any direction.** Flights toward or away from the camera count, not only across. Not a
+  flight: a toss (mostly upward) or a straight drop that doesn't come closer.
+- **Bounces.** A bounce changes the spin, so the flight is cut where its velocity jumps and the
+  longest stretch between bounces is measured (a ball coming closer speeds up smoothly, which
+  doesn't count). From the end of the table that is the spin after the first bounce.
+- **Growing ball.** The ball's size is fitted per frame (1/size is linear in time).
+- **Reference white.** Darkness is judged against the background when it is even around the
+  ball (a plain wall, the table top); otherwise against the ball's own white half. This keeps
+  every earlier result unchanged.
+- **Direction and down from 3D.** The ball's distance comes from its size, so the flight
+  direction and gravity are taken from its path in space. Judged from the picture alone, a
+  ball coming closer drifts outward and seems to curve, which turned "down" by 90°.
+
+Results (headless Chromium; the new clips converted to VP9 for the test browser):
+
+| Clip | 2.1 | 2.2 |
+|---|---|---|
+| p4, hall, from the far end (coach: backspin with a little side) | no serve | **36.9 rps backspin, clear** (count by eye 37.5) |
+| p3, same view, hand-held | no serve | wrong object, marked low |
+| p1, p2, from behind the server | no serve | no serve (ball small and blurred) |
+| w1 | 35.8 side-backspin + gyro, low | same, now clear (fit 0.74, next rate 0.29) |
+| w2, w2 upside down, w3, w4 | | same rates and labels |
+| w1+w2+w4 in one video | 3 serves | same 3 serves |
+
+"Clear" now also means a fit ≥ 0.5 that is ≥ 0.2 ahead of the best other spin rate.
+The Python meter (`../spinmeter.py`) doesn't have these changes yet.
+
+## Off the paddle and after the bounce (2.2)
+
+The flight is cut at its kinks. A kink where the ball suddenly flies off much faster (≥ 1.6×)
+is the hit: anything before it, such as a toss falling into view, is dropped. Any other kink
+is a bounce. Two stretches are then measured:
+- **off the paddle**: from 4 frames after the hit (the paddle still touches the ball) to the
+  first bounce: the serve's own spin;
+- **after the bounce**: from 2 frames after the bounce to the next kink: what the receiver faces.
+
+Each needs ≥ 8 frames. The headline reading is off the paddle when it reads clearly, else the
+clearer one; the page shows both and either can be opened. With no bounce in view there is one
+"in flight" reading. A stretch where no ball-shaped object is found in most frames is dropped
+when the video has other serves.
+
+Tested on made-up paths (toss, hit, flight, bounce: kinks found at frames 13 and 32 for true
+12 and 32; a ball speeding up smoothly toward the camera gives no kink) and on the clips:
+p4's stretch before the bounce is 8 frames, too short, so it reads after the bounce only
+(36.95 rps backspin, clear); w1 reads 35.8 rps off the paddle (clear) and a short, low-quality
+stretch after a later bounce; w2–w4 have no bounce in view and read as before.
+
+Best camera position for both readings: beside the table at the server's half, 1–1.5 m from
+the path from paddle to first bounce, 40–60 cm above the table and tilted down, so the table
+is behind the ball and its size barely changes.
+
+## Saying what went wrong, not guessing (2.2)
+
+A stretch without a clear reading shows **no number**: "No clear reading", the frames it had,
+and a "What to change in the footage" list, each item a problem found in the footage and the fix:
+- ball found in under 70% of the stretch's frames (hidden, or blends with the background);
+- ball under 20 px across; motion blur (ball stretched > 1.35× along its path);
+- black half faint (contrast < 30%); spin rate ambiguous (another rate fits about as well);
+- setup problems from the checklist (too dark, frame rate, portrait).
+
+Stretches that couldn't be measured say why, with frame counts: "Off the paddle: not measured.
+Only 7 frames from when the ball was first seen to the bounce (needs 12)"; after the bounce,
+whether the ball then left the picture (which edge) or was lost; with no bounce in view, that
+the reading can't be placed before or after the bounce. The session log records "no clear
+reading" with the first reason instead of a number.
+
+Tried and dropped: a whole-picture camera-shake measure (on plain walls there is nothing to
+line up, so tripod clips looked shaky), and one background per section of the video (too few
+samples per section; the server's body leaked into it and p4 was lost). The background samples
+are now stored as bytes (about 60 MB instead of 240 MB for 40 colour samples).
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

@@ -294,12 +294,19 @@
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     return { c, ctx: c.getContext("2d", { willReadFrequently: true }) };
   }
-  function toGray(ctx, src, W, H, roi) {      // gray as in cv2.cvtColor(BGR2GRAY): rounded
+  // gray as in cv2.cvtColor(BGR2GRAY), rounded; colour as centred chroma (U = blue - gray, V = red - gray)
+  function rgbToColor(d, n) {
+    const g = new Float32Array(n), u = new Float32Array(n), v = new Float32Array(n);
+    for (let p = 0, q = 0; p < n; p++, q += 4) {
+      const y = 0.299 * d[q] + 0.587 * d[q + 1] + 0.114 * d[q + 2];
+      g[p] = Math.round(y); u[p] = 0.564 * (d[q + 2] - y); v[p] = 0.713 * (d[q] - y);
+    }
+    return { g, u, v };
+  }
+  function toColor(ctx, src, W, H, roi) {
     ctx.drawImage(src, 0, 0, W, H);
-    const [x, y, w, h] = roi || [0, 0, W, H];
-    const d = ctx.getImageData(x, y, w, h).data, out = new Float32Array(w * h);
-    for (let p = 0, q = 0; p < out.length; p++, q += 4) out[p] = Math.round(0.299 * d[q] + 0.587 * d[q + 1] + 0.114 * d[q + 2]);
-    return out;
+    const [x, y, w, h] = roi;
+    return rgbToColor(ctx.getImageData(x, y, w, h).data, w * h);
   }
 
   async function webCodecsReader(buf) {
@@ -395,31 +402,42 @@
     };
   }
 
-  function halfGray(ctx, src, W, H) {         // scan passes: let the canvas shrink the frame (4x fewer pixels)
+  function halfColor(ctx, src, W, H) {        // scan passes: let the canvas shrink the frame (4x fewer pixels)
     const w = Math.floor(W / 2), h = Math.floor(H / 2);
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "medium";
     ctx.drawImage(src, 0, 0, w, h);
-    const d = ctx.getImageData(0, 0, w, h).data, out = new Float32Array(w * h);
-    for (let p = 0, q = 0; p < out.length; p++, q += 4) out[p] = Math.round(0.299 * d[q] + 0.587 * d[q + 1] + 0.114 * d[q + 2]);
-    return { g: out, w, h };
+    return Object.assign(rgbToColor(ctx.getImageData(0, 0, w, h).data, w * h), { w, h });
   }
 
-  // Fast path: read the brightness (Y) plane straight out of a decoded VideoFrame, no canvas round trip.
-  // Gray = Y mapped from video range to 0-255, which is what the canvas gives for a gray ball on a gray wall.
-  const LUMA_FORMATS = new Set(["I420", "I420A", "I422", "I444", "NV12"]);
-  let lumaBroken = false;
-  async function lumaPlane(frame, W, H) {    // -> { buf, offset, stride, lut }, or null when this frame can't be read this way
-    if (lumaBroken || typeof VideoFrame === "undefined" || !(frame instanceof VideoFrame)) return null;
-    if (!LUMA_FORMATS.has(frame.format) || frame.visibleRect.width !== W || frame.visibleRect.height !== H) return null;
+  // Fast path: read the decoded VideoFrame's planes directly, no canvas round trip.
+  // Brightness = Y mapped from video range to 0-255. Colour = the two chroma planes, centred on 0:
+  // they tell a black ball half from a blue table of the same brightness.
+  const PLANE_FORMATS = new Set(["I420", "I420A", "I422", "I444", "NV12"]);
+  let planesBroken = false;
+  async function framePlanes(frame, W, H) {  // -> { buf, offset, stride, lut, full, u, v }, or null when this frame can't be read this way
+    if (planesBroken || typeof VideoFrame === "undefined" || !(frame instanceof VideoFrame)) return null;
+    if (!PLANE_FORMATS.has(frame.format) || frame.visibleRect.width !== W || frame.visibleRect.height !== H) return null;
     try {
       const buf = new Uint8Array(frame.allocationSize());
       const layout = await frame.copyTo(buf);
-      const full = frame.colorSpace && frame.colorSpace.fullRange;
-      return { buf, offset: layout[0].offset, stride: layout[0].stride, lut: full ? LUT_FULL : LUT_VIDEO };
-    } catch (e) { lumaBroken = true; return null; }
+      const full = !!(frame.colorSpace && frame.colorSpace.fullRange);
+      const P = { buf, offset: layout[0].offset, stride: layout[0].stride, lut: full ? LUT_FULL : LUT_VIDEO, full, u: null, v: null };
+      // chroma at half size both ways (I420, NV12); other layouts are read as brightness only
+      if (frame.format === "I420" || frame.format === "I420A") {
+        P.u = { offset: layout[1].offset, stride: layout[1].stride, step: 1 };
+        P.v = { offset: layout[2].offset, stride: layout[2].stride, step: 1 };
+      } else if (frame.format === "NV12") {
+        P.u = { offset: layout[1].offset, stride: layout[1].stride, step: 2 };
+        P.v = { offset: layout[1].offset + 1, stride: layout[1].stride, step: 2 };
+      }
+      return P;
+    } catch (e) { planesBroken = true; return null; }
   }
   const LUT_FULL = Float32Array.from({ length: 256 }, (_, v) => v);
   const LUT_VIDEO = Float32Array.from({ length: 256 }, (_, v) => clamp(Math.round((v - 16) * 255 / 219), 0, 255));
+  const CHROMA_FULL = Float32Array.from({ length: 256 }, (_, v) => v - 128);
+  const CHROMA_VIDEO = Float32Array.from({ length: 256 }, (_, v) => (v - 128) * 255 / 224);
+  const CHROMA_GAIN = 1.5;                    // a colour change counts this much against a brightness change
   function lumaHalf({ buf, offset, stride, lut }, W, H) {   // 2x2 average, rounded (cv2 INTER_AREA)
     const w = Math.floor(W / 2), h = Math.floor(H / 2), out = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
@@ -431,35 +449,60 @@
     }
     return { g: out, w, h };
   }
+  function chromaHalf(P, c, W, H) {          // the chroma plane is already half size
+    const w = Math.floor(W / 2), h = Math.floor(H / 2), out = new Float32Array(w * h), lut = P.full ? CHROMA_FULL : CHROMA_VIDEO;
+    for (let y = 0; y < h; y++) { const r = c.offset + y * c.stride; for (let x = 0; x < w; x++) out[y * w + x] = lut[P.buf[r + x * c.step]]; }
+    return out;
+  }
   function lumaCrop({ buf, offset, stride, lut }, roi) {
     const [x0, y0, w, h] = roi, out = new Float32Array(w * h);
     for (let y = 0; y < h; y++) { const r = offset + (y0 + y) * stride + x0; for (let x = 0; x < w; x++) out[y * w + x] = lut[buf[r + x]]; }
     return out;
   }
-  const readStats = { direct: 0, canvas: 0 };
-  async function grabHalf(ctx, src, W, H) {   // half-size gray frame for the scan passes
-    const L = await lumaPlane(src, W, H);
-    readStats[L ? "direct" : "canvas"]++;
-    return L ? lumaHalf(L, W, H) : halfGray(ctx, src, W, H);
+  function chromaCrop(P, c, roi) {           // full-size crop from the half-size chroma plane
+    const [x0, y0, w, h] = roi, out = new Float32Array(w * h), lut = P.full ? CHROMA_FULL : CHROMA_VIDEO;
+    for (let y = 0; y < h; y++) { const r = c.offset + ((y0 + y) >> 1) * c.stride; for (let x = 0; x < w; x++) out[y * w + x] = lut[P.buf[r + ((x0 + x) >> 1) * c.step]]; }
+    return out;
   }
-  async function grabGray(ctx, src, W, H, roi) {
-    const L = await lumaPlane(src, W, H);
-    readStats[L ? "direct" : "canvas"]++;
-    return L ? lumaCrop(L, roi) : toGray(ctx, src, W, H, roi);
+  const readStats = { direct: 0, canvas: 0 };
+  async function grabHalf(ctx, src, W, H) {   // half-size frame for the scan passes: { g, u, v } (u, v may be null)
+    const P = await framePlanes(src, W, H);
+    readStats[P ? "direct" : "canvas"]++;
+    if (!P) return halfColor(ctx, src, W, H);
+    return { g: lumaHalf(P, W, H).g, u: P.u ? chromaHalf(P, P.u, W, H) : null, v: P.v ? chromaHalf(P, P.v, W, H) : null };
+  }
+  async function grabColor(ctx, src, W, H, roi) {
+    const P = await framePlanes(src, W, H);
+    readStats[P ? "direct" : "canvas"]++;
+    if (!P) return toColor(ctx, src, W, H, roi);
+    return { g: lumaCrop(P, roi), u: P.u ? chromaCrop(P, P.u, roi) : null, v: P.v ? chromaCrop(P, P.v, roi) : null };
+  }
+  function colourDiff(g, bg, col, p) {        // how different a pixel is from the background, in brightness or colour
+    let d = Math.abs(g - bg);
+    if (col) d = Math.max(d, CHROMA_GAIN * Math.abs(col.u[p] - col.bgU[p]), CHROMA_GAIN * Math.abs(col.v[p] - col.bgV[p]));
+    return d;
   }
 
   // ------------------------------------------------------------ scan pass: candidates in one frame
-  function scanFrame(job, ctx) {             // job: { buf, offset, stride, full } (Y plane) or { g } (half-size gray)
-    const { bgf, bg, sw, sh, W, H } = ctx;
-    const g = job.g || lumaHalf({ buf: job.buf, offset: job.offset, stride: job.stride, lut: job.full ? LUT_FULL : LUT_VIDEO }, W, H).g;
+  function scanFrame(job, ctx) {             // job: { buf, offset, stride, full, pu, pv } (planes) or { g, u, v } (half size)
+    const { sw, sh, W, H } = ctx;
+    const sec = ctx.sections.find((q) => job.i >= q.from && job.i < q.to) || ctx.sections[ctx.sections.length - 1];
+    const { bgf, bg, bgU, bgV } = sec;
+    let { g, u, v } = job;
+    if (!g) {
+      const P = { buf: job.buf, offset: job.offset, stride: job.stride, lut: job.full ? LUT_FULL : LUT_VIDEO, full: job.full };
+      g = lumaHalf(P, W, H).g;
+      if (job.pu) { u = chromaHalf(P, job.pu, W, H); v = chromaHalf(P, job.pv, W, H); }
+    }
+    const col = u && bgU ? { u, v, bgU, bgV } : null;
     const d = deflickerOne(g, bgf, sw, sh, 2);
     const mask = new Uint8Array(sw * sh);
-    for (let p = 0; p < mask.length; p++) mask[p] = Math.abs(clamp(Math.floor(d[p]), 0, 255) - bg[p]) > 30 ? 1 : 0;
+    for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(clamp(Math.floor(d[p]), 0, 255), bg[p], col, p) > 30 ? 1 : 0;
     const m2 = opening(mask, sw, sh, 2);
     const fc = [];
     for (const c of components(m2, sw, sh, false)) {
-      if (c.area < 12 || c.area > 900) continue;
-      if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.7 || c.area / (c.w * c.h) < 0.5) continue;
+      if (c.area < 12 || c.area > 2500) continue;
+      if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.8 || c.area / (c.w * c.h) < 0.5) continue;
       fc.push([c.cx, c.cy, Math.sqrt(c.area / Math.PI)]);
     }
     return fc;
@@ -512,25 +555,67 @@
     };
   }
 
+  // ------------------------------------------------------------ bounces
+  // A bounce shows as a sudden change of the ball's velocity in the picture. A ball coming
+  // toward the camera also speeds up in the picture, but smoothly, so compare the velocity
+  // over a few frames just before and just after each point.
+  function velocity(tr, a, b) {               // least-squares velocity of tr[a..b) in px per frame
+    const n = b - a; let st = 0, sx = 0, sy = 0, stt = 0, stx = 0, sty = 0;
+    for (let k = a; k < b; k++) { const t = tr[k][0], x = tr[k][1], y = tr[k][2]; st += t; sx += x; sy += y; stt += t * t; stx += t * x; sty += t * y; }
+    const den = n * stt - st * st || 1;
+    return [(n * stx - st * sx) / den, (n * sty - st * sy) / den];
+  }
+  function bounceIndex(tr, k = 5) {           // index of the first frame after a bounce, or -1
+    let best = -1, bestDv = 0;
+    for (let b = k; b <= tr.length - k; b++) {
+      const v0 = velocity(tr, b - k, b), v1 = velocity(tr, b, b + k);
+      const dv = Math.hypot(v1[0] - v0[0], v1[1] - v0[1]), sp = 0.5 * (Math.hypot(...v0) + Math.hypot(...v1));
+      if (dv > Math.max(2, 0.5 * sp) && dv > bestDv) { bestDv = dv; best = b; }
+    }
+    return best;
+  }
+  // A kink is either the hit (a falling toss suddenly flies off fast) or a bounce (the ball keeps
+  // most of its speed but changes direction).
+  function kinkKind(tr, b, k = 5) {
+    return Math.hypot(...velocity(tr, b, b + k)) > 1.6 * Math.hypot(...velocity(tr, b - k, b)) ? "contact" : "bounce";
+  }
+  function splitAtKinks(tr, kind = "start", depth = 0) {   // [{ pts, kind }] in time order; kind = how the piece begins
+    const b = depth < 3 ? bounceIndex(tr) : -1;
+    if (b < 0) return [{ pts: tr, kind }];
+    return splitAtKinks(tr.slice(0, b), kind, depth + 1).concat(splitAtKinks(tr.slice(b), kinkKind(tr, b), depth + 1));
+  }
+
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
-    const skipAfter = opt.skipAfterContact ?? 12, maxFrames = opt.maxFrames ?? 40, minLen = 12;
+    const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
     const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
+    // background samples, kept small: brightness as bytes, colour as signed bytes
+    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
+      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
     if (R.kind === "seek") {
-      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => samples.push((await grabHalf(ctx, src, R.W, R.H)).g));
+      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => keep(k, await grabHalf(ctx, src, R.W, R.H)));
     } else {
       await R.run(0, nFrames, async (k, src) => {
-        if (k % stride === 0) samples.push((await grabHalf(ctx, src, R.W, R.H)).g);
+        if (k % stride === 0) keep(k, await grabHalf(ctx, src, R.W, R.H));
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
-    const bgf = medianFrames(samples, sw * sh);
-    const defl = samples.map((g) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
-    const bg = medianFrames(defl, sw * sh);
-    for (let p = 0; p < bg.length; p++) bg[p] = Math.trunc(bg[p]);
+    const withColour = samples.every((s) => s.u);
+    function background(set) {               // still background from a set of samples
+      const bgf = medianFrames(set.map((s) => s.g), sw * sh);
+      const defl = set.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
+      const bg = Uint8Array.from(medianFrames(defl, sw * sh), Math.trunc);
+      const bgU = withColour ? Int8Array.from(medianFrames(set.map((s) => s.u), sw * sh), Math.round) : null;
+      const bgV = withColour ? Int8Array.from(medianFrames(set.map((s) => s.v), sw * sh), Math.round) : null;
+      return { bgf, bg, bgU, bgV, defl };
+    }
+    const whole = background(samples), { bgf, bg, defl } = whole;
+    // (one background per section of the video was tried, for a phone still being set down at
+    // the start: with ~10 samples per section, the server's body leaked into the background)
+    const sections = [{ from: 0, to: nFrames, bgf: whole.bgf, bg: whole.bg, bgU: whole.bgU, bgV: whole.bgV }];
     if (opt.onScene) {                        // setup check: overall light, and how much of the view keeps changing
       let sum = 0; for (let p = 0; p < bg.length; p++) sum += bg[p];
       const moving = defl.map((d) => { let n = 0; for (let p = 0; p < d.length; p++) if (Math.abs(d[p] - bg[p]) > 30) n++; return n / d.length; });
@@ -538,43 +623,68 @@
     }
     const cands = new Array(nFrames).fill(null).map(() => []);
     // the per-frame search runs on worker threads when the browser allows it, else here
-    const pool = await scanPool({ bgf, bg, sw, sh, W: R.W, H: R.H });
+    const scanCtx = { sections, sw, sh, W: R.W, H: R.H };
+    const pool = await scanPool(scanCtx);
     let doneN = 0;
     const store = (i, fc) => { cands[i] = fc; if (++doneN % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * doneN / nFrames); };
     try {
       await R.run(0, nFrames, async (i, src) => {
-        const L = await lumaPlane(src, R.W, R.H);
-        readStats[L ? "direct" : "canvas"]++;
-        const job = L ? { i, buf: L.buf, offset: L.offset, stride: L.stride, full: L.lut === LUT_FULL } : { i, g: halfGray(ctx, src, R.W, R.H).g };
+        const P = await framePlanes(src, R.W, R.H);
+        readStats[P ? "direct" : "canvas"]++;
+        const job = P ? { i, buf: P.buf, offset: P.offset, stride: P.stride, full: P.full, pu: P.u, pv: P.v } : Object.assign({ i }, halfColor(ctx, src, R.W, R.H));
         if (pool) await pool.submit(job, store);
-        else store(i, scanFrame(job, { bgf, bg, sw, sh, W: R.W, H: R.H }));
+        else store(i, scanFrame(job, scanCtx));
       });
       if (pool) await pool.drain();
     } finally { if (pool) pool.close(); }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];
+    // Best matches first (close to the predicted spot, similar size), so a speck of noise near
+    // the flight can't take the ball away from its own track.
     cands.forEach((cs, i) => {
-      const used = new Set();
-      for (const tr of active) {
-        const [f1, x1, y1] = tr[tr.length - 1];
+      const used = new Set(), pairs = [];
+      active.forEach((tr, ti) => {
+        const [f1, x1, y1, r1] = tr[tr.length - 1];
         let px = x1, py = y1;
         if (tr.length > 1) {
           const [f0, x0, y0] = tr[tr.length - 2], df = Math.max(1, f1 - f0);
           px = x1 + (x1 - x0) / df * (i - f1); py = y1 + (y1 - y0) / df * (i - f1);
         }
-        let best = null, bd = 25.0;
-        cs.forEach((c, j) => { const dd = Math.hypot(c[0] - px, c[1] - py); if (!used.has(j) && dd < bd) { best = j; bd = dd; } });
-        if (best !== null) { used.add(best); tr.push([i, ...cs[best]]); }
+        const gate = Math.max(25.0, 3 * r1);   // a ball coming closer grows and speeds up in the picture
+        cs.forEach((c, j) => {
+          const dd = Math.hypot(c[0] - px, c[1] - py);
+          if (dd < gate) pairs.push([dd + 8 * Math.abs(Math.log(c[2] / r1)), ti, j]);
+        });
+      });
+      pairs.sort((a, b) => a[0] - b[0]);
+      const took = new Set();
+      for (const [, ti, j] of pairs) {
+        if (took.has(ti) || used.has(j)) continue;
+        took.add(ti); used.add(j); active[ti].push([i, ...cs[j]]);
       }
       const still = active.filter((tr) => i - tr[tr.length - 1][0] <= 2);
       tracks = tracks.concat(active.filter((tr) => i - tr[tr.length - 1][0] > 2));
       active = still.concat(cs.map((c, j) => (used.has(j) ? null : [[i, ...c]])).filter(Boolean));
     });
     tracks = tracks.concat(active);
+    if (opt.onTracks) opt.onTracks(   // for tests: every track of 8+ frames, and the per-frame candidates
+      tracks.filter((tr) => tr.length >= 8).map((tr) => tr.map((q) => q.map((v) => Math.round(v * 10) / 10))), cands);
+    // A flight may go across the picture, toward the camera or away from it. Not a flight: a
+    // toss (mostly upward), a ball dropping straight down without coming closer, slow movers.
     const good = tracks.filter((tr) => {
       if (tr.length < minLen) return false;
-      const dx = tr[tr.length - 1][1] - tr[0][1], dy = tr[tr.length - 1][2] - tr[0][2];
-      return Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy);
+      const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
+      const disp = Math.hypot(dx, dy);
+      if (disp < 30) return false;
+      // a flight moves steadily: not a flickering light or a jittery spot that drifts
+      if (disp / Math.max(1, b[0] - a[0]) < 1.0) return false;
+      let path = 0;
+      for (let k = 1; k < tr.length; k++) path += Math.hypot(tr[k][1] - tr[k - 1][1], tr[k][2] - tr[k - 1][2]);
+      if (disp < 0.6 * path) return false;
+      if (dy < 0 && -dy > Math.abs(dx)) return false;
+      const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
+      if (dy > 2 * Math.abs(dx) && grow < 1.3 && grow > 1 / 1.3) return false;
+      return true;
     });
     // One serve per flight. Tracks closer than `gap` frames in time are pieces of the same
     // flight (or the ball coming back); keep the longest. Serves are seconds apart.
@@ -585,20 +695,56 @@
     }
     const segs = [];
     for (let tr of flights) {
-      const sign = Math.sign(tr[tr.length - 1][1] - tr[0][1]);
+      // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
       for (let k = 1; k < tr.length; k++) {
-        const a = tr[k - 1], b = tr[k], step = (b[1] - a[1]) / Math.max(1, b[0] - a[0]);
-        if (sign * step > 1.5) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+        const a = tr[k - 1], b = tr[k], step = Math.hypot(b[1] - a[1], b[2] - a[2]) / Math.max(1, b[0] - a[0]);
+        if (step > 1.0) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
       }
       runs.push(cur);
-      tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter, skipAfter + maxFrames);
-      if (tr.length < 8) continue;
-      const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
-      const r = median(tr.map((p) => p[3])) / 0.5, pad = 4 * r;
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a));
+      // Cut the flight at its kinks. The serve starts at the hit: a toss falling into view before
+      // it is dropped. Then measure two stretches, since the bounce changes the spin:
+      //   off the paddle - from just after the hit to the first bounce (the serve's own spin)
+      //   after the bounce - up to the next kink (what the receiver faces)
+      const pieces = splitAtKinks(tr);
+      let s0 = 0;
+      for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
+      const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
+      const parts = [], notes = [];
+      const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
+      // the first frames after the hit still have the paddle next to the ball
+      const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      const hitSeen = first.kind === "contact";
+      const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
+      if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
+        edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
+          "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
+      if (sawBounce) {
+        const after = next.pts.slice(2, 2 + maxFrames), last = next.pts[next.pts.length - 1];
+        if (after.length >= 8) parts.push(makePart("bounce", after));
+        else note("bounce", `After the bounce: not measured. Only ${next.pts.length} frames after the bounce (needs 10), then the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"}.`,
+          edgeOf(last) ? "Widen the view past the bounce point: move the camera back a little or turn it toward the bounce." : "Keep the background behind the bounce even, and add light.", next.pts.length);
+      } else {
+        const last = first.pts[first.pts.length - 1];
+        note("flight", `No bounce seen: the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"} before bouncing, so this can't be placed before or after the bounce.`,
+          edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
+      }
+      if (!parts.length) continue;
+      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes });
+    }
+    function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
+      const m = 3 * p[3] + 6;
+      return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
+    }
+    function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
+      const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
+      const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
       const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0] });
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
+        track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
     }
     segs.sort((a, b) => a.start - b.start);
     segs.ballFrames = cands.filter((c) => c.length).length;   // for the "no serve found" diagnosis
@@ -606,21 +752,29 @@
   }
 
   // ------------------------------------------------------------ 2. ball + pole per frame
-  function findBall(g, bg, W, H, minR) {
+  // The ball in one frame: pixels that differ from the background in brightness or colour.
+  // With a predicted position (from the flight search), take the blob nearest to it.
+  function findBall(g, bg, W, H, minR, col = null, pred = null) {
     const mask = new Uint8Array(W * H);
-    for (let p = 0; p < mask.length; p++) mask[p] = Math.abs(g[p] - bg[p]) > 25 ? 1 : 0;
+    for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(g[p], bg[p], col, p) > 25 ? 1 : 0;
     const m = opening(closing(mask, W, H, 5), W, H, 3);
-    let best = null;
+    let best = null, bestScore = Infinity;
     for (const c of components(m, W, H, true)) {
       if (c.w < 2 * minR || c.h < 2 * minR) continue;
       const aspect = Math.max(c.w, c.h) / Math.min(c.w, c.h);
       const fill = c.area / (Math.PI * (Math.max(c.w, c.h) / 2) ** 2);
       if (aspect > 1.6 || fill < 0.6) continue;
-      if (!best || c.area > best.area) best = c;
+      let score = -c.area;
+      if (pred) {
+        const d = Math.hypot(c.cx - pred[0], c.cy - pred[1]);
+        if (d > 2 * pred[2] + 15) continue;
+        score = d;
+      }
+      if (score < bestScore) { bestScore = score; best = c; }
     }
     if (!best) return null;
     const [cx, cy, r] = minEnclosingCircle(best.pix);
-    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05)];
+    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05), Math.max(best.w, best.h) / Math.min(best.w, best.h)];
   }
 
   function smoothFit(balls, tol, factor) {    // robust quadratic fits of x(t), y(t)
@@ -638,37 +792,58 @@
     return { cx, cy, t, keep };
   }
 
-  function measurePole(frames, balls, W, H, fps, inner = 0.92, nb = 10, stats = {}) {
+  let WHITE_REF = "auto";                     // "auto" | "ball" | "wall" (the last two for tests)
+  function sizeFit(balls) {                  // robust straight-line fit of 1/radius over time -> radius at frame i
+    const t = [], q = [];
+    balls.forEach((b, i) => { if (b) { t.push(i); q.push(1 / b[2]); } });
+    let keep = t.map(() => true), c = [0, median(q)];
+    for (let it = 0; it < 3; it++) {
+      const tk = t.filter((_, k) => keep[k]), qk = q.filter((_, k) => keep[k]);
+      if (tk.length >= 4) c = polyfit(tk, qk, 1);
+      const res = t.map((ti, k) => Math.abs(polyval(c, ti) - q[k]));
+      const thr = Math.max(1e-3, 2.5 * median(res.filter((_, k) => keep[k])));
+      keep = res.map((v) => v <= thr);
+    }
+    const lo = Math.min(...q), hi = Math.max(...q);
+    return (i) => 1 / clamp(polyval(c, i), lo, hi);
+  }
+  function measurePole(frames, balls, W, H, fps, inner = 0.88, nb = 10, stats = {}) {
     const idx = balls.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     if (idx.length < 8) return null;
     const { cx: cxp, cy: cyp } = smoothFit(balls, 2.5, 2.5);
-    const r = median(idx.map((i) => balls[i][2]));
-    const rows = [], Dall = [], walls = [];
+    // ball size per frame: a ball coming closer grows (1/size changes linearly with time)
+    const rAt = sizeFit(balls);
+    const rows = [], Dall = [];
     for (const i of idx) {
-      const cx = polyval(cxp, i), cy = polyval(cyp, i);
-      const x0 = Math.trunc(Math.max(0, cx - 2.6 * r)), x1 = Math.trunc(Math.min(W, cx + 2.6 * r + 1));
-      const y0 = Math.trunc(Math.max(0, cy - 2.6 * r)), y1 = Math.trunc(Math.min(H, cy + 2.6 * r + 1));
-      const g = frames[i], D = [], UX = [], UY = [], ring = [];
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      const cx = polyval(cxp, i), cy = polyval(cyp, i), r = rAt(i);
+      const x0 = Math.trunc(Math.max(0, cx - r - 1)), x1 = Math.trunc(Math.min(W, cx + r + 2));
+      const y0 = Math.trunc(Math.max(0, cy - r - 1)), y1 = Math.trunc(Math.min(H, cy + r + 2));
+      const g = frames[i], vals = [], UX = [], UY = [], ring = [];
+      const X0 = Math.trunc(Math.max(0, cx - 2.6 * r)), X1 = Math.trunc(Math.min(W, cx + 2.6 * r + 1));
+      const Y0 = Math.trunc(Math.max(0, cy - 2.6 * r)), Y1 = Math.trunc(Math.min(H, cy + 2.6 * r + 1));
+      for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
         const dx = x - cx, dy = y - cy, rr = Math.hypot(dx, dy);
-        if (rr >= 1.6 * r && rr <= 2.5 * r) ring.push(g[y * W + x]);
+        if (rr <= inner * r) { vals.push(g[y * W + x]); UX.push(dx / r); UY.push(dy / r); }
+        else if (rr >= 1.6 * r && rr <= 2.5 * r) ring.push(g[y * W + x]);
       }
-      let discN = 0;
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const rr = Math.hypot(x - cx, y - cy); if (rr <= inner * r) discN++; }
-      if (discN < 20 || ring.length < 20) continue;
-      const wall = median(ring);
-      walls.push(wall);
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-        const dx = x - cx, dy = y - cy;
-        if (Math.hypot(dx, dy) <= inner * r) {
-          const v = clamp(1 - g[y * W + x] / Math.max(wall, 1), 0, 1);
-          D.push(v); UX.push(dx / r); UY.push(dy / r); Dall.push(v);
-        }
-      }
-      rows.push({ i, D, UX, UY });
+      if (vals.length < 20) continue;
+      const even = ring.length >= 20 && percentile(ring, 75) - percentile(ring, 25) < 0.15 * median(ring);
+      rows.push({ i, vals, UX, UY, top: percentile(vals, 92), wall: ring.length >= 20 ? median(ring) : NaN, even });
+    }
+    // Darkness is measured against a reference level. Behind the ball, an even background (a
+    // plain wall, the table top) works well and per frame cancels light flicker. In front of a
+    // busy background (net, logos, people) use the ball's own white half instead: its typical
+    // brightest part over the flight (a frame showing mostly the black half has no white to go by).
+    const ballWhite = median(rows.map((rw) => rw.top));
+    const useWall = WHITE_REF === "wall" || (WHITE_REF === "auto" && rows.filter((rw) => rw.even).length >= 0.8 * rows.length);
+    stats.reference = useWall ? "background" : "ball";
+    for (const rw of rows) {
+      const ref = useWall && rw.wall > 0 ? rw.wall : Math.max(rw.top, 0.9 * ballWhite);
+      rw.D = rw.vals.map((v) => clamp(1 - v / Math.max(ref, 1), 0, 1));
+      for (const v of rw.D) Dall.push(v);
     }
     if (rows.length < 8) return null;
-    stats.wall = median(walls); stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
+    stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
     if (stats.contrast < 0.15) return { error: "The marking is too faint to read. Use more light and a fully black half." };
     // per-spot white/black levels (removes the lighting gradient across the ball)
     const binsLo = Array.from({ length: nb * nb }, () => []);
@@ -738,7 +913,8 @@
     if (Math.abs(ay) >= Math.abs(ax)) return ay > 0 ? [[1, 0, 0], [0, 1, 0], [0, 0, 1]] : [[-1, 0, 0], [0, -1, 0], [0, 0, 1]];
     return ax > 0 ? [[0, -1, 0], [1, 0, 0], [0, 0, 1]] : [[0, 1, 0], [-1, 0, 0], [0, 0, 1]];
   }
-  function flightGeometry(balls, fps, frameWidth, hfov) {
+  // centre: where the crop's (0, 0) sits relative to the middle of the picture, in pixels
+  function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0]) {
     const { cx: px, cy: py, t, keep } = smoothFit(balls, 2.5, 3);
     const rr = balls.filter(Boolean).map((b) => b[2]);
     const tm = t.reduce((s, v) => s + v, 0) / t.length;
@@ -747,15 +923,26 @@
     const tk = t.filter((_, k) => keep[k]), lk = rr.map(Math.log).filter((_, k) => keep[k]);
     const dlnr = polyfit(tk, lk, 1)[0];
     const fpx = (frameWidth / 2) / Math.tan((hfov * Math.PI / 180) / 2);
-    let f = [vx / fpx, vy / fpx, dlnr]; f = scale(f, 1 / norm(f));
+    // 3D direction in camera axes (x right, y down, z toward the camera). A ball coming closer
+    // also drifts away from the picture's centre, so take that part out of the sideways motion.
+    const u = (polyval(px, tm) + centre[0]) / fpx, v = (polyval(py, tm) + centre[1]) / fpx;
+    let f = [vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr]; f = scale(f, 1 / norm(f));
     const mmpx = 40.0 / (2 * median(rr)), toMs = mmpx / 1000 * fps;
-    const turn = uprightRotation(ax, ay);
+    const dist = fpx * mmpx;                  // ball distance in mm (40 mm ball)
+    // Which way is down: the ball's acceleration in space (gravity, plus a little lift), from its
+    // 3D path (distance from its size). Side-on this is the same as the curve in the picture;
+    // for a ball coming toward the camera the picture's curve is mostly perspective.
+    const rAt = sizeFit(balls), T3 = [], X3 = [], Y3 = [];
+    balls.forEach((b, i) => { if (b) { const k = 20 / rAt(i); T3.push(i); X3.push((b[0] + centre[0]) * k); Y3.push((b[1] + centre[1]) * k); } });
+    const tk3 = T3.filter((_, k) => keep[k]);
+    const a3 = [2 * polyfit(tk3, X3.filter((_, k) => keep[k]), 2)[0], 2 * polyfit(tk3, Y3.filter((_, k) => keep[k]), 2)[0]];   // mm per frame^2
+    const turn = uprightRotation(a3[0], a3[1]);
     f = matvec(turn, f);
-    const acc = matvec(turn, [ax, ay, 0]);
+    const acc = matvec(turn, [a3[0], a3[1], 0]);
     return {
       f, turn, rotatedDeg: ((Math.round(Math.atan2(turn[1][0], turn[0][0]) * 180 / Math.PI) % 360) + 360) % 360,
-      speed: Math.hypot(vx, vy) * toMs, towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
-      downAccel: acc[1] * toMs * fps, mmPerPx: mmpx,
+      speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000, towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
+      downAccel: acc[1] * fps * fps / 1000, mmPerPx: mmpx,
     };
   }
   function spinComponents(rps, axis, f) {
@@ -800,15 +987,15 @@
     else if (s.light < 85) out.push(chk("light", "warn", "Dim", `Brightness ${L} of 255. More light gives a sharper marking.`));
     else out.push(chk("light", "ok", "Enough light", `Brightness ${L} of 255`));
     const m = Math.round(100 * s.moving);
-    if (s.moving > 0.3) out.push(chk("steady", "bad", "Camera moving, or a busy view", `${m}% of the picture keeps changing. Use a tripod and a plain wall behind the flight.`));
-    else if (s.moving > 0.12) out.push(chk("steady", "warn", "Lots of movement in view", `${m}% of the picture keeps changing. Keep people and other balls out of the background.`));
+    if (s.moving > 0.3) out.push(chk("steady", "bad", "Camera moving, or a busy view", `${m}% of the picture keeps changing. Put the phone on a tripod or lean it on something solid.`));
+    else if (s.moving > 0.12) out.push(chk("steady", "warn", "Lots of movement in view", `${m}% of the picture keeps changing. Fine if it's people in the background; keep the phone still.`));
     else out.push(chk("steady", "ok", "Camera steady"));
     return out;
   }
   function flightCheck(segs) {
     if (segs.length) return chk("flight", "ok", segs.length > 1 ? `${segs.length} serves found` : "Serve found");
-    if (segs.ballFrames < 12) return chk("flight", "bad", "No ball found", "Nothing ball-sized moved in view. Check the light, the distance (ball about 50 px across) and the plain wall behind the flight.");
-    return chk("flight", "bad", "No flight across the picture", "Something ball-sized moved, but not sideways across the view. Serve across the camera's view.");
+    if (segs.ballFrames < 12) return chk("flight", "bad", "No ball found", "Nothing ball-sized moved in view. Check the light and the distance (ball 25–50 px across).");
+    return chk("flight", "bad", "No clear flight", "Something ball-sized moved, but not along a clear flight. Keep the phone still, with the ball's flight over the table in view.");
   }
   function serveChecks(s) {
     const out = [];
@@ -818,18 +1005,33 @@
       else if (s.ballR < 10) out.push(chk("size", "warn", `Ball small (${d} px across)`, "Move a little closer: 25–50 px across works best."));
       else out.push(chk("size", "ok", `Ball size good (${d} px across)`));
     }
-    if (s.frames < 20) out.push(chk("frames", "warn", `Ball seen in only ${s.frames} frames`, "Keep more of the flight in view before the first bounce."));
+    if (s.frames < 20) out.push(chk("frames", "warn", `Ball seen in only ${s.frames} frames`, "Keep more of the flight in view."));
     if (s.contrast !== undefined) {
       const c = `Contrast ${Math.round(100 * s.contrast)}%. `;
       if (s.contrast < 0.15) out.push(chk("marks", "bad", "Marking not visible", c + "Use more light, and colour the black half fully."));
       else if (s.contrast < 0.3) out.push(chk("marks", "warn", "Marking faint", c + "More light, or a darker marker, makes the reading surer."));
       else out.push(chk("marks", "ok", "Marking clear", `Contrast ${Math.round(100 * s.contrast)}%`));
     }
-    if (s.wall !== undefined) {
-      if (s.wall > 215) out.push(chk("wall", "warn", "Wall too bright", "The white half blends into the wall. Use a mid-tone wall."));
-      else if (s.wall < 35) out.push(chk("wall", "warn", "Wall too dark", "The black half blends into the wall. Use a mid-tone wall."));
-      else out.push(chk("wall", "ok", "Wall behind the ball works"));
-    }
+    return out;
+  }
+
+  // What in the footage stood in the way of a clear reading, each with what to change.
+  // r: the spin fit (null when there was none). Only problems are listed.
+  function diagnose(s, r) {
+    const out = [], add = (text, fix) => out.push({ text, fix });
+    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    if (s.total && s.frames < 0.7 * s.total)
+      add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
+    if (s.ballR && s.ballR < 10)
+      add(`The ball is only ${Math.round(2 * s.ballR)} px across.`, "Move the camera closer: 1–1.5 m from the ball's path, so it is 30–50 px across.");
+    if (s.stretch && s.stretch > 1.35)
+      add(`The ball is smeared by motion blur (stretched ${s.stretch.toFixed(1)}× along its path).`, "Add light: daylight or extra lamps make the camera's shutter faster.");
+    if (s.contrast !== undefined && s.contrast < 0.3)
+      add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
+    if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
+      add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
+    if (r && !clear && !out.length)
+      add(`The marking couldn't be followed reliably (fit ${r.score.toFixed(2)}, needs 0.75).`, "Check that the ball's marking is sharp in the slow-motion video; more light helps most.");
     return out;
   }
 
@@ -837,19 +1039,45 @@
   async function measureSegment(R, seg, fps, hfov) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
     let frames = new Array(seg.end - seg.start);
-    await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
-    frames = frames.filter(Boolean);
-    let bg = medianFrames(frames, rw * rh);
-    frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
-    bg = medianFrames(frames, rw * rh);
-    const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
-    const found = balls.filter(Boolean), stats = { frames: found.length };
-    if (found.length) stats.ballR = median(found.map((b) => b[2]));
-    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, checks: serveChecks(stats) };
+    await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabColor(ctx, src, R.W, R.H, seg.roi); });
+    for (let k = 0; k < frames.length; k++) if (!frames[k]) frames[k] = frames[k - 1] || frames.find(Boolean);
+    const colour = frames.every((f) => f.u);
+    const bgU = colour ? medianFrames(frames.map((f) => f.u), rw * rh) : null;
+    const bgV = colour ? medianFrames(frames.map((f) => f.v), rw * rh) : null;
+    let gray = frames.map((f) => f.g);
+    let bg = medianFrames(gray, rw * rh);
+    gray = gray.map((g) => deflickerOne(g, bg, rw, rh, 1));
+    bg = medianFrames(gray, rw * rh);
+    // where the flight search saw the ball, in this crop's pixels
+    const seen = new Map((seg.track || []).map((p) => [p[0] - seg.start, [p[1] - rx, p[2] - ry, p[3]]]));
+    const predict = (k) => {
+      if (!seen.size) return null;
+      for (let d = 0; d < 6; d++) { if (seen.has(k - d)) return seen.get(k - d); if (seen.has(k + d)) return seen.get(k + d); }
+      return null;
+    };
+    const cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU, bgV } : null));
+    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0, cols[k], predict(k)));
+    frames = gray;
+    const found = balls.filter(Boolean), stats = { frames: found.length, total: balls.length };
+    // Does the picture around the ball stay still during the serve? Share of pixels away from the
+    // ball that differ from the background, per frame; a moving camera makes most of them differ.
+    const changed = gray.map((g, k) => {
+      const b = balls[k], col = cols[k];
+      let n = 0, m = 0;
+      for (let y = 0; y < rh; y += 2) for (let x = 0; x < rw; x += 2) {
+        if (b && Math.hypot(x - b[0], y - b[1]) < 2 * b[2]) continue;
+        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) n++;
+      }
+      return n / Math.max(1, m);
+    });
+    stats.bgChange = median(changed);
+    if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
+    const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
+    if (found.length < 4) return fail("The ball was found in too few frames.");
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats);
-    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, checks: serveChecks(stats) };
-    if (r.error) return { error: r.error, segment: seg, checks: serveChecks(stats) };
-    const geo = flightGeometry(balls, fps, R.W, hfov);
+    if (!r) return fail("The ball was found in too few frames in a row.");
+    if (r.error) return fail(r.error);
+    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
     return {
@@ -857,7 +1085,9 @@
       backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
-      axis, fit: r.score, reliable: r.score >= 0.75, runnerUp: r.runner,
+      // clear: a high fit, or a good fit well ahead of the best other spin rate
+      axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
+      phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
@@ -868,6 +1098,7 @@
   // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
+    WHITE_REF = opts.whiteRef || "auto";
     const progress = opts.onProgress || (() => {});
     const hfov = opts.hfov || 68, tStart = performance.now();
     readStats.direct = readStats.canvas = 0;
@@ -888,13 +1119,32 @@
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
-      if (!segs.length) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", serves: [], checks, meta: timing() };
+      if (!segs.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
       const serves = [];
       for (let k = 0; k < segs.length; k++) {
         progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
-        serves.push(await measureSegment(R, segs[k], fps, hfov));
+        const readings = [];
+        for (const part of segs[k].parts) {
+          const one = await measureSegment(R, part, fps, hfov);
+          readings.push(Object.assign(one, { phase: part.kind }));
+        }
+        // the headline: off the paddle when it reads clearly, else the clearest stretch
+        const ok = readings.filter((r) => !r.error);
+        const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
+          ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
+        const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
+        // something that isn't a ball for most of its frames, or a short stretch that can't be read,
+        // is most likely not a serve (a ball rolling, picked up, a hand)
+        const notBall = one.error && /found in too few/.test(one.error);
+        if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
+        serves.push(one);
       }
       progress("Done", 1);
+      if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
+        const fc = checks.findIndex((c) => c.key === "flight");
+        if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
+      }
+      if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
       const first = serves.find((s) => !s.error);
       const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing() };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
@@ -920,5 +1170,5 @@
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

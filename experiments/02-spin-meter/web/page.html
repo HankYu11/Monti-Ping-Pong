@@ -145,7 +145,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note">v2 · several serves per video · setup check</p>
+    <p class="note num">Version __APP_VERSION__ · build __APP_BUILD__</p>
     <!--APP_INSTALL-->
   </header>
 
@@ -421,7 +421,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "__APP_VERSION__ (__APP_BUILD__)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -434,10 +434,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
+    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion";
     return [head].concat(log.map((e, i) => [i + 1, e.serve ? e.serve + "/" + e.of : "", e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
-      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : ""].join("\t"))).join("\n");
+      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : "", e.ver || ""].join("\t"))).join("\n");
   }
   $("copy").addEventListener("click", () => {
     const text = asText(), box = $("copybox");
@@ -469,7 +469,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
-      const base = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
+      const base = { ver: VERSION, server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
       const secs = res.meta && res.meta.seconds;
       const serves = res.serves || [];
       if (!serves.length) {

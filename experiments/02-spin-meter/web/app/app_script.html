@@ -1,6 +1,20 @@
 <style>
+.update { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 10;
+  width: min(560px, calc(100% - 32px)); display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between;
+  background: var(--ink); color: var(--bg); border-radius: 14px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
+.update p { flex: 1 1 200px; }
+.update .row { gap: 8px; flex-wrap: nowrap; }
+.update .btn.ghost { color: var(--bg); border-color: currentColor; }
 .install { display: grid; gap: 10px; justify-items: start; background: var(--soft); border-radius: 12px; padding: 12px 14px; font-size: 0.95rem; }
 </style>
+<div class="update" id="update" role="status" hidden>
+  <p id="update-text">A new version is ready.</p>
+  <div class="row">
+    <button class="btn ghost" id="update-later" type="button">Later</button>
+    <button class="btn" id="update-reload" type="button">Reload</button>
+  </div>
+</div>
+<span id="app-build" data-build="__APP_BUILD__" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {
@@ -44,5 +58,31 @@
     }
   }
   takeShared();
+
+  // updates: when the app comes back to the screen (and every 30 min while open), ask the
+  // server which build is current; if it isn't this one, offer a reload.
+  const mine = (document.getElementById("app-build") || {}).dataset || {};
+  let offered = false;
+  async function checkUpdate() {
+    if (offered || !navigator.onLine) return;
+    try {
+      const r = await fetch("version.json", { cache: "no-store" });
+      if (!r.ok) return;
+      const v = await r.json();
+      if (v.build && v.build !== mine.build) {
+        offered = true;
+        $("update-text").textContent = `A new version (${v.version}) is ready.`;
+        $("update").hidden = false;
+        if (navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+          navigator.serviceWorker.getRegistration().then((reg) => reg && reg.update()).catch(() => {});
+      }
+    } catch (e) { /* offline or blocked: try again later */ }
+  }
+  $("update-reload").addEventListener("click", () => location.reload());
+  $("update-later").addEventListener("click", () => { $("update").hidden = true; });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(); });
+  addEventListener("online", checkUpdate);
+  setInterval(checkUpdate, 30 * 60 * 1000);
+  setTimeout(checkUpdate, 3000);
 })();
 </script>

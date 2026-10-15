@@ -65,6 +65,20 @@ The service worker keeps the shared video only until the page picks it up, and k
 mp4box.js and fonts for offline use. Checked in headless Chromium: installable with no errors,
 works offline, and a video posted to `./share` is analysed.
 
+## Versions and updates
+
+The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;
+the build id is a hash of the built page, so every change gets a new one (the same source
+gives the same id locally and in the Pages workflow). Session rows and the copied text carry
+it, so a reading can be traced to the build that made it.
+
+The installed app updates itself: the page is always fetched fresh when online (revalidated,
+so GitHub Pages' 10-minute cache doesn't hold it back), the cached copy only serves offline.
+An app left open checks `version.json` when it comes back on screen and every 30 minutes; if
+the build differs it shows "A new version (x) is ready · Later / Reload". Tested by swapping
+the served build under an open app: the note appears, Reload loads the new build, and the new
+build is then what loads offline.
+
 ## Several serves in one video
 
 Test clip: w1, w2 and w4 joined into one video (1903 frames). Each serve reads the same as

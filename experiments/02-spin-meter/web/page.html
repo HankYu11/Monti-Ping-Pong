@@ -116,6 +116,12 @@ details.more[open] summary { margin-bottom: 10px; }
 .checks .bad b { color: var(--warn); }
 .checks .sub { color: var(--muted); font-size: 0.9rem; display: block; }
 .checks .group { display: block; grid-template-columns: none; margin-top: 4px; }
+.noread { font-family: var(--font-display); font-weight: 700; font-size: 1.8rem; color: var(--warn); }
+.diag { border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; display: grid; gap: 6px; }
+.diag ul { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; }
+.diag li b { font-weight: 600; }
+.diag li span { display: block; color: var(--muted); }
+.serves button[disabled] { cursor: default; opacity: 0.75; border-style: dashed; }
 .trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
 .trust b { font-weight: 600; }
 
@@ -224,7 +230,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span class="label" id="phases-label">Spin, before and after the bounce</span>
       <div class="serves" id="phases" role="group" aria-labelledby="phases-label"></div>
     </div>
-    <p class="note err" id="serve-error" hidden></p>
+    <p class="noread" id="serve-error" hidden></p>
+    <div class="diag" id="diag" hidden>
+      <span class="label">What to change in the footage</span>
+      <ul id="diag-list"></ul>
+    </div>
     <div class="reading" id="readingbox">
       <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
       <span class="note num" id="rps">31.7 revolutions per second</span>
@@ -333,13 +343,19 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   const readingParts = ["readingbox", "type", "compass", "comp", "facts"];
   function render(res) {
-    $("serve-error").hidden = !res.error;
-    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = !!res.error; });
-    if (res.error) {
-      $("serve-error").textContent = res.error;
-      const mt = res.meta || {};
-      $("chips").innerHTML = `<span class="chip low">No reading: re-record</span>`;
+    // Don't guess: a stretch without a clear reading shows no number, only what went wrong.
+    const noRead = !res.example && (res.error || !res.reliable);
+    $("serve-error").hidden = !noRead;
+    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = noRead; });
+    const diag = res.diag || [];
+    $("diag").hidden = !diag.length;
+    $("diag-list").innerHTML = diag.map((d) => `<li><b>${d.text}</b><span>${d.fix}</span></li>`).join("");
+    if (noRead) {
+      $("serve-error").textContent = res.phase && PHASE[res.phase] ? `No clear reading ${res.phase === "flight" ? "in flight" : PHASE[res.phase].toLowerCase()}` : "No clear reading";
+      $("chips").innerHTML = (res.phase === "paddle" || res.phase === "bounce" ? `<span class="chip">${PHASE[res.phase]}</span>` : "") +
+        (res.nFrames ? `<span class="chip">${res.nFrames} frames</span>` : "");
       $("film").innerHTML = ""; $("perf").hidden = true;
+      if (res.crops && res.crops.length) $("film").appendChild(filmCanvas(res.crops));
       return;
     }
     $("rpm").textContent = fmt(res.rpm);
@@ -347,8 +363,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     $("type").textContent = typeText(res.spinType);
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
-    chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
+    chips.push(`<span class="chip ok">Clear reading</span>`);
     if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
+    if (res.nFrames) chips.push(`<span class="chip">${res.nFrames} frames</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
     $("chips").innerHTML = chips.join("");
@@ -384,12 +401,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const list = res.serves || [];
     $("servesbox").hidden = list.length < 2;
     if (list.length < 2) return;
-    const ok = list.filter((s) => !s.error), rpm = ok.map((s) => s.rpm);
+    const ok = list.filter((s) => !s.error && s.reliable), rpm = ok.map((s) => s.rpm);
     $("serves-sum").textContent = !ok.length ? `${list.length} serves found, none could be read.` :
-      `${list.length} serves · ${ok.length} read · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
+      `${list.length} serves · ${ok.length} read clearly · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
       (ok.length > 1 ? ` · range ${fmt(Math.min(...rpm))}–${fmt(Math.max(...rpm))}` : "") + ". Tap a serve to see it.";
-    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error ? "bad" : ""}">
-      <b>${k + 1} · ${s.error ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error ? "no reading" : typeText(s.spinType) + (s.reliable ? "" : " · low")}</span></button>`).join("");
+    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error || !s.reliable ? "bad" : ""}">
+      <b>${k + 1} · ${s.error || !s.reliable ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error || !s.reliable ? "no clear reading" : typeText(s.spinType)}</span></button>`).join("");
   }
   $("serves").addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-k]");
@@ -397,17 +414,28 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
   let current = null, currentServe = 0;
 
+  // setup problems that apply to the whole video, in the same "what to change" list
+  const setupDiag = (checks) => (checks || []).filter((c) => c.status === "bad" || (c.status === "warn" && (c.key === "light" || c.key === "fps")))
+    .map((c) => ({ text: c.title + ".", fix: c.text }));
+
   // one serve, or one stretch of it (off the paddle / after the bounce)
   function showServe(k, phase = null) {
-    const sv = current.serves[k], list = sv.phases;
-    const active = list ? (phase != null ? phase : Math.max(0, list.findIndex((r) => r.phase === sv.phase))) : -1;
-    const shown = list ? list[active] : sv;
+    const sv = current.serves[k], readings = sv.phases || [sv], notes = sv.notes || [];
+    const active = phase != null ? phase : Math.max(0, readings.findIndex((r) => r.phase === sv.phase));
+    const shown = readings[active];
     currentServe = k;
-    render(Object.assign({}, shown, { meta: current.meta }));
+    // what went wrong: this stretch's own problems, notes about it, and stretches that couldn't be measured
+    const diag = setupDiag(current.checks).concat(shown.issues || [], notes.filter((n) => n.phase === shown.phase || !readings.some((r) => r.phase === n.phase)));
+    render(Object.assign({}, shown, { meta: current.meta, diag }));
     renderServes(current, k);
-    $("phasebox").hidden = !list;
-    if (list) $("phases").innerHTML = list.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error ? "bad" : ""}">
-      <b>${PHASE[r.phase]}</b><span>${r.error ? "no reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType) + (r.reliable ? "" : " · low")}</span></button>`).join("");
+    const missing = notes.filter((n) => n.phase !== "flight" && !readings.some((r) => r.phase === n.phase));
+    const tiles = readings.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error || !r.reliable ? "bad" : ""}">
+      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames</span></button>`)
+      .concat(missing.map((n) => `<button type="button" disabled><b>${PHASE[n.phase]}</b><span>not measured: ${n.frames ? `only ${n.frames} frames` : "too few frames"}</span></button>`));
+    const order = (h) => (h.includes("After the bounce") ? 1 : 0);
+    tiles.sort((x, y) => order(x) - order(y));
+    $("phasebox").hidden = tiles.length < 2;
+    $("phases").innerHTML = tiles.join("");
     renderChecks(current.checks, shown.checks, current.serves.length > 1 ? `Serve ${k + 1}` : "This serve");
   }
   $("phases").addEventListener("click", (ev) => {
@@ -454,7 +482,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     tb.innerHTML = log.map((e, i) => `<tr>
       <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
       <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type) + (e.phase === "bounce" ? " (after the bounce)" : "") + (e.bounceRpm ? `<br><span class="note">after the bounce: ${fmt(e.bounceRpm)} RPM</span>` : "")}</td>
-      <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
+      <td>${e.error ? "–" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
     const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion\tmeasured on\trpm after bounce";
@@ -499,12 +527,17 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
+        current = null;
+        render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
+          .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
+        $("servesbox").hidden = true; $("phasebox").hidden = true;
         log.push(Object.assign(base, { error: res.error || "No serve found.", secs }));
       } else {
         serves.forEach((s, k) => {
           const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
           const ab = s.phase !== "bounce" && s.phases ? s.phases.find((r) => r.phase === "bounce" && !r.error && r.reliable) : null;
-          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
+          const why = (s.issues && s.issues[0] ? s.issues[0].text : "") || (s.notes && s.notes[0] ? s.notes[0].text : "") || s.error || "";
+          log.push(Object.assign(e, s.error || !s.reliable ? { error: "no clear reading" + (why ? ": " + why : "") } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
             phase: s.phase, bounceRpm: ab ? ab.rpm : undefined, bounceType: ab ? ab.spinType : undefined }));
         });
         current = res;

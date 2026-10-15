@@ -125,6 +125,12 @@ details.more[open] summary { margin-bottom: 10px; }
 .checks .bad b { color: var(--warn); }
 .checks .sub { color: var(--muted); font-size: 0.9rem; display: block; }
 .checks .group { display: block; grid-template-columns: none; margin-top: 4px; }
+.noread { font-family: var(--font-display); font-weight: 700; font-size: 1.8rem; color: var(--warn); }
+.diag { border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; display: grid; gap: 6px; }
+.diag ul { margin: 0; padding-left: 1.1em; display: grid; gap: 8px; }
+.diag li b { font-weight: 600; }
+.diag li span { display: block; color: var(--muted); }
+.serves button[disabled] { cursor: default; opacity: 0.75; border-style: dashed; }
 .trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
 .trust b { font-weight: 600; }
 
@@ -154,7 +160,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.2 · build e97a2c0</p>
+    <p class="note num">Version 2.2 · build 7fa0116</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -236,7 +242,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span class="label" id="phases-label">Spin, before and after the bounce</span>
       <div class="serves" id="phases" role="group" aria-labelledby="phases-label"></div>
     </div>
-    <p class="note err" id="serve-error" hidden></p>
+    <p class="noread" id="serve-error" hidden></p>
+    <div class="diag" id="diag" hidden>
+      <span class="label">What to change in the footage</span>
+      <ul id="diag-list"></ul>
+    </div>
     <div class="reading" id="readingbox">
       <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
       <span class="note num" id="rps">31.7 revolutions per second</span>
@@ -790,7 +800,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   // ------------------------------------------------------------ scan pass: candidates in one frame
   function scanFrame(job, ctx) {             // job: { buf, offset, stride, full, pu, pv } (planes) or { g, u, v } (half size)
-    const { bgf, bg, bgU, bgV, sw, sh, W, H } = ctx;
+    const { sw, sh, W, H } = ctx;
+    const sec = ctx.sections.find((q) => job.i >= q.from && job.i < q.to) || ctx.sections[ctx.sections.length - 1];
+    const { bgf, bg, bgU, bgV } = sec;
     let { g, u, v } = job;
     if (!g) {
       const P = { buf: job.buf, offset: job.offset, stride: job.stride, lut: job.full ? LUT_FULL : LUT_VIDEO, full: job.full };
@@ -895,21 +907,30 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
+    // background samples, kept small: brightness as bytes, colour as signed bytes
+    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
+      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
     if (R.kind === "seek") {
-      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => samples.push(await grabHalf(ctx, src, R.W, R.H)));
+      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => keep(k, await grabHalf(ctx, src, R.W, R.H)));
     } else {
       await R.run(0, nFrames, async (k, src) => {
-        if (k % stride === 0) samples.push(await grabHalf(ctx, src, R.W, R.H));
+        if (k % stride === 0) keep(k, await grabHalf(ctx, src, R.W, R.H));
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
-    const bgf = medianFrames(samples.map((s) => s.g), sw * sh);
     const withColour = samples.every((s) => s.u);
-    const bgU = withColour ? medianFrames(samples.map((s) => s.u), sw * sh) : null;
-    const bgV = withColour ? medianFrames(samples.map((s) => s.v), sw * sh) : null;
-    const defl = samples.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
-    const bg = medianFrames(defl, sw * sh);
-    for (let p = 0; p < bg.length; p++) bg[p] = Math.trunc(bg[p]);
+    function background(set) {               // still background from a set of samples
+      const bgf = medianFrames(set.map((s) => s.g), sw * sh);
+      const defl = set.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
+      const bg = Uint8Array.from(medianFrames(defl, sw * sh), Math.trunc);
+      const bgU = withColour ? Int8Array.from(medianFrames(set.map((s) => s.u), sw * sh), Math.round) : null;
+      const bgV = withColour ? Int8Array.from(medianFrames(set.map((s) => s.v), sw * sh), Math.round) : null;
+      return { bgf, bg, bgU, bgV, defl };
+    }
+    const whole = background(samples), { bgf, bg, defl } = whole;
+    // (one background per section of the video was tried, for a phone still being set down at
+    // the start: with ~10 samples per section, the server's body leaked into the background)
+    const sections = [{ from: 0, to: nFrames, bgf: whole.bgf, bg: whole.bg, bgU: whole.bgU, bgV: whole.bgV }];
     if (opt.onScene) {                        // setup check: overall light, and how much of the view keeps changing
       let sum = 0; for (let p = 0; p < bg.length; p++) sum += bg[p];
       const moving = defl.map((d) => { let n = 0; for (let p = 0; p < d.length; p++) if (Math.abs(d[p] - bg[p]) > 30) n++; return n / d.length; });
@@ -917,7 +938,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
     const cands = new Array(nFrames).fill(null).map(() => []);
     // the per-frame search runs on worker threads when the browser allows it, else here
-    const scanCtx = { bgf, bg, bgU, bgV, sw, sh, W: R.W, H: R.H };
+    const scanCtx = { sections, sw, sh, W: R.W, H: R.H };
     const pool = await scanPool(scanCtx);
     let doneN = 0;
     const store = (i, fc) => { cands[i] = fc; if (++doneN % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * doneN / nFrames); };
@@ -1005,16 +1026,32 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       let s0 = 0;
       for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
       const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
-      const parts = [];
+      const parts = [], notes = [];
+      const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
       // the first frames after the hit still have the paddle next to the ball
       const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      const hitSeen = first.kind === "contact";
+      const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
       if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
+        edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
+          "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
       if (sawBounce) {
-        const after = next.pts.slice(2, 2 + maxFrames);
+        const after = next.pts.slice(2, 2 + maxFrames), last = next.pts[next.pts.length - 1];
         if (after.length >= 8) parts.push(makePart("bounce", after));
+        else note("bounce", `After the bounce: not measured. Only ${next.pts.length} frames after the bounce (needs 10), then the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"}.`,
+          edgeOf(last) ? "Widen the view past the bounce point: move the camera back a little or turn it toward the bounce." : "Keep the background behind the bounce even, and add light.", next.pts.length);
+      } else {
+        const last = first.pts[first.pts.length - 1];
+        note("flight", `No bounce seen: the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"} before bouncing, so this can't be placed before or after the bounce.`,
+          edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
       }
       if (!parts.length) continue;
-      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts });
+      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes });
+    }
+    function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
+      const m = 3 * p[3] + 6;
+      return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
     }
     function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
       const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
@@ -1052,7 +1089,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
     if (!best) return null;
     const [cx, cy, r] = minEnclosingCircle(best.pix);
-    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05)];
+    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05), Math.max(best.w, best.h) / Math.min(best.w, best.h)];
   }
 
   function smoothFit(balls, tol, factor) {    // robust quadratic fits of x(t), y(t)
@@ -1293,6 +1330,26 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return out;
   }
 
+  // What in the footage stood in the way of a clear reading, each with what to change.
+  // r: the spin fit (null when there was none). Only problems are listed.
+  function diagnose(s, r) {
+    const out = [], add = (text, fix) => out.push({ text, fix });
+    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    if (s.total && s.frames < 0.7 * s.total)
+      add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
+    if (s.ballR && s.ballR < 10)
+      add(`The ball is only ${Math.round(2 * s.ballR)} px across.`, "Move the camera closer: 1–1.5 m from the ball's path, so it is 30–50 px across.");
+    if (s.stretch && s.stretch > 1.35)
+      add(`The ball is smeared by motion blur (stretched ${s.stretch.toFixed(1)}× along its path).`, "Add light: daylight or extra lamps make the camera's shutter faster.");
+    if (s.contrast !== undefined && s.contrast < 0.3)
+      add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
+    if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
+      add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
+    if (r && !clear && !out.length)
+      add(`The marking couldn't be followed reliably (fit ${r.score.toFixed(2)}, needs 0.75).`, "Check that the ball's marking is sharp in the slow-motion video; more light helps most.");
+    return out;
+  }
+
   // ------------------------------------------------------------ 3. measure one serve
   async function measureSegment(R, seg, fps, hfov) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
@@ -1313,15 +1370,28 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       for (let d = 0; d < 6; d++) { if (seen.has(k - d)) return seen.get(k - d); if (seen.has(k + d)) return seen.get(k + d); }
       return null;
     };
-    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0,
-      colour ? { u: frames[k].u, v: frames[k].v, bgU, bgV } : null, predict(k)));
+    const cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU, bgV } : null));
+    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0, cols[k], predict(k)));
     frames = gray;
-    const found = balls.filter(Boolean), stats = { frames: found.length };
-    if (found.length) stats.ballR = median(found.map((b) => b[2]));
-    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, checks: serveChecks(stats) };
+    const found = balls.filter(Boolean), stats = { frames: found.length, total: balls.length };
+    // Does the picture around the ball stay still during the serve? Share of pixels away from the
+    // ball that differ from the background, per frame; a moving camera makes most of them differ.
+    const changed = gray.map((g, k) => {
+      const b = balls[k], col = cols[k];
+      let n = 0, m = 0;
+      for (let y = 0; y < rh; y += 2) for (let x = 0; x < rw; x += 2) {
+        if (b && Math.hypot(x - b[0], y - b[1]) < 2 * b[2]) continue;
+        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) n++;
+      }
+      return n / Math.max(1, m);
+    });
+    stats.bgChange = median(changed);
+    if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
+    const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
+    if (found.length < 4) return fail("The ball was found in too few frames.");
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats);
-    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, checks: serveChecks(stats) };
-    if (r.error) return { error: r.error, segment: seg, checks: serveChecks(stats) };
+    if (!r) return fail("The ball was found in too few frames in a row.");
+    if (r.error) return fail(r.error);
     const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
@@ -1332,7 +1402,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
-      phase: seg.kind, reference: stats.reference,
+      phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
@@ -1377,7 +1447,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
           ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
-        const one = Object.assign({}, head, { phases: readings.length > 1 ? readings : null });
+        const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
         // something that isn't a ball for most of its frames, or a short stretch that can't be read,
         // is most likely not a serve (a ball rolling, picked up, a hand)
         const notBall = one.error && /found in too few/.test(one.error);
@@ -1459,13 +1529,19 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   const readingParts = ["readingbox", "type", "compass", "comp", "facts"];
   function render(res) {
-    $("serve-error").hidden = !res.error;
-    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = !!res.error; });
-    if (res.error) {
-      $("serve-error").textContent = res.error;
-      const mt = res.meta || {};
-      $("chips").innerHTML = `<span class="chip low">No reading: re-record</span>`;
+    // Don't guess: a stretch without a clear reading shows no number, only what went wrong.
+    const noRead = !res.example && (res.error || !res.reliable);
+    $("serve-error").hidden = !noRead;
+    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = noRead; });
+    const diag = res.diag || [];
+    $("diag").hidden = !diag.length;
+    $("diag-list").innerHTML = diag.map((d) => `<li><b>${d.text}</b><span>${d.fix}</span></li>`).join("");
+    if (noRead) {
+      $("serve-error").textContent = res.phase && PHASE[res.phase] ? `No clear reading ${res.phase === "flight" ? "in flight" : PHASE[res.phase].toLowerCase()}` : "No clear reading";
+      $("chips").innerHTML = (res.phase === "paddle" || res.phase === "bounce" ? `<span class="chip">${PHASE[res.phase]}</span>` : "") +
+        (res.nFrames ? `<span class="chip">${res.nFrames} frames</span>` : "");
       $("film").innerHTML = ""; $("perf").hidden = true;
+      if (res.crops && res.crops.length) $("film").appendChild(filmCanvas(res.crops));
       return;
     }
     $("rpm").textContent = fmt(res.rpm);
@@ -1473,8 +1549,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     $("type").textContent = typeText(res.spinType);
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
-    chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
+    chips.push(`<span class="chip ok">Clear reading</span>`);
     if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
+    if (res.nFrames) chips.push(`<span class="chip">${res.nFrames} frames</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
     $("chips").innerHTML = chips.join("");
@@ -1510,12 +1587,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const list = res.serves || [];
     $("servesbox").hidden = list.length < 2;
     if (list.length < 2) return;
-    const ok = list.filter((s) => !s.error), rpm = ok.map((s) => s.rpm);
+    const ok = list.filter((s) => !s.error && s.reliable), rpm = ok.map((s) => s.rpm);
     $("serves-sum").textContent = !ok.length ? `${list.length} serves found, none could be read.` :
-      `${list.length} serves · ${ok.length} read · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
+      `${list.length} serves · ${ok.length} read clearly · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
       (ok.length > 1 ? ` · range ${fmt(Math.min(...rpm))}–${fmt(Math.max(...rpm))}` : "") + ". Tap a serve to see it.";
-    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error ? "bad" : ""}">
-      <b>${k + 1} · ${s.error ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error ? "no reading" : typeText(s.spinType) + (s.reliable ? "" : " · low")}</span></button>`).join("");
+    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error || !s.reliable ? "bad" : ""}">
+      <b>${k + 1} · ${s.error || !s.reliable ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error || !s.reliable ? "no clear reading" : typeText(s.spinType)}</span></button>`).join("");
   }
   $("serves").addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-k]");
@@ -1523,17 +1600,28 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
   let current = null, currentServe = 0;
 
+  // setup problems that apply to the whole video, in the same "what to change" list
+  const setupDiag = (checks) => (checks || []).filter((c) => c.status === "bad" || (c.status === "warn" && (c.key === "light" || c.key === "fps")))
+    .map((c) => ({ text: c.title + ".", fix: c.text }));
+
   // one serve, or one stretch of it (off the paddle / after the bounce)
   function showServe(k, phase = null) {
-    const sv = current.serves[k], list = sv.phases;
-    const active = list ? (phase != null ? phase : Math.max(0, list.findIndex((r) => r.phase === sv.phase))) : -1;
-    const shown = list ? list[active] : sv;
+    const sv = current.serves[k], readings = sv.phases || [sv], notes = sv.notes || [];
+    const active = phase != null ? phase : Math.max(0, readings.findIndex((r) => r.phase === sv.phase));
+    const shown = readings[active];
     currentServe = k;
-    render(Object.assign({}, shown, { meta: current.meta }));
+    // what went wrong: this stretch's own problems, notes about it, and stretches that couldn't be measured
+    const diag = setupDiag(current.checks).concat(shown.issues || [], notes.filter((n) => n.phase === shown.phase || !readings.some((r) => r.phase === n.phase)));
+    render(Object.assign({}, shown, { meta: current.meta, diag }));
     renderServes(current, k);
-    $("phasebox").hidden = !list;
-    if (list) $("phases").innerHTML = list.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error ? "bad" : ""}">
-      <b>${PHASE[r.phase]}</b><span>${r.error ? "no reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType) + (r.reliable ? "" : " · low")}</span></button>`).join("");
+    const missing = notes.filter((n) => n.phase !== "flight" && !readings.some((r) => r.phase === n.phase));
+    const tiles = readings.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error || !r.reliable ? "bad" : ""}">
+      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames</span></button>`)
+      .concat(missing.map((n) => `<button type="button" disabled><b>${PHASE[n.phase]}</b><span>not measured: ${n.frames ? `only ${n.frames} frames` : "too few frames"}</span></button>`));
+    const order = (h) => (h.includes("After the bounce") ? 1 : 0);
+    tiles.sort((x, y) => order(x) - order(y));
+    $("phasebox").hidden = tiles.length < 2;
+    $("phases").innerHTML = tiles.join("");
     renderChecks(current.checks, shown.checks, current.serves.length > 1 ? `Serve ${k + 1}` : "This serve");
   }
   $("phases").addEventListener("click", (ev) => {
@@ -1570,7 +1658,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.2 (e97a2c0)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.2 (7fa0116)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1580,7 +1668,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     tb.innerHTML = log.map((e, i) => `<tr>
       <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
       <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type) + (e.phase === "bounce" ? " (after the bounce)" : "") + (e.bounceRpm ? `<br><span class="note">after the bounce: ${fmt(e.bounceRpm)} RPM</span>` : "")}</td>
-      <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
+      <td>${e.error ? "–" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
     const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion\tmeasured on\trpm after bounce";
@@ -1625,12 +1713,17 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
+        current = null;
+        render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
+          .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
+        $("servesbox").hidden = true; $("phasebox").hidden = true;
         log.push(Object.assign(base, { error: res.error || "No serve found.", secs }));
       } else {
         serves.forEach((s, k) => {
           const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
           const ab = s.phase !== "bounce" && s.phases ? s.phases.find((r) => r.phase === "bounce" && !r.error && r.reliable) : null;
-          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
+          const why = (s.issues && s.issues[0] ? s.issues[0].text : "") || (s.notes && s.notes[0] ? s.notes[0].text : "") || s.error || "";
+          log.push(Object.assign(e, s.error || !s.reliable ? { error: "no clear reading" + (why ? ": " + why : "") } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
             phase: s.phase, bounceRpm: ab ? ab.rpm : undefined, bounceType: ab ? ab.spinType : undefined }));
         });
         current = res;
@@ -1667,7 +1760,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="e97a2c0" hidden></span>
+<span id="app-build" data-build="7fa0116" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

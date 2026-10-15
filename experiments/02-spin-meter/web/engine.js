@@ -485,7 +485,9 @@
 
   // ------------------------------------------------------------ scan pass: candidates in one frame
   function scanFrame(job, ctx) {             // job: { buf, offset, stride, full, pu, pv } (planes) or { g, u, v } (half size)
-    const { bgf, bg, bgU, bgV, sw, sh, W, H } = ctx;
+    const { sw, sh, W, H } = ctx;
+    const sec = ctx.sections.find((q) => job.i >= q.from && job.i < q.to) || ctx.sections[ctx.sections.length - 1];
+    const { bgf, bg, bgU, bgV } = sec;
     let { g, u, v } = job;
     if (!g) {
       const P = { buf: job.buf, offset: job.offset, stride: job.stride, lut: job.full ? LUT_FULL : LUT_VIDEO, full: job.full };
@@ -590,21 +592,30 @@
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
+    // background samples, kept small: brightness as bytes, colour as signed bytes
+    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
+      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
     if (R.kind === "seek") {
-      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => samples.push(await grabHalf(ctx, src, R.W, R.H)));
+      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => keep(k, await grabHalf(ctx, src, R.W, R.H)));
     } else {
       await R.run(0, nFrames, async (k, src) => {
-        if (k % stride === 0) samples.push(await grabHalf(ctx, src, R.W, R.H));
+        if (k % stride === 0) keep(k, await grabHalf(ctx, src, R.W, R.H));
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
-    const bgf = medianFrames(samples.map((s) => s.g), sw * sh);
     const withColour = samples.every((s) => s.u);
-    const bgU = withColour ? medianFrames(samples.map((s) => s.u), sw * sh) : null;
-    const bgV = withColour ? medianFrames(samples.map((s) => s.v), sw * sh) : null;
-    const defl = samples.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
-    const bg = medianFrames(defl, sw * sh);
-    for (let p = 0; p < bg.length; p++) bg[p] = Math.trunc(bg[p]);
+    function background(set) {               // still background from a set of samples
+      const bgf = medianFrames(set.map((s) => s.g), sw * sh);
+      const defl = set.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
+      const bg = Uint8Array.from(medianFrames(defl, sw * sh), Math.trunc);
+      const bgU = withColour ? Int8Array.from(medianFrames(set.map((s) => s.u), sw * sh), Math.round) : null;
+      const bgV = withColour ? Int8Array.from(medianFrames(set.map((s) => s.v), sw * sh), Math.round) : null;
+      return { bgf, bg, bgU, bgV, defl };
+    }
+    const whole = background(samples), { bgf, bg, defl } = whole;
+    // (one background per section of the video was tried, for a phone still being set down at
+    // the start: with ~10 samples per section, the server's body leaked into the background)
+    const sections = [{ from: 0, to: nFrames, bgf: whole.bgf, bg: whole.bg, bgU: whole.bgU, bgV: whole.bgV }];
     if (opt.onScene) {                        // setup check: overall light, and how much of the view keeps changing
       let sum = 0; for (let p = 0; p < bg.length; p++) sum += bg[p];
       const moving = defl.map((d) => { let n = 0; for (let p = 0; p < d.length; p++) if (Math.abs(d[p] - bg[p]) > 30) n++; return n / d.length; });
@@ -612,7 +623,7 @@
     }
     const cands = new Array(nFrames).fill(null).map(() => []);
     // the per-frame search runs on worker threads when the browser allows it, else here
-    const scanCtx = { bgf, bg, bgU, bgV, sw, sh, W: R.W, H: R.H };
+    const scanCtx = { sections, sw, sh, W: R.W, H: R.H };
     const pool = await scanPool(scanCtx);
     let doneN = 0;
     const store = (i, fc) => { cands[i] = fc; if (++doneN % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * doneN / nFrames); };
@@ -700,16 +711,32 @@
       let s0 = 0;
       for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
       const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
-      const parts = [];
+      const parts = [], notes = [];
+      const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
       // the first frames after the hit still have the paddle next to the ball
       const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      const hitSeen = first.kind === "contact";
+      const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
       if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
+        edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
+          "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
       if (sawBounce) {
-        const after = next.pts.slice(2, 2 + maxFrames);
+        const after = next.pts.slice(2, 2 + maxFrames), last = next.pts[next.pts.length - 1];
         if (after.length >= 8) parts.push(makePart("bounce", after));
+        else note("bounce", `After the bounce: not measured. Only ${next.pts.length} frames after the bounce (needs 10), then the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"}.`,
+          edgeOf(last) ? "Widen the view past the bounce point: move the camera back a little or turn it toward the bounce." : "Keep the background behind the bounce even, and add light.", next.pts.length);
+      } else {
+        const last = first.pts[first.pts.length - 1];
+        note("flight", `No bounce seen: the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"} before bouncing, so this can't be placed before or after the bounce.`,
+          edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
       }
       if (!parts.length) continue;
-      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts });
+      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes });
+    }
+    function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
+      const m = 3 * p[3] + 6;
+      return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
     }
     function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
       const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
@@ -747,7 +774,7 @@
     }
     if (!best) return null;
     const [cx, cy, r] = minEnclosingCircle(best.pix);
-    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05)];
+    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05), Math.max(best.w, best.h) / Math.min(best.w, best.h)];
   }
 
   function smoothFit(balls, tol, factor) {    // robust quadratic fits of x(t), y(t)
@@ -988,6 +1015,26 @@
     return out;
   }
 
+  // What in the footage stood in the way of a clear reading, each with what to change.
+  // r: the spin fit (null when there was none). Only problems are listed.
+  function diagnose(s, r) {
+    const out = [], add = (text, fix) => out.push({ text, fix });
+    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    if (s.total && s.frames < 0.7 * s.total)
+      add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
+    if (s.ballR && s.ballR < 10)
+      add(`The ball is only ${Math.round(2 * s.ballR)} px across.`, "Move the camera closer: 1–1.5 m from the ball's path, so it is 30–50 px across.");
+    if (s.stretch && s.stretch > 1.35)
+      add(`The ball is smeared by motion blur (stretched ${s.stretch.toFixed(1)}× along its path).`, "Add light: daylight or extra lamps make the camera's shutter faster.");
+    if (s.contrast !== undefined && s.contrast < 0.3)
+      add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
+    if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
+      add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
+    if (r && !clear && !out.length)
+      add(`The marking couldn't be followed reliably (fit ${r.score.toFixed(2)}, needs 0.75).`, "Check that the ball's marking is sharp in the slow-motion video; more light helps most.");
+    return out;
+  }
+
   // ------------------------------------------------------------ 3. measure one serve
   async function measureSegment(R, seg, fps, hfov) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
@@ -1008,15 +1055,28 @@
       for (let d = 0; d < 6; d++) { if (seen.has(k - d)) return seen.get(k - d); if (seen.has(k + d)) return seen.get(k + d); }
       return null;
     };
-    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0,
-      colour ? { u: frames[k].u, v: frames[k].v, bgU, bgV } : null, predict(k)));
+    const cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU, bgV } : null));
+    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0, cols[k], predict(k)));
     frames = gray;
-    const found = balls.filter(Boolean), stats = { frames: found.length };
-    if (found.length) stats.ballR = median(found.map((b) => b[2]));
-    if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, checks: serveChecks(stats) };
+    const found = balls.filter(Boolean), stats = { frames: found.length, total: balls.length };
+    // Does the picture around the ball stay still during the serve? Share of pixels away from the
+    // ball that differ from the background, per frame; a moving camera makes most of them differ.
+    const changed = gray.map((g, k) => {
+      const b = balls[k], col = cols[k];
+      let n = 0, m = 0;
+      for (let y = 0; y < rh; y += 2) for (let x = 0; x < rw; x += 2) {
+        if (b && Math.hypot(x - b[0], y - b[1]) < 2 * b[2]) continue;
+        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) n++;
+      }
+      return n / Math.max(1, m);
+    });
+    stats.bgChange = median(changed);
+    if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
+    const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
+    if (found.length < 4) return fail("The ball was found in too few frames.");
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats);
-    if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, checks: serveChecks(stats) };
-    if (r.error) return { error: r.error, segment: seg, checks: serveChecks(stats) };
+    if (!r) return fail("The ball was found in too few frames in a row.");
+    if (r.error) return fail(r.error);
     const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
@@ -1027,7 +1087,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
-      phase: seg.kind, reference: stats.reference,
+      phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
@@ -1072,7 +1132,7 @@
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
           ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
-        const one = Object.assign({}, head, { phases: readings.length > 1 ? readings : null });
+        const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
         // something that isn't a ball for most of its frames, or a short stretch that can't be read,
         // is most likely not a serve (a ball rolling, picked up, a hand)
         const notBall = one.error && /found in too few/.test(one.error);

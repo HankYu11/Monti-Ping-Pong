@@ -126,6 +126,26 @@ Best camera position for both readings: beside the table at the server's half, 1
 the path from paddle to first bounce, 40–60 cm above the table and tilted down, so the table
 is behind the ball and its size barely changes.
 
+## Saying what went wrong, not guessing (2.2)
+
+A stretch without a clear reading shows **no number**: "No clear reading", the frames it had,
+and a "What to change in the footage" list, each item a problem found in the footage and the fix:
+- ball found in under 70% of the stretch's frames (hidden, or blends with the background);
+- ball under 20 px across; motion blur (ball stretched > 1.35× along its path);
+- black half faint (contrast < 30%); spin rate ambiguous (another rate fits about as well);
+- setup problems from the checklist (too dark, frame rate, portrait).
+
+Stretches that couldn't be measured say why, with frame counts: "Off the paddle: not measured.
+Only 7 frames from when the ball was first seen to the bounce (needs 12)"; after the bounce,
+whether the ball then left the picture (which edge) or was lost; with no bounce in view, that
+the reading can't be placed before or after the bounce. The session log records "no clear
+reading" with the first reason instead of a number.
+
+Tried and dropped: a whole-picture camera-shake measure (on plain walls there is nothing to
+line up, so tripod clips looked shaky), and one background per section of the video (too few
+samples per section; the server's body leaked into it and p4 was lost). The background samples
+are now stored as bytes (about 60 MB instead of 240 MB for 40 colour samples).
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

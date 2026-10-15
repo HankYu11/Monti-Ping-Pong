@@ -154,7 +154,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.2 · build 6ddb8b4</p>
+    <p class="note num">Version 2.2 · build e97a2c0</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -232,6 +232,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <p class="note num" id="serves-sum"></p>
       <div class="serves" id="serves" role="group" aria-labelledby="serves-label"></div>
     </div>
+    <div id="phasebox" hidden>
+      <span class="label" id="phases-label">Spin, before and after the bounce</span>
+      <div class="serves" id="phases" role="group" aria-labelledby="phases-label"></div>
+    </div>
     <p class="note err" id="serve-error" hidden></p>
     <div class="reading" id="readingbox">
       <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
@@ -251,7 +255,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <div class="trust">
       <p><b>Revolutions per minute:</b> matched hand counts on 5 of 5 test serves (within about 5%).</p>
       <p><b>Backspin or topspin:</b> correct on 4 of 4 labelled serves so far.</p>
-      <p><b>Filmed from the end of the table:</b> the reading is the spin after the first bounce, which is what the receiver faces. The bounce takes off a little spin.</p>
+      <p><b>Off the paddle, after the bounce:</b> when the bounce is in view, both are measured. Off the paddle is the serve's own spin; after the bounce is what the receiver faces, usually a little less.</p>
       <p><b>Sidespin amount:</b> experimental. On a dim, small ball the axis can be off by tens of degrees. Serves labelled by your coach will show how far.</p>
     </div>
   </section>
@@ -286,9 +290,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <ol>
         <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
         <li><b>Slow motion at 240 fps</b>, phone in landscape, <b>held still</b>: on a tripod, or leaned against something solid.</li>
-        <li><b>From the far end of the table</b>, a little to one side, looking back at the server: the ball comes toward the camera over the table. Works in a busy hall, because the table is behind the ball.</li>
-        <li>Or <b>side-on</b>, about 1–1.5 m from the ball's path, with a plain wall behind the flight.</li>
+        <li><b>Best: beside the table, level with the server's half</b>, about 1–1.5 m from the path from paddle to first bounce, 40–60 cm above the table and tilted down a little, so the table is behind the ball. Then the spin is read <b>off the paddle</b> and again <b>after the bounce</b>.</li>
+        <li>Also works: <b>from the far end of the table</b>, a little to one side, looking back at the server. The ball comes toward the camera; usually only the spin after the bounce can be read.</li>
         <li><b>Not from behind the server</b>: the ball flies away, gets small and blurs.</li>
+        <li>The toss doesn't need to be in view: the spin comes from the paddle.</li>
         <li><b>Bright light</b>: daylight or extra lamps. Dim light blurs the marking.</li>
         <li><b>Several serves in one video</b> is fine: leave a second or two between serves and keep the camera still. Each serve gets its own reading.</li>
       </ol>
@@ -872,15 +877,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
     return best;
   }
-  function splitAtBounces(tr, depth = 0) {   // pieces in time order
+  // A kink is either the hit (a falling toss suddenly flies off fast) or a bounce (the ball keeps
+  // most of its speed but changes direction).
+  function kinkKind(tr, b, k = 5) {
+    return Math.hypot(...velocity(tr, b, b + k)) > 1.6 * Math.hypot(...velocity(tr, b - k, b)) ? "contact" : "bounce";
+  }
+  function splitAtKinks(tr, kind = "start", depth = 0) {   // [{ pts, kind }] in time order; kind = how the piece begins
     const b = depth < 3 ? bounceIndex(tr) : -1;
-    if (b < 0) return [tr];
-    return splitAtBounces(tr.slice(0, b), depth + 1).concat(splitAtBounces(tr.slice(b), depth + 1));
+    if (b < 0) return [{ pts: tr, kind }];
+    return splitAtKinks(tr.slice(0, b), kind, depth + 1).concat(splitAtKinks(tr.slice(b), kinkKind(tr, b), depth + 1));
   }
 
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
-    const skipAfter = opt.skipAfterContact ?? 12, maxFrames = opt.maxFrames ?? 60, minLen = 12;
+    const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
     const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
@@ -986,18 +996,33 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         if (step > 1.0) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
       }
       runs.push(cur);
-      tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter);   // leave out the racket contact
-      // A bounce changes the spin: measure the longest stretch between bounces.
-      const pieces = splitAtBounces(tr);
-      const piece = pieces.reduce((a, b) => (b.length > a.length ? b : a));
-      tr = piece.slice(0, maxFrames);
-      if (tr.length < 8) continue;
-      const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
-      const r = Math.max(...tr.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(tr.map((p) => p[3])) / 0.5);
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a));
+      // Cut the flight at its kinks. The serve starts at the hit: a toss falling into view before
+      // it is dropped. Then measure two stretches, since the bounce changes the spin:
+      //   off the paddle - from just after the hit to the first bounce (the serve's own spin)
+      //   after the bounce - up to the next kink (what the receiver faces)
+      const pieces = splitAtKinks(tr);
+      let s0 = 0;
+      for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
+      const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
+      const parts = [];
+      // the first frames after the hit still have the paddle next to the ball
+      const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      if (sawBounce) {
+        const after = next.pts.slice(2, 2 + maxFrames);
+        if (after.length >= 8) parts.push(makePart("bounce", after));
+      }
+      if (!parts.length) continue;
+      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts });
+    }
+    function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
+      const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
+      const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
       const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
-        track: tr.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]), afterBounce: piece !== pieces[0] });
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
+        track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
     }
     segs.sort((a, b) => a.start - b.start);
     segs.ballFrames = cands.filter((c) => c.length).length;   // for the "no serve found" diagnosis
@@ -1307,7 +1332,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
-      afterBounce: !!seg.afterBounce, reference: stats.reference,
+      phase: seg.kind, reference: stats.reference,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
@@ -1343,9 +1368,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       const serves = [];
       for (let k = 0; k < segs.length; k++) {
         progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
-        const one = await measureSegment(R, segs[k], fps, hfov);
-        // a short stretch that can't be read is most likely not a serve (a ball rolling, picked up)
-        if (one.error && segs[k].end - segs[k].start < 20 && segs.length > 1) continue;
+        const readings = [];
+        for (const part of segs[k].parts) {
+          const one = await measureSegment(R, part, fps, hfov);
+          readings.push(Object.assign(one, { phase: part.kind }));
+        }
+        // the headline: off the paddle when it reads clearly, else the clearest stretch
+        const ok = readings.filter((r) => !r.error);
+        const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
+          ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
+        const one = Object.assign({}, head, { phases: readings.length > 1 ? readings : null });
+        // something that isn't a ball for most of its frames, or a short stretch that can't be read,
+        // is most likely not a serve (a ball rolling, picked up, a hand)
+        const notBall = one.error && /found in too few/.test(one.error);
+        if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
         serves.push(one);
       }
       progress("Done", 1);
@@ -1379,7 +1415,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);
 
 </script>
@@ -1398,7 +1434,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   const fmt = (v, d = 0) => Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-  const typeText = (t) => cap(t.replace(" (curves ", ", curves ").replace(")", ""));
+  const PHASE = { paddle: "Off the paddle", bounce: "After the bounce", flight: "In flight" };
+  const typeText = (t) => cap(t.replace(/ \(curves (left|right)\)/, ", curves $1"));
 
   function drawCompass(res) {
     const svg = $("compass"), C = 110, R = 92, max = 60;
@@ -1437,7 +1474,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(res.reliable ? `<span class="chip ok">Clear reading</span>` : `<span class="chip low">Low quality: re-record</span>`);
-    if (res.afterBounce) chips.push(`<span class="chip">After the bounce</span>`);
+    if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
     $("chips").innerHTML = chips.join("");
@@ -1482,13 +1519,27 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
   $("serves").addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-k]");
-    if (!b || !current) return;
-    const k = +b.dataset.k;
-    render(Object.assign({}, current.serves[k], { meta: current.meta }));
-    renderServes(current, k);
-    renderChecks(current.checks, current.serves[k].checks, `Serve ${k + 1}`);
+    if (b && current) showServe(+b.dataset.k);
   });
-  let current = null;
+  let current = null, currentServe = 0;
+
+  // one serve, or one stretch of it (off the paddle / after the bounce)
+  function showServe(k, phase = null) {
+    const sv = current.serves[k], list = sv.phases;
+    const active = list ? (phase != null ? phase : Math.max(0, list.findIndex((r) => r.phase === sv.phase))) : -1;
+    const shown = list ? list[active] : sv;
+    currentServe = k;
+    render(Object.assign({}, shown, { meta: current.meta }));
+    renderServes(current, k);
+    $("phasebox").hidden = !list;
+    if (list) $("phases").innerHTML = list.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error ? "bad" : ""}">
+      <b>${PHASE[r.phase]}</b><span>${r.error ? "no reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType) + (r.reliable ? "" : " · low")}</span></button>`).join("");
+    renderChecks(current.checks, shown.checks, current.serves.length > 1 ? `Serve ${k + 1}` : "This serve");
+  }
+  $("phases").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-p]");
+    if (b && current) showServe(currentServe, +b.dataset.p);
+  });
 
   // ---------------------------------------------------------- setup check
   const ICON = { ok: "✓", warn: "!", bad: "✕" };
@@ -1519,7 +1570,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.2 (6ddb8b4)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.2 (e97a2c0)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1528,14 +1579,15 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     if (!log.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
     tb.innerHTML = log.map((e, i) => `<tr>
       <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
-      <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type)}</td>
+      <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type) + (e.phase === "bounce" ? " (after the bounce)" : "") + (e.bounceRpm ? `<br><span class="note">after the bounce: ${fmt(e.bounceRpm)} RPM</span>` : "")}</td>
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion";
+    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion\tmeasured on\trpm after bounce";
     return [head].concat(log.map((e, i) => [i + 1, e.serve ? e.serve + "/" + e.of : "", e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
-      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : "", e.ver || ""].join("\t"))).join("\n");
+      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : "", e.ver || "",
+      e.phase ? PHASE[e.phase].toLowerCase() : "", e.bounceRpm ? Math.round(e.bounceRpm) : ""].join("\t"))).join("\n");
   }
   $("copy").addEventListener("click", () => {
     const text = asText(), box = $("copybox");
@@ -1577,13 +1629,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       } else {
         serves.forEach((s, k) => {
           const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
-          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable }));
+          const ab = s.phase !== "bounce" && s.phases ? s.phases.find((r) => r.phase === "bounce" && !r.error && r.reliable) : null;
+          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
+            phase: s.phase, bounceRpm: ab ? ab.rpm : undefined, bounceType: ab ? ab.spinType : undefined }));
         });
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
-        render(Object.assign({}, serves[pick], { meta: res.meta }));
-        renderServes(res, pick);
-        renderChecks(res.checks, serves[pick].checks, serves.length > 1 ? `Serve ${pick + 1}` : "This serve");
+        showServe(pick);
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       save(); renderLog();
@@ -1615,7 +1667,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="6ddb8b4" hidden></span>
+<span id="app-build" data-build="e97a2c0" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

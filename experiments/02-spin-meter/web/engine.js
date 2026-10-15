@@ -572,15 +572,20 @@
     }
     return best;
   }
-  function splitAtBounces(tr, depth = 0) {   // pieces in time order
+  // A kink is either the hit (a falling toss suddenly flies off fast) or a bounce (the ball keeps
+  // most of its speed but changes direction).
+  function kinkKind(tr, b, k = 5) {
+    return Math.hypot(...velocity(tr, b, b + k)) > 1.6 * Math.hypot(...velocity(tr, b - k, b)) ? "contact" : "bounce";
+  }
+  function splitAtKinks(tr, kind = "start", depth = 0) {   // [{ pts, kind }] in time order; kind = how the piece begins
     const b = depth < 3 ? bounceIndex(tr) : -1;
-    if (b < 0) return [tr];
-    return splitAtBounces(tr.slice(0, b), depth + 1).concat(splitAtBounces(tr.slice(b), depth + 1));
+    if (b < 0) return [{ pts: tr, kind }];
+    return splitAtKinks(tr.slice(0, b), kind, depth + 1).concat(splitAtKinks(tr.slice(b), kinkKind(tr, b), depth + 1));
   }
 
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
-    const skipAfter = opt.skipAfterContact ?? 12, maxFrames = opt.maxFrames ?? 60, minLen = 12;
+    const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
     const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
@@ -686,18 +691,33 @@
         if (step > 1.0) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
       }
       runs.push(cur);
-      tr = runs.reduce((a, b) => (b.length > a.length ? b : a)).slice(skipAfter);   // leave out the racket contact
-      // A bounce changes the spin: measure the longest stretch between bounces.
-      const pieces = splitAtBounces(tr);
-      const piece = pieces.reduce((a, b) => (b.length > a.length ? b : a));
-      tr = piece.slice(0, maxFrames);
-      if (tr.length < 8) continue;
-      const xs = tr.map((p) => p[1] / 0.5), ys = tr.map((p) => p[2] / 0.5);
-      const r = Math.max(...tr.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(tr.map((p) => p[3])) / 0.5);
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a));
+      // Cut the flight at its kinks. The serve starts at the hit: a toss falling into view before
+      // it is dropped. Then measure two stretches, since the bounce changes the spin:
+      //   off the paddle - from just after the hit to the first bounce (the serve's own spin)
+      //   after the bounce - up to the next kink (what the receiver faces)
+      const pieces = splitAtKinks(tr);
+      let s0 = 0;
+      for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
+      const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
+      const parts = [];
+      // the first frames after the hit still have the paddle next to the ball
+      const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      if (sawBounce) {
+        const after = next.pts.slice(2, 2 + maxFrames);
+        if (after.length >= 8) parts.push(makePart("bounce", after));
+      }
+      if (!parts.length) continue;
+      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts });
+    }
+    function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
+      const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
+      const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
       const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      segs.push({ start: tr[0][0], end: tr[tr.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
-        track: tr.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]), afterBounce: piece !== pieces[0] });
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
+        track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
     }
     segs.sort((a, b) => a.start - b.start);
     segs.ballFrames = cands.filter((c) => c.length).length;   // for the "no serve found" diagnosis
@@ -1007,7 +1027,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
-      afterBounce: !!seg.afterBounce, reference: stats.reference,
+      phase: seg.kind, reference: stats.reference,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
@@ -1043,9 +1063,20 @@
       const serves = [];
       for (let k = 0; k < segs.length; k++) {
         progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
-        const one = await measureSegment(R, segs[k], fps, hfov);
-        // a short stretch that can't be read is most likely not a serve (a ball rolling, picked up)
-        if (one.error && segs[k].end - segs[k].start < 20 && segs.length > 1) continue;
+        const readings = [];
+        for (const part of segs[k].parts) {
+          const one = await measureSegment(R, part, fps, hfov);
+          readings.push(Object.assign(one, { phase: part.kind }));
+        }
+        // the headline: off the paddle when it reads clearly, else the clearest stretch
+        const ok = readings.filter((r) => !r.error);
+        const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
+          ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
+        const one = Object.assign({}, head, { phases: readings.length > 1 ? readings : null });
+        // something that isn't a ball for most of its frames, or a short stretch that can't be read,
+        // is most likely not a serve (a ball rolling, picked up, a hand)
+        const notBall = one.error && /found in too few/.test(one.error);
+        if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
         serves.push(one);
       }
       progress("Done", 1);
@@ -1079,5 +1110,5 @@
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

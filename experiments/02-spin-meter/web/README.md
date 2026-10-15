@@ -102,6 +102,30 @@ Results (headless Chromium; the new clips converted to VP9 for the test browser)
 "Clear" now also means a fit ≥ 0.5 that is ≥ 0.2 ahead of the best other spin rate.
 The Python meter (`../spinmeter.py`) doesn't have these changes yet.
 
+## Off the paddle and after the bounce (2.2)
+
+The flight is cut at its kinks. A kink where the ball suddenly flies off much faster (≥ 1.6×)
+is the hit: anything before it, such as a toss falling into view, is dropped. Any other kink
+is a bounce. Two stretches are then measured:
+- **off the paddle**: from 4 frames after the hit (the paddle still touches the ball) to the
+  first bounce: the serve's own spin;
+- **after the bounce**: from 2 frames after the bounce to the next kink: what the receiver faces.
+
+Each needs ≥ 8 frames. The headline reading is off the paddle when it reads clearly, else the
+clearer one; the page shows both and either can be opened. With no bounce in view there is one
+"in flight" reading. A stretch where no ball-shaped object is found in most frames is dropped
+when the video has other serves.
+
+Tested on made-up paths (toss, hit, flight, bounce: kinks found at frames 13 and 32 for true
+12 and 32; a ball speeding up smoothly toward the camera gives no kink) and on the clips:
+p4's stretch before the bounce is 8 frames, too short, so it reads after the bounce only
+(36.95 rps backspin, clear); w1 reads 35.8 rps off the paddle (clear) and a short, low-quality
+stretch after a later bounce; w2–w4 have no bounce in view and read as before.
+
+Best camera position for both readings: beside the table at the server's half, 1–1.5 m from
+the path from paddle to first bounce, 40–60 cm above the table and tilted down, so the table
+is behind the ball and its size barely changes.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

@@ -1,6 +1,6 @@
 // Serve Spin Meter service worker: works offline after the first visit, and receives videos
 // shared from other apps (Photos → Share → Spin Meter) through the manifest's share_target.
-const VERSION = "90fc1d8b3d83";
+const VERSION = "c302c11";
 const SHELL = "shell-" + VERSION, LIBS = "libs-v1", SHARED = "shared";
 const SHELL_FILES = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
@@ -32,9 +32,11 @@ self.addEventListener("fetch", (e) => {
     return;
   }
   if (e.request.method !== "GET") return;
-  // The page itself: network first so updates show up, cached copy when offline.
+  if (url.origin === location.origin && url.pathname.endsWith("/version.json")) return;   // always from the network
+  // The page itself: network first (revalidated, so a new build isn't held back by the HTTP
+  // cache), cached copy when offline.
   if (e.request.mode === "navigate") {
-    e.respondWith(fetch(e.request).then((r) => {
+    e.respondWith(fetch(e.request.url, { cache: "no-cache", credentials: "same-origin" }).then((r) => {
       const copy = r.clone(); caches.open(SHELL).then((c) => c.put("./", copy)); return r;
     }).catch(() => caches.match("./")));
     return;

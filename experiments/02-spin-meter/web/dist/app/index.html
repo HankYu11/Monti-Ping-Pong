@@ -154,7 +154,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note">v2 · several serves per video · setup check</p>
+    <p class="note num">Version 2.1 · build c302c11</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -1357,7 +1357,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.1 (c302c11)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1370,10 +1370,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
+    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds\tversion";
     return [head].concat(log.map((e, i) => [i + 1, e.serve ? e.serve + "/" + e.of : "", e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
-      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : ""].join("\t"))).join("\n");
+      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : "", e.ver || ""].join("\t"))).join("\n");
   }
   $("copy").addEventListener("click", () => {
     const text = asText(), box = $("copybox");
@@ -1405,7 +1405,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
-      const base = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
+      const base = { ver: VERSION, server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
       const secs = res.meta && res.meta.seconds;
       const serves = res.serves || [];
       if (!serves.length) {
@@ -1438,8 +1438,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 })();
 </script>
 <style>
+.update { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 10;
+  width: min(560px, calc(100% - 32px)); display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between;
+  background: var(--ink); color: var(--bg); border-radius: 14px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
+.update p { flex: 1 1 200px; }
+.update .row { gap: 8px; flex-wrap: nowrap; }
+.update .btn.ghost { color: var(--bg); border-color: currentColor; }
 .install { display: grid; gap: 10px; justify-items: start; background: var(--soft); border-radius: 12px; padding: 12px 14px; font-size: 0.95rem; }
 </style>
+<div class="update" id="update" role="status" hidden>
+  <p id="update-text">A new version is ready.</p>
+  <div class="row">
+    <button class="btn ghost" id="update-later" type="button">Later</button>
+    <button class="btn" id="update-reload" type="button">Reload</button>
+  </div>
+</div>
+<span id="app-build" data-build="c302c11" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {
@@ -1483,5 +1497,31 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
   takeShared();
+
+  // updates: when the app comes back to the screen (and every 30 min while open), ask the
+  // server which build is current; if it isn't this one, offer a reload.
+  const mine = (document.getElementById("app-build") || {}).dataset || {};
+  let offered = false;
+  async function checkUpdate() {
+    if (offered || !navigator.onLine) return;
+    try {
+      const r = await fetch("version.json", { cache: "no-store" });
+      if (!r.ok) return;
+      const v = await r.json();
+      if (v.build && v.build !== mine.build) {
+        offered = true;
+        $("update-text").textContent = `A new version (${v.version}) is ready.`;
+        $("update").hidden = false;
+        if (navigator.serviceWorker && navigator.serviceWorker.getRegistration)
+          navigator.serviceWorker.getRegistration().then((reg) => reg && reg.update()).catch(() => {});
+      }
+    } catch (e) { /* offline or blocked: try again later */ }
+  }
+  $("update-reload").addEventListener("click", () => location.reload());
+  $("update-later").addEventListener("click", () => { $("update").hidden = true; });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(); });
+  addEventListener("online", checkUpdate);
+  setInterval(checkUpdate, 30 * 60 * 1000);
+  setTimeout(checkUpdate, 3000);
 })();
 </script>

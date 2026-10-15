@@ -14,6 +14,8 @@ browser: the video is analysed on the device and never uploaded.
 2. Decodes the video **once, front to back** with WebCodecs + mp4box.js. Seeking frame by
    frame instead re-decodes from the last keyframe every time: about 1 s per frame, roughly
    9 minutes per clip. Browsers without WebCodecs fall back to seeking.
+   A software decoder is requested first, so each frame's brightness (Y) plane can be copied
+   straight out of the decoded frame instead of going through a canvas.
 3. Finds the serve's flight, the ball in each frame, the black half's pole, scans every
    spin rate, and splits the spin into back/top, side (with curve direction) and gyro.
 4. Detects which way is down from gravity, so upside-down or rotated videos read correctly.
@@ -25,13 +27,33 @@ copied as tab-separated text, for comparing against what the server meant.
 
 Same four serves (VP9 in MP4, headless Chromium, no GPU):
 
-| Serve | Python | Browser | Time |
+| Serve | Python | Browser | Time (before → now) |
 |---|---|---|---|
-| w1 | 35.9 rps, side-backspin + gyro, low quality | 36.1 rps, side-backspin + gyro, low quality | 64 s |
-| w2 | 31.7 rps, side-backspin | 31.7 rps, side-backspin | 59 s |
-| w3 | 16.9 rps, topspin | 17.1 rps, topspin | 28 s |
-| w4 | 36.1 rps, backspin | 36.1 rps, backspin | 51 s |
-| w2 upside down | – | 31.7 rps, side-backspin | 58 s |
+| w1 | 35.9 rps, side-backspin + gyro, low quality | 35.8 rps, side-backspin + gyro, low quality | 54 → 22 s |
+| w2 | 31.7 rps, side-backspin | 31.7 rps, side-backspin | 53 → 21 s |
+| w3 | 16.9 rps, topspin | 17.1 rps, topspin + gyro (gyro share 0.52, cut-off 0.5) | 25 → 10 s |
+| w4 | 36.1 rps, backspin | 36.1 rps, backspin | 49 → 19 s |
+| w2 upside down | – | 31.7 rps, side-backspin | 54 → 21 s |
+
+## Speed
+
+Where the time went (w1, 700 frames at 1080p): copying every frame out through a canvas,
+the per-row deflicker median (a full sort per row), the mask clean-up, and the per-pixel
+background median. Changes:
+- **Direct frame reading**: the brightness plane comes straight from the decoded frame
+  (`VideoFrame.copyTo`), no canvas. Falls back to the canvas when a decoder hands out frames
+  that can't be copied (some phone hardware decoders). The canvas path alone went 25 → 13 s
+  on w3 and gives the same numbers as before.
+- **Medians by selection** instead of sorting, and a faster 2×2 mask opening. Both give
+  bit-identical output (checked against the old code on real frames and random masks).
+- **Worker threads**: the per-frame ball search runs on up to 4 background threads, built
+  from this same file. If the page isn't allowed to start workers, it runs on the main
+  thread as before.
+
+Small differences from the earlier numbers come from reading brightness directly (video
+range Y mapped to 0–255) instead of the canvas' RGB-to-gray conversion. The result shows
+"Analysed in N s · direct / canvas frame reading" and the session log has a `seconds`
+column, so the time on a phone can be compared.
 
 Test: `node test/run_page.mjs dist/serve-spin-meter.html clip1.mp4 …` with `MP4BOX` (local
 copy of mp4box.all.min.js) and `SHOT` (screenshot path) set. Headless Chromium here has no

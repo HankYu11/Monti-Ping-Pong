@@ -201,6 +201,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <div>
       <span class="label">The ball, frame by frame</span>
       <div class="film" id="film"></div>
+      <p class="note" id="perf" hidden></p>
     </div>
     <div class="trust">
       <p><b>Revolutions per minute:</b> matched hand counts on 4 of 4 test serves (within about 5%).</p>
@@ -314,6 +315,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <div class="fact"><span class="label">Fall rate</span><b>${fmt(f.downAccel, 1)} m/s²</b><span class="note">9.8 = no lift</span></div>
       <div class="fact"><span class="label">Toward camera</span><b>${fmt(f.towardCameraDeg, 0)}°</b></div>`;
     drawCompass(res);
+    const m = res.meta || {};
+    $("perf").hidden = !m.seconds;
+    if (m.seconds) $("perf").textContent = `Analysed in ${fmt(m.seconds, 0)} s · ${m.nFrames} frames · ${
+      { direct: "direct frame reading", canvas: "canvas frame reading", seek: "slow seek mode" }[m.frameRead] || ""}`;
     const film = $("film");
     film.innerHTML = "";
     if (res.strip) { const img = new Image(); img.src = res.strip; img.alt = "Ball crops from the example serve"; film.appendChild(img); }
@@ -349,10 +354,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile";
+    const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
     return [head].concat(log.map((e, i) => [i + 1, e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
-      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file].join("\t"))).join("\n");
+      e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : ""].join("\t"))).join("\n");
   }
   $("copy").addEventListener("click", () => {
     const text = asText(), box = $("copybox");
@@ -381,10 +386,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       const entry = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
       if (res.error) {
         $("error").textContent = res.error; $("error").hidden = false;
-        log.push(Object.assign(entry, { error: res.error }));
+        log.push(Object.assign(entry, { error: res.error, secs: res.meta && res.meta.seconds }));
       } else {
         render(res);
-        log.push(Object.assign(entry, { rpm: res.rpm, type: res.spinType, lift: res.lift, curve: res.curve, gyro: res.gyro, reliable: res.reliable }));
+        log.push(Object.assign(entry, { rpm: res.rpm, type: res.spinType, lift: res.lift, curve: res.curve, gyro: res.gyro, reliable: res.reliable, secs: res.meta && res.meta.seconds }));
         if (!res.captureFpsDetected && !fpsSel) { $("error").textContent = "The video didn't say its frame rate, so 240 fps was assumed. Change it under Settings if it was different."; $("error").hidden = false; }
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }

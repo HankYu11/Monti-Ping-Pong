@@ -6,7 +6,7 @@
  *   4. split the spin by its effect on the flight (Magnus): back/top, side, gyro
  * Everything runs locally; the video never leaves the device.
  */
-(function (global) {
+(function spinEngine(global) {
   "use strict";
 
   // ------------------------------------------------------------ small numeric helpers
@@ -18,6 +18,26 @@
     return a[lo] + (a[hi] - a[lo]) * (idx - lo);
   }
   const median = (arr) => percentile(arr, 50);
+  function selectInPlace(a, lo, hi, k) {      // k-th smallest of a[lo..hi] (quickselect, reorders a)
+    while (hi > lo) {
+      const piv = a[(lo + hi) >> 1];
+      let i = lo, j = hi;
+      while (i <= j) {
+        while (a[i] < piv) i++;
+        while (a[j] > piv) j--;
+        if (i <= j) { const t = a[i]; a[i] = a[j]; a[j] = t; i++; j--; }
+      }
+      if (k <= j) hi = j; else if (k >= i) lo = i; else return a[k];
+    }
+    return a[k];
+  }
+  function medianInPlace(a, n) {              // same value as median() on the first n items, without sorting
+    const k = (n - 1) >> 1, m = selectInPlace(a, 0, n - 1, k);
+    if (n % 2) return m;
+    let m2 = Infinity;
+    for (let i = k + 1; i < n; i++) if (a[i] < m2) m2 = a[i];
+    return m + (m2 - m) * 0.5;
+  }
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -88,33 +108,41 @@
 
   // ------------------------------------------------------------ binary image helpers
   function morph(mask, W, H, kw, kh, op) {    // op: "erode" | "dilate"; OpenCV anchor = k//2
-    const ax = Math.floor(kw / 2), ay = Math.floor(kh / 2);
+    // separable, with running counts over the window (pixels outside the image are ignored)
+    const ax = Math.floor(kw / 2), ay = Math.floor(kh / 2), isE = op === "erode";
     const tmp = new Uint8Array(W * H), out = new Uint8Array(W * H);
-    const isE = op === "erode";
-    for (let y = 0; y < H; y++) {
-      const row = y * W;
+    if (kw === 2 && kh === 2) {                                // hot path (scan pass): window = this pixel and the one before
+      for (let y = 0; y < H; y++) {
+        const r = y * W;
+        tmp[r] = mask[r];
+        if (isE) for (let x = 1; x < W; x++) tmp[r + x] = mask[r + x] & mask[r + x - 1];
+        else for (let x = 1; x < W; x++) tmp[r + x] = mask[r + x] | mask[r + x - 1];
+      }
+      out.set(tmp.subarray(0, W));
+      if (isE) for (let p = W; p < W * H; p++) out[p] = tmp[p] & tmp[p - W];
+      else for (let p = W; p < W * H; p++) out[p] = tmp[p] | tmp[p - W];
+      return out;
+    }
+    const lox = -ax, hix = kw - 1 - ax;
+    for (let y = 0; y < H; y++) {                              // rows
+      const r = y * W;
+      let sum = 0;
+      for (let j = 0; j <= Math.min(hix, W - 1); j++) sum += mask[r + j];
       for (let x = 0; x < W; x++) {
-        let v = isE ? 1 : 0;
-        for (let d = -ax; d <= kw - 1 - ax; d++) {
-          const xx = x + d;
-          if (xx < 0 || xx >= W) continue;
-          const m = mask[row + xx];
-          if (isE) { if (!m) { v = 0; break; } } else if (m) { v = 1; break; }
-        }
-        tmp[row + x] = v;
+        const n = Math.min(W - 1, x + hix) - Math.max(0, x + lox) + 1;
+        tmp[r + x] = isE ? (sum === n ? 1 : 0) : (sum > 0 ? 1 : 0);
+        if (x + lox >= 0) sum -= mask[r + x + lox];
+        if (x + hix + 1 < W) sum += mask[r + x + hix + 1];
       }
     }
-    for (let x = 0; x < W; x++) {
-      for (let y = 0; y < H; y++) {
-        let v = isE ? 1 : 0;
-        for (let d = -ay; d <= kh - 1 - ay; d++) {
-          const yy = y + d;
-          if (yy < 0 || yy >= H) continue;
-          const m = tmp[yy * W + x];
-          if (isE) { if (!m) { v = 0; break; } } else if (m) { v = 1; break; }
-        }
-        out[y * W + x] = v;
-      }
+    const loy = -ay, hiy = kh - 1 - ay, col = new Int32Array(W);  // columns, walked row by row
+    for (let j = 0; j <= Math.min(hiy, H - 1); j++) for (let x = 0, r = j * W; x < W; x++) col[x] += tmp[r + x];
+    for (let y = 0; y < H; y++) {
+      const n = Math.min(H - 1, y + hiy) - Math.max(0, y + loy) + 1, r = y * W;
+      if (isE) for (let x = 0; x < W; x++) out[r + x] = col[x] === n ? 1 : 0;
+      else for (let x = 0; x < W; x++) out[r + x] = col[x] > 0 ? 1 : 0;
+      if (y + loy >= 0) for (let x = 0, q = (y + loy) * W; x < W; x++) col[x] -= tmp[q + x];
+      if (y + hiy + 1 < H) for (let x = 0, q = (y + hiy + 1) * W; x < W; x++) col[x] += tmp[q + x];
     }
     return out;
   }
@@ -180,17 +208,16 @@
     const n = frames.length, out = new Float32Array(size), buf = new Float64Array(n);
     for (let p = 0; p < size; p++) {
       for (let k = 0; k < n; k++) buf[k] = frames[k][p];
-      buf.sort();
-      out[p] = n % 2 ? buf[(n - 1) / 2] : 0.5 * (buf[n / 2 - 1] + buf[n / 2]);
+      out[p] = medianInPlace(buf, n);
     }
     return out;
   }
   function deflickerOne(g, bg, W, H, rowStep) {   // per-row brightness ratio, smoothed vertically
-    const ratio = new Float64Array(H), tmp = [];
+    const ratio = new Float64Array(H), tmp = new Float64Array(Math.ceil(W / rowStep));
     for (let y = 0; y < H; y++) {
-      tmp.length = 0;
-      for (let x = 0; x < W; x += rowStep) tmp.push(g[y * W + x] / Math.max(bg[y * W + x], 1));
-      ratio[y] = median(tmp);
+      let n = 0;
+      for (let x = 0; x < W; x += rowStep) tmp[n++] = g[y * W + x] / Math.max(bg[y * W + x], 1);
+      ratio[y] = medianInPlace(tmp, n);
     }
     const sm = blur1d(ratio, 9, 73);
     const out = new Float32Array(W * H);
@@ -295,8 +322,12 @@
     const W = track.track_width || track.video.width, H = track.track_height || track.video.height;
     const config = { codec: track.codec, codedWidth: track.video.width, codedHeight: track.video.height };
     if (description) config.description = description;
-    const sup = await VideoDecoder.isConfigSupported(config);
-    if (!sup.supported) return null;
+    // Prefer a software decoder: its frames sit in normal memory, so the brightness plane can be read
+    // directly. Hardware decoders (phones) often hand out GPU frames that need the slower canvas path.
+    let sup = { supported: false };
+    try { sup = await VideoDecoder.isConfigSupported(Object.assign({}, config, { hardwareAcceleration: "prefer-software" })); } catch (e) { /* older browsers */ }
+    if (sup.supported) config.hardwareAcceleration = "prefer-software";
+    else { sup = await VideoDecoder.isConfigSupported(config); if (!sup.supported) return null; }
     // presentation index of every sample (decode order may differ when B-frames are used)
     const ts = samples.map((x) => Math.round(1e6 * x.cts / x.timescale));
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
@@ -311,23 +342,30 @@
         for (let i = from; i < to; i++) { dFrom = Math.min(dFrom, decOfPres[i]); dTo = Math.max(dTo, decOfPres[i]); }
         let k0 = dFrom; while (k0 > 0 && !samples[k0].is_sync) k0--;
         const k1 = Math.min(samples.length - 1, dTo + 8);
-        let failure = null;
+        let failure = null, pending = 0, wake = null;
+        const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
+        const wait = () => new Promise((r) => { wake = r; setTimeout(kick, 50); });
         const dec = new VideoDecoder({
           output: (frame) => {
-            try { const i = presOfTs.get(frame.timestamp); if (i !== undefined && i >= from && i < to) cb(i, frame); }
-            catch (e) { failure = e; } finally { frame.close(); }
+            const i = presOfTs.get(frame.timestamp);
+            if (i === undefined || i < from || i >= to || failure) { frame.close(); return; }
+            pending++;
+            Promise.resolve().then(() => cb(i, frame)).catch((e) => { failure = failure || e; })
+              .finally(() => { frame.close(); pending--; kick(); });
           },
-          error: (e) => { failure = e; },
+          error: (e) => { failure = e; kick(); },
         });
+        dec.ondequeue = kick;
         dec.configure(config);
         for (let k = k0; k <= k1 && !failure; k++) {
-          while (dec.decodeQueueSize > 4) await new Promise((r) => setTimeout(r, 0));
+          while ((dec.decodeQueueSize > 4 || pending > 2) && !failure) await wait();
           const x = samples[k];
           dec.decode(new EncodedVideoChunk({ type: x.is_sync ? "key" : "delta", timestamp: ts[k],
             duration: Math.round(1e6 * x.duration / x.timescale), data: x.data }));
         }
-        await dec.flush();
-        dec.close();
+        if (!failure) { try { await dec.flush(); } catch (e) { failure = failure || e; } }
+        while (pending > 0) await wait();
+        try { dec.close(); } catch (e) { /* already closed after an error */ }
         if (failure) throw failure;
       },
       close() {},
@@ -352,7 +390,7 @@
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
-      async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); cb(i, video); } },
+      async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
   }
@@ -366,13 +404,112 @@
     return { g: out, w, h };
   }
 
-  function half(g, W, H) {                    // INTER_AREA 2x downscale, rounded
+  // Fast path: read the brightness (Y) plane straight out of a decoded VideoFrame, no canvas round trip.
+  // Gray = Y mapped from video range to 0-255, which is what the canvas gives for a gray ball on a gray wall.
+  const LUMA_FORMATS = new Set(["I420", "I420A", "I422", "I444", "NV12"]);
+  let lumaBroken = false;
+  async function lumaPlane(frame, W, H) {    // -> { buf, offset, stride, lut }, or null when this frame can't be read this way
+    if (lumaBroken || typeof VideoFrame === "undefined" || !(frame instanceof VideoFrame)) return null;
+    if (!LUMA_FORMATS.has(frame.format) || frame.visibleRect.width !== W || frame.visibleRect.height !== H) return null;
+    try {
+      const buf = new Uint8Array(frame.allocationSize());
+      const layout = await frame.copyTo(buf);
+      const full = frame.colorSpace && frame.colorSpace.fullRange;
+      return { buf, offset: layout[0].offset, stride: layout[0].stride, lut: full ? LUT_FULL : LUT_VIDEO };
+    } catch (e) { lumaBroken = true; return null; }
+  }
+  const LUT_FULL = Float32Array.from({ length: 256 }, (_, v) => v);
+  const LUT_VIDEO = Float32Array.from({ length: 256 }, (_, v) => clamp(Math.round((v - 16) * 255 / 219), 0, 255));
+  function lumaHalf({ buf, offset, stride, lut }, W, H) {   // 2x2 average, rounded (cv2 INTER_AREA)
     const w = Math.floor(W / 2), h = Math.floor(H / 2), out = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const p = 2 * y * W + 2 * x;
-      out[y * w + x] = Math.round((g[p] + g[p + 1] + g[p + W] + g[p + W + 1]) / 4);
+    for (let y = 0; y < h; y++) {
+      const r0 = offset + 2 * y * stride, r1 = r0 + stride;
+      for (let x = 0; x < w; x++) {
+        const c = 2 * x;
+        out[y * w + x] = ((lut[buf[r0 + c]] + lut[buf[r0 + c + 1]] + lut[buf[r1 + c]] + lut[buf[r1 + c + 1]]) * 0.25 + 0.5) | 0;
+      }
     }
     return { g: out, w, h };
+  }
+  function lumaCrop({ buf, offset, stride, lut }, roi) {
+    const [x0, y0, w, h] = roi, out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) { const r = offset + (y0 + y) * stride + x0; for (let x = 0; x < w; x++) out[y * w + x] = lut[buf[r + x]]; }
+    return out;
+  }
+  const readStats = { direct: 0, canvas: 0 };
+  async function grabHalf(ctx, src, W, H) {   // half-size gray frame for the scan passes
+    const L = await lumaPlane(src, W, H);
+    readStats[L ? "direct" : "canvas"]++;
+    return L ? lumaHalf(L, W, H) : halfGray(ctx, src, W, H);
+  }
+  async function grabGray(ctx, src, W, H, roi) {
+    const L = await lumaPlane(src, W, H);
+    readStats[L ? "direct" : "canvas"]++;
+    return L ? lumaCrop(L, roi) : toGray(ctx, src, W, H, roi);
+  }
+
+  // ------------------------------------------------------------ scan pass: candidates in one frame
+  function scanFrame(job, ctx) {             // job: { buf, offset, stride, full } (Y plane) or { g } (half-size gray)
+    const { bgf, bg, sw, sh, W, H } = ctx;
+    const g = job.g || lumaHalf({ buf: job.buf, offset: job.offset, stride: job.stride, lut: job.full ? LUT_FULL : LUT_VIDEO }, W, H).g;
+    const d = deflickerOne(g, bgf, sw, sh, 2);
+    const mask = new Uint8Array(sw * sh);
+    for (let p = 0; p < mask.length; p++) mask[p] = Math.abs(clamp(Math.floor(d[p]), 0, 255) - bg[p]) > 30 ? 1 : 0;
+    const m2 = opening(mask, sw, sh, 2);
+    const fc = [];
+    for (const c of components(m2, sw, sh, false)) {
+      if (c.area < 12 || c.area > 900) continue;
+      if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.7 || c.area / (c.w * c.h) < 0.5) continue;
+      fc.push([c.cx, c.cy, Math.sqrt(c.area / Math.PI)]);
+    }
+    return fc;
+  }
+
+  // Worker threads built from this same file. Returns null (search on the main thread) when
+  // workers are unavailable, e.g. blocked by the page's security policy.
+  async function scanPool(ctx) {
+    if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof document === "undefined") return null;
+    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    if (n < 2) return null;
+    let url = null;
+    const workers = [];
+    try {
+      url = URL.createObjectURL(new Blob(["(" + spinEngine.toString() + ")(self);"], { type: "text/javascript" }));
+      for (let k = 0; k < n; k++) workers.push(new Worker(url));
+      await Promise.all(workers.map((w) => new Promise((res, rej) => {
+        const t = setTimeout(() => rej(new Error("worker timeout")), 3000);
+        w.onmessage = (e) => { if (e.data && e.data.ready) { clearTimeout(t); res(); } };
+        w.onerror = (e) => { clearTimeout(t); rej(e); };
+        w.postMessage({ init: ctx });
+      })));
+    } catch (e) {
+      workers.forEach((w) => w.terminate());
+      if (url) URL.revokeObjectURL(url);
+      return null;
+    }
+    const idle = workers.slice(), waiting = [];
+    let failure = null, busy = 0;
+    const free = (w) => { idle.push(w); busy--; const r = waiting.shift(); if (r) r(); };
+    workers.forEach((w) => { w.onerror = (e) => { failure = failure || new Error("worker failed: " + (e.message || e)); free(w); }; });
+    return {
+      async submit(job, store) {
+        while (!idle.length) { if (failure) throw failure; await new Promise((r) => waiting.push(r)); }
+        if (failure) throw failure;
+        const w = idle.pop(); busy++;
+        w.onmessage = (e) => { store(e.data.i, e.data.fc); free(w); };
+        w.postMessage({ job }, [job.buf ? job.buf.buffer : job.g.buffer]);
+      },
+      async drain() { while (busy > 0) { if (failure) throw failure; await new Promise((r) => waiting.push(r)); } if (failure) throw failure; },
+      close() { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); },
+    };
+  }
+  if (typeof document === "undefined" && typeof WorkerGlobalScope !== "undefined" && global instanceof WorkerGlobalScope) {
+    let wctx = null;
+    global.onmessage = (e) => {
+      if (e.data.init) { wctx = e.data.init; global.postMessage({ ready: true }); return; }
+      const job = e.data.job;
+      global.postMessage({ i: job.i, fc: scanFrame(job, wctx) });
+    };
   }
 
   // ------------------------------------------------------------ 1. find the flight
@@ -383,10 +520,10 @@
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
     if (R.kind === "seek") {
-      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, (k, src) => samples.push(halfGray(ctx, src, R.W, R.H).g));
+      for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => samples.push((await grabHalf(ctx, src, R.W, R.H)).g));
     } else {
-      await R.run(0, nFrames, (k, src) => {
-        if (k % stride === 0) samples.push(halfGray(ctx, src, R.W, R.H).g);
+      await R.run(0, nFrames, async (k, src) => {
+        if (k % stride === 0) samples.push((await grabHalf(ctx, src, R.W, R.H)).g);
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
@@ -395,21 +532,20 @@
     const bg = medianFrames(defl, sw * sh);
     for (let p = 0; p < bg.length; p++) bg[p] = Math.trunc(bg[p]);
     const cands = new Array(nFrames).fill(null).map(() => []);
-    await R.run(0, nFrames, (i, src) => {
-      const s = halfGray(ctx, src, R.W, R.H);
-      const d = deflickerOne(s.g, bgf, sw, sh, 2);
-      const mask = new Uint8Array(sw * sh);
-      for (let p = 0; p < mask.length; p++) mask[p] = Math.abs(clamp(Math.floor(d[p]), 0, 255) - bg[p]) > 30 ? 1 : 0;
-      const m2 = opening(mask, sw, sh, 2);
-      const fc = [];
-      for (const c of components(m2, sw, sh, false)) {
-        if (c.area < 12 || c.area > 900) continue;
-        if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.7 || c.area / (c.w * c.h) < 0.5) continue;
-        fc.push([c.cx, c.cy, Math.sqrt(c.area / Math.PI)]);
-      }
-      cands[i] = fc;
-      if (i % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * i / nFrames);
-    });
+    // the per-frame search runs on worker threads when the browser allows it, else here
+    const pool = await scanPool({ bgf, bg, sw, sh, W: R.W, H: R.H });
+    let doneN = 0;
+    const store = (i, fc) => { cands[i] = fc; if (++doneN % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * doneN / nFrames); };
+    try {
+      await R.run(0, nFrames, async (i, src) => {
+        const L = await lumaPlane(src, R.W, R.H);
+        readStats[L ? "direct" : "canvas"]++;
+        const job = L ? { i, buf: L.buf, offset: L.offset, stride: L.stride, full: L.lut === LUT_FULL } : { i, g: halfGray(ctx, src, R.W, R.H).g };
+        if (pool) await pool.submit(job, store);
+        else store(i, scanFrame(job, { bgf, bg, sw, sh, W: R.W, H: R.H }));
+      });
+      if (pool) await pool.drain();
+    } finally { if (pool) pool.close(); }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];
     cands.forEach((cs, i) => {
@@ -626,7 +762,8 @@
   // ------------------------------------------------------------ main entry
   async function analyze(file, opts = {}) {
     const progress = opts.onProgress || (() => {});
-    const hfov = opts.hfov || 68;
+    const hfov = opts.hfov || 68, tStart = performance.now();
+    readStats.direct = readStats.canvas = 0;
     progress("Reading the video file", 0.01);
     const buf = await file.arrayBuffer();
     const meta = parseMp4(buf);
@@ -638,21 +775,23 @@
     try {
       const seg = await findFlight(R, progress, opts);
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
-      if (!seg) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", meta: metaOut };
+      const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
+        frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
+      if (!seg) return { error: "No serve flight found. The ball must fly sideways across the frame against a plain background.", meta: timing() };
       progress("Measuring the spin", 0.86);
       const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
       let frames = new Array(seg.end - seg.start);
-      await R.run(seg.start, seg.end, (i, src) => { frames[i - seg.start] = toGray(ctx, src, R.W, R.H, seg.roi); });
+      await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabGray(ctx, src, R.W, R.H, seg.roi); });
       frames = frames.filter(Boolean);
       let bg = medianFrames(frames, rw * rh);
       frames = frames.map((g) => deflickerOne(g, bg, rw, rh, 1));
       bg = medianFrames(frames, rw * rh);
       const balls = frames.map((g) => findBall(g, bg, rw, rh, 6.0));
       const found = balls.filter(Boolean);
-      if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, meta: metaOut };
+      if (found.length < 4) return { error: "The ball was found in too few frames.", segment: seg, meta: timing() };
       const r = measurePole(frames, balls, rw, rh, fps);
-      if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, meta: metaOut };
-      if (r.error) return { error: r.error, segment: seg, meta: metaOut };
+      if (!r) return { error: "The ball was found in too few consecutive frames.", segment: seg, meta: timing() };
+      if (r.error) return { error: r.error, segment: seg, meta: timing() };
       const geo = flightGeometry(balls, fps, R.W, hfov);
       const axis = matvec(geo.turn, r.axis);
       const c = spinComponents(r.rps, axis, geo.f);
@@ -667,7 +806,7 @@
         axis, fit: r.score, reliable, runnerUp: r.runner,
         flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
         ballRadiusPx: median(found.map((b) => b[2])), fps, captureFpsDetected: !!meta.captureFps,
-        segment: seg, meta: metaOut, crops,
+        segment: seg, meta: timing(), crops,
       };
     } finally {
       R.close();
@@ -691,5 +830,5 @@
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

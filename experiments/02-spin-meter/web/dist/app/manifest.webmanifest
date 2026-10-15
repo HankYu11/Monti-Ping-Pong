@@ -1,0 +1,23 @@
+{
+  "name": "Serve Spin Meter",
+  "short_name": "Spin Meter",
+  "description": "Measure table tennis serve spin from a 240 fps slow-motion video. Runs on the phone; videos are never uploaded.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef3f8",
+  "theme_color": "#1b4c86",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": { "files": [{ "name": "video", "accept": ["video/*", "video/mp4", ".mp4"] }] }
+  }
+}

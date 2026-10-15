@@ -1,0 +1,48 @@
+<style>
+.install { display: grid; gap: 10px; justify-items: start; background: var(--soft); border-radius: 12px; padding: 12px 14px; font-size: 0.95rem; }
+</style>
+<script>
+// App build only: offline support, the install button, and videos shared from other apps.
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+  // install: Chrome/Android offers a prompt; iPhone needs Share → Add to Home Screen
+  let deferred = null;
+  addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault(); deferred = e;
+    $("install").hidden = false; $("install-btn").hidden = false;
+  });
+  $("install-btn").addEventListener("click", async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    await deferred.userChoice.catch(() => null);
+    deferred = null; $("install").hidden = true;
+  });
+  addEventListener("appinstalled", () => { $("install").hidden = true; });
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  if (ios && !standalone) {
+    $("install").hidden = false;
+    $("install-text").textContent = "Add Spin Meter to your home screen: tap Share, then Add to Home Screen. It opens like an app and works offline.";
+  }
+  if (standalone) document.querySelectorAll("[data-app-hint]").forEach((el) => (el.hidden = false));
+
+  // a video shared from Photos (or any app) lands here via the service worker
+  async function takeShared() {
+    if (!new URLSearchParams(location.search).has("shared")) return;
+    history.replaceState(null, "", location.pathname);
+    try {
+      const c = await caches.open("shared"), r = await c.match("shared-video");
+      if (!r) return;
+      const blob = await r.blob(), name = decodeURIComponent(r.headers.get("x-file-name") || "shared.mp4");
+      await c.delete("shared-video");
+      await window.SpinPage.analyseFile(new File([blob], name, { type: blob.type || "video/mp4" }));
+    } catch (e) {
+      const el = $("error"); el.textContent = "The shared video could not be opened. Pick it with the button instead."; el.hidden = false;
+    }
+  }
+  takeShared();
+})();
+</script>

@@ -4,8 +4,12 @@ A phone-friendly page that runs the spin meter on a slow-motion video, entirely 
 browser: the video is analysed on the device and never uploaded.
 
 - Published (private until shared): https://claude.ai/artifact/8pUoA3jJDFb1UMSwSBsnTp
-- Build: `python3 build.py` → `dist/serve-spin-meter.html` (inlines `engine.js` and the
-  example filmstrip into `page.html`).
+- App (installable, offline, in the Share menu): https://hankyu11.github.io/Monti-Ping-Pong/
+  once GitHub Pages is switched on (Settings → Pages → Source: GitHub Actions). The workflow
+  `.github/workflows/spin-meter-pages.yml` rebuilds and publishes it on every push to `main`.
+- Build: `python3 build.py` makes both from `page.html` + `engine.js`:
+  - `dist/serve-spin-meter.html`: one self-contained file (the artifact above).
+  - `dist/app/`: the same page plus `app/` (manifest, service worker, icons, install button).
 
 ## What it does
 
@@ -38,6 +42,28 @@ Same four serves (VP9 in MP4, headless Chromium, no GPU):
 | w3 | 16.9 rps, topspin | 17.1 rps, topspin + gyro (gyro share 0.52, cut-off 0.5) | 25 → 10 s |
 | w4 | 36.1 rps, backspin | 36.1 rps, backspin | 49 → 19 s |
 | w2 upside down | – | 31.7 rps, side-backspin | 54 → 21 s |
+
+## Setup check (v2)
+
+While a video is analysed, a checklist fills in as each item can be judged:
+- straight away: slow-motion frame rate (from the file), landscape, resolution;
+- after the background pass: overall light, camera steadiness (share of the picture that
+  keeps changing);
+- per serve: ball size, frames with the ball, marking contrast, wall brightness behind the ball.
+- If no serve is found, it says whether no ball was seen at all or the ball didn't fly across.
+
+Limits come from the test serves (light 136–145 of 255, ball 21–28 px across, marking
+contrast 55–70%, w3 24%) and from deliberately bad copies of w3: darkened (brightness 41 →
+"too dark"), shrunk (12 px → "too small"), rotated to portrait (→ "portrait video", no flight).
+
+## The app (v2)
+
+`dist/app/` is the page as an installable web app. Chrome on Android offers "Install app";
+iPhone uses Share → Add to Home Screen. Installed on Android, it appears in the Share menu
+(manifest `share_target`): in Photos, Share → Spin Meter opens the app and starts the analysis.
+The service worker keeps the shared video only until the page picks it up, and keeps the page,
+mp4box.js and fonts for offline use. Checked in headless Chromium: installable with no errors,
+works offline, and a video posted to `./share` is analysed.
 
 ## Several serves in one video
 

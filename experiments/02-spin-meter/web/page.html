@@ -1,5 +1,6 @@
 <meta charset="utf-8">
 <title>Serve Spin Meter</title>
+<!--APP_HEAD-->
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,6 +36,7 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.5; }
 .wrap { max-width: 760px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 48px; display: grid; gap: 20px; }
 h1, h2, h3 { font-family: var(--font-display); font-weight: 700; line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
@@ -96,6 +98,24 @@ details.more[open] summary { margin-bottom: 10px; }
 .panel > *, .wrap > * { min-width: 0; }
 .film { overflow-x: auto; border-radius: 10px; background: #000; max-width: 100%; }
 .film img, .film canvas { display: block; height: 56px; max-width: none; image-rendering: auto; }
+.serves { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 4px; }
+.serves button { font: inherit; text-align: left; display: grid; gap: 0; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; min-width: 0; }
+.serves button b { font-family: var(--font-display); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.serves button span { font-size: 0.85rem; color: var(--muted); }
+.serves button[aria-pressed="true"] { border-color: var(--table); background: var(--table); color: var(--table-ink); }
+.serves button[aria-pressed="true"] span { color: inherit; opacity: 0.85; }
+.serves button.bad { color: var(--warn); }
+.serves button:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checks li { display: grid; grid-template-columns: 1.6em minmax(0, 1fr); gap: 8px; align-items: start; }
+.checks .ic { width: 1.5em; height: 1.5em; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 0.85rem; line-height: 1; }
+.checks .ok .ic { background: var(--good); color: var(--surface); }
+.checks .warn .ic { background: var(--warn); color: var(--surface); }
+.checks .bad .ic { background: var(--warn); color: var(--surface); outline: 2px solid var(--warn); outline-offset: 2px; }
+.checks b { font-weight: 600; }
+.checks .bad b { color: var(--warn); }
+.checks .sub { color: var(--muted); font-size: 0.9rem; display: block; }
+.checks .group { display: block; grid-template-columns: none; margin-top: 4px; }
 .trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
 .trust b { font-weight: 600; }
 
@@ -124,12 +144,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   <header class="top">
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
-    <p class="lede">Film a serve in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note">v1</p>
+    <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
+    <p class="note">v2 · several serves per video · setup check</p>
+    <!--APP_INSTALL-->
   </header>
 
   <section class="panel" aria-labelledby="measure-h">
-    <h2 id="measure-h">Measure a serve</h2>
+    <h2 id="measure-h">Measure serves</h2>
     <div class="row">
       <div class="field">
         <label class="label" for="intended">Spin the server intended</label>
@@ -156,13 +177,18 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <label class="pick" for="file">
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
-      <span>240 fps, phone in landscape, ball flying across a plain wall</span>
+      <!--APP_PICK_HINT-->
+      <span>240 fps, phone in landscape, ball flying across a plain wall. One serve or a whole set in one video.</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
       <p class="note" id="step">Starting…</p>
     </div>
     <p class="note err" id="error" hidden></p>
+    <div id="checkbox" hidden>
+      <span class="label">Setup check</span>
+      <ul class="checks" id="checks" aria-live="polite"></ul>
+    </div>
     <details class="more">
       <summary>Settings</summary>
       <div class="row">
@@ -189,7 +215,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
-    <div class="reading">
+    <div id="servesbox" hidden>
+      <span class="label" id="serves-label">Serves in this video</span>
+      <p class="note num" id="serves-sum"></p>
+      <div class="serves" id="serves" role="group" aria-labelledby="serves-label"></div>
+    </div>
+    <p class="note err" id="serve-error" hidden></p>
+    <div class="reading" id="readingbox">
       <span class="rpm num" id="rpm">1,899</span><span class="rpm-unit">RPM</span>
       <span class="note num" id="rps">31.7 revolutions per second</span>
     </div>
@@ -221,7 +253,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>#</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th><th class="num">Time</th></tr></thead>
+        <thead><tr><th>#</th><th>Serve</th><th>Server</th><th>Intended</th><th class="num">RPM</th><th>Measured</th><th>Quality</th><th class="num">Time</th></tr></thead>
         <tbody id="log"></tbody>
       </table>
     </div>
@@ -241,9 +273,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <ol>
         <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
         <li><b>Slow motion at 240 fps</b>, phone in landscape on a tripod, level, at contact height.</li>
-        <li><b>Side-on</b>, about 1–1.5 m from the ball's path, so the ball is about 50 px across. A plain wall behind the flight; not white, not black.</li>
+        <li><b>Side-on</b>, about 1–1.5 m from the ball's path, so the ball is 25–50 px across. A plain wall behind the flight; not white, not black.</li>
         <li><b>Bright light</b>: daylight is best. Dim rooms make the marking soft.</li>
         <li>Serve <b>across</b> the camera's view. The meter needs about 0.2 s of flight before the first bounce.</li>
+        <li><b>Several serves in one video</b> is fine: leave a second or two between serves and keep the camera still. Each serve gets its own reading.</li>
       </ol>
     </div>
   </section>
@@ -290,7 +323,17 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <circle class="dot" cx="${x}" cy="${y}" r="7"></circle>`;
   }
 
+  const readingParts = ["readingbox", "type", "compass", "comp", "facts"];
   function render(res) {
+    $("serve-error").hidden = !res.error;
+    readingParts.forEach((id) => { const el = $(id); (el.closest(".chips") || el.closest(".grid2") || el).hidden = !!res.error; });
+    if (res.error) {
+      $("serve-error").textContent = res.error;
+      const mt = res.meta || {};
+      $("chips").innerHTML = `<span class="chip low">No reading: re-record</span>`;
+      $("film").innerHTML = ""; $("perf").hidden = true;
+      return;
+    }
     $("rpm").textContent = fmt(res.rpm);
     $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
     $("type").textContent = typeText(res.spinType);
@@ -328,6 +371,40 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     else if (res.crops && res.crops.length) film.appendChild(filmCanvas(res.crops));
   }
 
+  function renderServes(res, pick) {
+    const list = res.serves || [];
+    $("servesbox").hidden = list.length < 2;
+    if (list.length < 2) return;
+    const ok = list.filter((s) => !s.error), rpm = ok.map((s) => s.rpm);
+    $("serves-sum").textContent = !ok.length ? `${list.length} serves found, none could be read.` :
+      `${list.length} serves · ${ok.length} read · average ${fmt(rpm.reduce((a, b) => a + b, 0) / rpm.length)} RPM` +
+      (ok.length > 1 ? ` · range ${fmt(Math.min(...rpm))}–${fmt(Math.max(...rpm))}` : "") + ". Tap a serve to see it.";
+    $("serves").innerHTML = list.map((s, k) => `<button type="button" data-k="${k}" aria-pressed="${k === pick}" class="${s.error ? "bad" : ""}">
+      <b>${k + 1} · ${s.error ? "–" : fmt(s.rpm) + " RPM"}</b><span>${s.error ? "no reading" : typeText(s.spinType) + (s.reliable ? "" : " · low")}</span></button>`).join("");
+  }
+  $("serves").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-k]");
+    if (!b || !current) return;
+    const k = +b.dataset.k;
+    render(Object.assign({}, current.serves[k], { meta: current.meta }));
+    renderServes(current, k);
+    renderChecks(current.checks, current.serves[k].checks, `Serve ${k + 1}`);
+  });
+  let current = null;
+
+  // ---------------------------------------------------------- setup check
+  const ICON = { ok: "✓", warn: "!", bad: "✕" };
+  const checkItem = (c) => `<li class="${c.status}"><span class="ic" aria-hidden="true">${ICON[c.status]}</span>
+    <span><b>${c.title}</b><span class="visually-hidden"> (${{ ok: "fine", warn: "warning", bad: "problem" }[c.status]})</span>${c.text ? `<span class="sub">${c.text}</span>` : ""}</span></li>`;
+  function renderChecks(video, serve, label) {
+    const rank = { bad: 0, warn: 1, ok: 2 };
+    const sort = (l) => l.slice().sort((a, b) => rank[a.status] - rank[b.status]);
+    let html = sort(video || []).map(checkItem).join("");
+    if (serve && serve.length) html += `<li class="group"><span class="label">${label}</span></li>` + sort(serve).map(checkItem).join("");
+    $("checks").innerHTML = html;
+    $("checkbox").hidden = !html;
+  }
+
   function filmCanvas(crops) {
     const H = 56, cv = document.createElement("canvas");
     cv.width = H * crops.length; cv.height = H;
@@ -350,15 +427,15 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
   function renderLog() {
     const tb = $("log");
-    if (!log.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
+    if (!log.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
     tb.innerHTML = log.map((e, i) => `<tr>
-      <td class="num">${i + 1}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
+      <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
       <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type)}</td>
       <td>${e.error ? "failed" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
-    const head = "#\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
-    return [head].concat(log.map((e, i) => [i + 1, e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
+    const head = "#\tserve\tserver\tintended\trpm\tmeasured\tback/top rps\tside rps\tgyro rps\tquality\tfile\tseconds";
+    return [head].concat(log.map((e, i) => [i + 1, e.serve ? e.serve + "/" + e.of : "", e.server, e.intended || "", e.error ? "" : Math.round(e.rpm),
       e.error ? "error: " + e.error : e.type, e.error ? "" : e.lift.toFixed(1), e.error ? "" : e.curve.toFixed(1),
       e.error ? "" : e.gyro.toFixed(1), e.error ? "" : e.reliable ? "clear" : "low", e.file, e.secs ? Math.round(e.secs) : ""].join("\t"))).join("\n");
   }
@@ -379,21 +456,36 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   $("file").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
     if (!file) return;
-    $("error").hidden = true; $("progress").hidden = false; $("bar").style.width = "0%";
+    try { await analyseFile(file); } finally { ev.target.value = ""; }
+  });
+  window.SpinPage = { analyseFile };       // the app build hands shared videos in here
+
+  async function analyseFile(file) {
+    $("error").hidden = true; $("progress").hidden = false; renderChecks([]); $("bar").style.width = "0%";
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
         captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
-      const entry = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
-      if (res.error) {
-        $("error").textContent = res.error; $("error").hidden = false;
-        log.push(Object.assign(entry, { error: res.error, secs: res.meta && res.meta.seconds }));
+      const base = { server: $("server").value, intended: $("intended").value, file: file.name, t: Date.now() };
+      const secs = res.meta && res.meta.seconds;
+      const serves = res.serves || [];
+      if (!serves.length) {
+        $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
+        renderChecks(res.checks);
+        log.push(Object.assign(base, { error: res.error || "No serve found.", secs }));
       } else {
-        render(res);
-        log.push(Object.assign(entry, { rpm: res.rpm, type: res.spinType, lift: res.lift, curve: res.curve, gyro: res.gyro, reliable: res.reliable, secs: res.meta && res.meta.seconds }));
-        if (!res.captureFpsDetected && !fpsSel) { $("error").textContent = "The video didn't say its frame rate, so 240 fps was assumed. Change it under Settings if it was different."; $("error").hidden = false; }
+        serves.forEach((s, k) => {
+          const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
+          log.push(Object.assign(e, s.error ? { error: s.error } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable }));
+        });
+        current = res;
+        const pick = Math.max(0, serves.findIndex((s) => !s.error));
+        render(Object.assign({}, serves[pick], { meta: res.meta }));
+        renderServes(res, pick);
+        renderChecks(res.checks, serves[pick].checks, serves.length > 1 ? `Serve ${pick + 1}` : "This serve");
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       save(); renderLog();
@@ -401,11 +493,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       $("error").textContent = e && e.message ? e.message : "The video could not be analysed.";
       $("error").hidden = false;
     } finally {
-      $("progress").hidden = true; ev.target.value = "";
+      $("progress").hidden = true;
     }
-  });
+  }
 
   render(EXAMPLE);
   renderLog();
 })();
 </script>
+<!--APP_SCRIPT-->

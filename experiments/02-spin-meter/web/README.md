@@ -146,6 +146,29 @@ line up, so tripod clips looked shaky), and one background per section of the vi
 samples per section; the server's body leaked into it and p4 was lost). The background samples
 are now stored as bytes (about 60 MB instead of 240 MB for 40 colour samples).
 
+## Picking the serve among noise, and troubleshooting details (2.3)
+
+p4 read fine in the test browser but found no serve on the Pixel 8 (original HEVC file, 2.2).
+The new troubleshooting details showed why this was fragile even here: about 95 candidates per
+frame (light flicker, compression) and 88 noise tracks passing as flights. One flight per time
+window was chosen by **length**, so a long noise track could push the real serve out and then
+yield nothing to measure. Now:
+- tracks whose ball would be under 5 px across are dropped ("tiny");
+- every candidate is turned into stretches to measure first, and per time window the one with
+  the most measurable frames of the biggest ball wins;
+- with a clear serve in the video, a short unclear stretch with no bounce (a hand, a ball being
+  picked up) is dropped.
+
+Results: p3 (hand-held, far end) now reads 32.8 rps backspin after the bounce, clear; by eye one
+turn per 7.3 frames, 33 rps. p2 (from behind the server) reads 34.55 rps backspin after the
+bounce, clear; by eye about 36 rps. p4 and all earlier clips unchanged.
+
+**Details for troubleshooting** (in Measure serves, after a video): decoder and pixel format,
+frames decoded and unmatched, full or video range, candidates per frame, tracks rejected by
+reason, the longest moving tracks, the serves chosen, and each stretch's frames, rate, fit and
+problems. One tap copies it. Also checked: NV12 frames (phone hardware decoders) read the same
+as I420, and full-range video gives the same result as video range.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

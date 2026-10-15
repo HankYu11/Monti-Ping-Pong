@@ -195,6 +195,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span class="label">Setup check</span>
       <ul class="checks" id="checks" aria-live="polite"></ul>
     </div>
+    <details class="more" id="dbgbox" hidden>
+      <summary>Details for troubleshooting</summary>
+      <p class="note">What the meter saw in the last video. If a result looks wrong, copy this and send it along.</p>
+      <textarea id="dbgtext" rows="10" readonly style="width:100%;font:0.8rem ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:8px"></textarea>
+      <button class="btn ghost" id="dbgcopy" type="button">Copy details</button>
+    </details>
     <details class="more">
       <summary>Settings</summary>
       <div class="row">
@@ -414,6 +420,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
   let current = null, currentServe = 0;
 
+  function showDebug(res, file) {
+    const serveInfo = (res.serves || []).map((s) => (s.phases || [s]).map((r) => ({ phase: r.phase, frames: r.nFrames,
+      rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error,
+      issues: (r.issues || []).map((i) => i.text) })).concat((s.notes || []).map((n) => ({ note: n.text }))));
+    const info = Object.assign({ version: VERSION, browser: navigator.userAgent, seconds: res.meta && +res.meta.seconds.toFixed(1) },
+      res.meta && res.meta.debug, { checks: (res.checks || []).filter((c) => c.status !== "ok").map((c) => c.title), serves: serveInfo });
+    $("dbgtext").value = JSON.stringify(info, null, 1);
+    $("dbgbox").hidden = false;
+  }
+  $("dbgcopy").addEventListener("click", () => {
+    const t = $("dbgtext"); t.select();
+    (navigator.clipboard ? navigator.clipboard.writeText(t.value) : Promise.reject()).then(
+      () => { $("dbgcopy").textContent = "Copied"; setTimeout(() => ($("dbgcopy").textContent = "Copy details"), 2000); },
+      () => document.execCommand && document.execCommand("copy"));
+  });
+
   // setup problems that apply to the whole video, in the same "what to change" list
   const setupDiag = (checks) => (checks || []).filter((c) => c.status === "bad" || (c.status === "warn" && (c.key === "light" || c.key === "fps")))
     .map((c) => ({ text: c.title + ".", fix: c.text }));
@@ -545,6 +567,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         showServe(pick);
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
+      showDebug(res, file);
       save(); renderLog();
     } catch (e) {
       $("error").textContent = e && e.message ? e.message : "The video could not be analysed.";

@@ -309,6 +309,8 @@
     return rgbToColor(ctx.getImageData(x, y, w, h).data, w * h);
   }
 
+  // What happened inside, for "Details for troubleshooting" on the page (reset per video).
+  let DBG = {};
   async function webCodecsReader(buf) {
     if (typeof VideoDecoder === "undefined" || typeof MP4Box === "undefined") return null;
     const mp4 = MP4Box.createFile();
@@ -335,6 +337,7 @@
     try { sup = await VideoDecoder.isConfigSupported(Object.assign({}, config, { hardwareAcceleration: "prefer-software" })); } catch (e) { /* older browsers */ }
     if (sup.supported) config.hardwareAcceleration = "prefer-software";
     else { sup = await VideoDecoder.isConfigSupported(config); if (!sup.supported) return null; }
+    DBG.decoder = { codec: config.codec, size: `${config.codedWidth}x${config.codedHeight}`, softwarePreferred: config.hardwareAcceleration === "prefer-software" };
     // presentation index of every sample (decode order may differ when B-frames are used)
     const ts = samples.map((x) => Math.round(1e6 * x.cts / x.timescale));
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
@@ -355,6 +358,9 @@
         const dec = new VideoDecoder({
           output: (frame) => {
             const i = presOfTs.get(frame.timestamp);
+            const F = (DBG.frames = DBG.frames || { decoded: 0, unmatched: 0, formats: {} });
+            F.decoded++; F.formats[frame.format || "opaque"] = (F.formats[frame.format || "opaque"] || 0) + 1;
+            if (i === undefined) F.unmatched++;
             if (i === undefined || i < from || i >= to || failure) { frame.close(); return; }
             pending++;
             Promise.resolve().then(() => cb(i, frame)).catch((e) => { failure = failure || e; })
@@ -421,6 +427,7 @@
       const buf = new Uint8Array(frame.allocationSize());
       const layout = await frame.copyTo(buf);
       const full = !!(frame.colorSpace && frame.colorSpace.fullRange);
+      DBG.fullRange = full; DBG.chroma = frame.format;
       const P = { buf, offset: layout[0].offset, stride: layout[0].stride, lut: full ? LUT_FULL : LUT_VIDEO, full, u: null, v: null };
       // chroma at half size both ways (I420, NV12); other layouts are read as brightness only
       if (frame.format === "I420" || frame.format === "I420A") {
@@ -671,30 +678,37 @@
       tracks.filter((tr) => tr.length >= 8).map((tr) => tr.map((q) => q.map((v) => Math.round(v * 10) / 10))), cands);
     // A flight may go across the picture, toward the camera or away from it. Not a flight: a
     // toss (mostly upward), a ball dropping straight down without coming closer, slow movers.
+    const why = {};
+    const no = (reason) => { why[reason] = (why[reason] || 0) + 1; return false; };
     const good = tracks.filter((tr) => {
-      if (tr.length < minLen) return false;
+      if (tr.length < minLen) return tr.length >= 6 ? no("short") : false;
       const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
       const disp = Math.hypot(dx, dy);
-      if (disp < 30) return false;
+      if (disp < 30) return no("barely moves");
+      // specks from flickering lights and compression: smaller than any ball the meter could read
+      if (median(tr.map((p) => p[3])) < 2.5) return no("tiny");
       // a flight moves steadily: not a flickering light or a jittery spot that drifts
-      if (disp / Math.max(1, b[0] - a[0]) < 1.0) return false;
+      if (disp / Math.max(1, b[0] - a[0]) < 1.0) return no("too slow");
       let path = 0;
       for (let k = 1; k < tr.length; k++) path += Math.hypot(tr[k][1] - tr[k - 1][1], tr[k][2] - tr[k - 1][2]);
-      if (disp < 0.6 * path) return false;
-      if (dy < 0 && -dy > Math.abs(dx)) return false;
+      if (disp < 0.6 * path) return no("zigzag");
+      if (dy < 0 && -dy > Math.abs(dx)) return no("upward (toss)");
       const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
-      if (dy > 2 * Math.abs(dx) && grow < 1.3 && grow > 1 / 1.3) return false;
+      if (dy > 2 * Math.abs(dx) && grow < 1.3 && grow > 1 / 1.3) return no("straight drop");
       return true;
     });
+    const fmtTr = (tr) => `${tr[0][0]}-${tr[tr.length - 1][0]} (${tr.length}) ${tr[0].slice(1, 3).map(Math.round)}->${tr[tr.length - 1].slice(1, 3).map(Math.round)} r${tr[0][3].toFixed(1)}-${tr[tr.length - 1][3].toFixed(1)}`;
+    DBG.search = { framesWithCandidates: cands.filter((c) => c.length).length, candidatesPerFrame: +(cands.reduce((s, c) => s + c.length, 0) / Math.max(1, nFrames)).toFixed(1),
+      tracks: tracks.filter((tr) => tr.length >= 6).length, rejected: why, accepted: good.length,
+      longestMovers: tracks.filter((tr) => tr.length >= 8 && Math.hypot(tr[tr.length - 1][1] - tr[0][1], tr[tr.length - 1][2] - tr[0][2]) >= 30)
+        .sort((x, y) => y.length - x.length).slice(0, 5).map(fmtTr), accepted5: good.slice(0, 5).map(fmtTr) };
     // One serve per flight. Tracks closer than `gap` frames in time are pieces of the same
     // flight (or the ball coming back); keep the longest. Serves are seconds apart.
-    const gap = opt.serveGap ?? 120, flights = [];
-    for (const tr of good.slice().sort((a, b) => b.length - a.length)) {
-      const s = tr[0][0], e = tr[tr.length - 1][0];
-      if (flights.every((f) => s > f[f.length - 1][0] + gap || e < f[0][0] - gap)) flights.push(tr);
-    }
-    const segs = [];
-    for (let tr of flights) {
+    // Turn every candidate into a serve (stretches to measure), then keep one per time window:
+    // the one with the most measurable frames of the biggest ball. Picking the longest track
+    // instead let a long noise track push the real serve out and then yield nothing.
+    const gap = opt.serveGap ?? 120, built = [];
+    for (let tr of good) {
       // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
       for (let k = 1; k < tr.length; k++) {
@@ -732,8 +746,13 @@
           edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
       }
       if (!parts.length) continue;
-      segs.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes });
+      const frames = parts.reduce((n, q) => n + q.track.length, 0), size = median(parts[0].track.map((p) => p[3]));
+      built.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes, score: frames * size });
     }
+    const segs = [];
+    for (const sv of built.sort((a, b) => b.score - a.score))
+      if (segs.every((f) => sv.start > f.end + gap || sv.end < f.start - gap)) segs.push(sv);
+    DBG.search.serves = segs.map((sv) => `${sv.start}-${sv.end} score ${Math.round(sv.score)}`);
     function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
       const m = 3 * p[3] + 6;
       return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
@@ -1099,6 +1118,8 @@
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     WHITE_REF = opts.whiteRef || "auto";
+    DBG = {};
+    planesBroken = !!opts.forceCanvas;        // tests: read frames through a canvas, as some phones must
     const progress = opts.onProgress || (() => {});
     const hfov = opts.hfov || 68, tStart = performance.now();
     readStats.direct = readStats.canvas = 0;
@@ -1117,7 +1138,8 @@
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
       checks.push(flightCheck(segs)); emit();
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
-      const timing = () => Object.assign(metaOut, { seconds: (performance.now() - tStart) / 1000,
+      DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
+      const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
       if (!segs.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
       const serves = [];
@@ -1140,6 +1162,13 @@
         serves.push(one);
       }
       progress("Done", 1);
+      // With a clear serve in the video, a short unclear stretch with no bounce is something else
+      // that moved (a hand, a ball being picked up), not a serve.
+      if (serves.some((sv) => sv.clear))
+        for (let k = serves.length - 1; k >= 0; k--) {
+          const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+          if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
+        }
       if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
@@ -1170,5 +1199,5 @@
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -160,7 +160,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.3 · build 75a10b5</p>
+    <p class="note num">Version 2.3 · build a48f18c</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -239,6 +239,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
+    <p class="note" id="skipnote" hidden></p>
     <div id="servesbox" hidden>
       <span class="label" id="serves-label">Serves in this video</span>
       <p class="note num" id="serves-sum"></p>
@@ -1355,11 +1356,18 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return out;
   }
 
+  // A clear reading: the spin fit is good AND clearly ahead of the best quite different spin rate.
+  // (A short stretch can fit several rates almost equally well; then it's a guess.)
+  function isClear(r) {
+    const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2);
+  }
+
   // What in the footage stood in the way of a clear reading, each with what to change.
   // r: the spin fit (null when there was none). Only problems are listed.
   function diagnose(s, r) {
     const out = [], add = (text, fix) => out.push({ text, fix });
-    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    const clear = r && isClear(r);
     if (s.total && s.frames < 0.7 * s.total)
       add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
     if (s.ballR && s.ballR < 10)
@@ -1426,9 +1434,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
-      axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
+      axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
+      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
@@ -1483,6 +1491,17 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         serves.push(one);
       }
       progress("Done", 1);
+      // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
+      // a ball sent back to the server goes the other way. The fastest flight sets the direction.
+      const skipped = [];
+      const motion = (sv) => (sv.phases || [sv]).find((r) => !r.error && r.flight) || null;
+      const fastest = serves.map(motion).filter(Boolean).sort((a, b) => b.flight.speed - a.flight.speed)[0];
+      for (let k = serves.length - 1; k >= 0 && fastest; k--) {
+        const m = motion(serves[k]);
+        if (!m || m === fastest) continue;
+        const slow = m.flight.speed < 1.5, back = dot(m.flight.dir, fastest.flight.dir) < 0;
+        if (slow || back) { skipped.push(slow ? "slow" : "back"); serves.splice(k, 1); }
+      }
       // With a clear serve in the video, a short unclear stretch with no bounce is something else
       // that moved (a hand, a ball being picked up), not a serve.
       if (serves.some((sv) => sv.clear))
@@ -1496,7 +1515,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       }
       if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
       const first = serves.find((s) => !s.error);
-      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing() };
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
+        skipped: { slow: skipped.filter((x) => x === "slow").length, back: skipped.filter((x) => x === "back").length } };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();
@@ -1709,7 +1729,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (75a10b5)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (a48f18c)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1764,7 +1784,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
-        current = null;
+        current = null; $("skipnote").hidden = true;
         render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
           .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
         $("servesbox").hidden = true; $("phasebox").hidden = true;
@@ -1780,6 +1800,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
+        const sk = res.skipped || {}, parts = [];
+        if (sk.back) parts.push(`${sk.back} ball${sk.back > 1 ? "s" : ""} going the other way (sent back to the server)`);
+        if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
+        $("skipnote").hidden = !parts.length;
+        $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       showDebug(res, file);
@@ -1812,7 +1837,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="75a10b5" hidden></span>
+<span id="app-build" data-build="a48f18c" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

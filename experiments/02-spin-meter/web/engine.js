@@ -1034,11 +1034,18 @@
     return out;
   }
 
+  // A clear reading: the spin fit is good AND clearly ahead of the best quite different spin rate.
+  // (A short stretch can fit several rates almost equally well; then it's a guess.)
+  function isClear(r) {
+    const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2);
+  }
+
   // What in the footage stood in the way of a clear reading, each with what to change.
   // r: the spin fit (null when there was none). Only problems are listed.
   function diagnose(s, r) {
     const out = [], add = (text, fix) => out.push({ text, fix });
-    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    const clear = r && isClear(r);
     if (s.total && s.frames < 0.7 * s.total)
       add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
     if (s.ballR && s.ballR < 10)
@@ -1105,9 +1112,9 @@
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
-      axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
+      axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
+      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
@@ -1162,6 +1169,17 @@
         serves.push(one);
       }
       progress("Done", 1);
+      // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
+      // a ball sent back to the server goes the other way. The fastest flight sets the direction.
+      const skipped = [];
+      const motion = (sv) => (sv.phases || [sv]).find((r) => !r.error && r.flight) || null;
+      const fastest = serves.map(motion).filter(Boolean).sort((a, b) => b.flight.speed - a.flight.speed)[0];
+      for (let k = serves.length - 1; k >= 0 && fastest; k--) {
+        const m = motion(serves[k]);
+        if (!m || m === fastest) continue;
+        const slow = m.flight.speed < 1.5, back = dot(m.flight.dir, fastest.flight.dir) < 0;
+        if (slow || back) { skipped.push(slow ? "slow" : "back"); serves.splice(k, 1); }
+      }
       // With a clear serve in the video, a short unclear stretch with no bounce is something else
       // that moved (a hand, a ball being picked up), not a serve.
       if (serves.some((sv) => sv.clear))
@@ -1175,7 +1193,8 @@
       }
       if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
       const first = serves.find((s) => !s.error);
-      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing() };
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
+        skipped: { slow: skipped.filter((x) => x === "slow").length, back: skipped.filter((x) => x === "back").length } };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();

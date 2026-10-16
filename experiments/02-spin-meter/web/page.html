@@ -227,6 +227,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
+    <p class="note" id="skipnote" hidden></p>
     <div id="servesbox" hidden>
       <span class="label" id="serves-label">Serves in this video</span>
       <p class="note num" id="serves-sum"></p>
@@ -549,7 +550,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
-        current = null;
+        current = null; $("skipnote").hidden = true;
         render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
           .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
         $("servesbox").hidden = true; $("phasebox").hidden = true;
@@ -565,6 +566,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
+        const sk = res.skipped || {}, parts = [];
+        if (sk.back) parts.push(`${sk.back} ball${sk.back > 1 ? "s" : ""} going the other way (sent back to the server)`);
+        if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
+        $("skipnote").hidden = !parts.length;
+        $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       showDebug(res, file);

@@ -1175,7 +1175,8 @@
       // stretch with the most frames; a short stretch's direction and speed are unreliable.
       const skipped = { slow: 0, way: 0 };
       const wayOk = {
-        any: () => true, toward: (f) => f[2] > 0.25, away: (f) => f[2] < -0.25, ltr: (f) => f[0] > 0.3, rtl: (f) => f[0] < -0.3,
+        // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
+        any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
       }[opts.serveDir || "any"] || (() => true);
       const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
       for (let k = serves.length - 1; k >= 0; k--) {

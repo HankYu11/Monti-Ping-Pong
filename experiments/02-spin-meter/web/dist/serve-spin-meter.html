@@ -151,7 +151,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.3 · build e490afc</p>
+    <p class="note num">Version 2.3 · build fab9ef5</p>
     
   </header>
 
@@ -1495,7 +1495,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       // stretch with the most frames; a short stretch's direction and speed are unreliable.
       const skipped = { slow: 0, way: 0 };
       const wayOk = {
-        any: () => true, toward: (f) => f[2] > 0.25, away: (f) => f[2] < -0.25, ltr: (f) => f[0] > 0.3, rtl: (f) => f[0] < -0.3,
+        // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
+        any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
       }[opts.serveDir || "any"] || (() => true);
       const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
       for (let k = serves.length - 1; k >= 0; k--) {
@@ -1735,7 +1736,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (e490afc)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (fab9ef5)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };

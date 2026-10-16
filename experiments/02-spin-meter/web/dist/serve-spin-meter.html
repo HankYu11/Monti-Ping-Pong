@@ -151,7 +151,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.3 · build a48f18c</p>
+    <p class="note num">Version 2.3 · build e490afc</p>
     
   </header>
 
@@ -214,11 +214,21 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           </select>
         </div>
         <div class="field">
+          <label class="label" for="dir">Serves go</label>
+          <select id="dir">
+            <option value="any">Any direction</option>
+            <option value="toward">Toward the camera</option>
+            <option value="away">Away from the camera</option>
+            <option value="ltr">Left to right</option>
+            <option value="rtl">Right to left</option>
+          </select>
+        </div>
+        <div class="field">
           <label class="label" for="hfov">Camera field of view (°)</label>
           <input id="hfov" type="number" min="40" max="120" step="1" value="68">
         </div>
       </div>
-      <p class="note">The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
+      <p class="note">"Serves go" leaves out other ball movements, such as balls sent back to the server. The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
     </details>
   </section>
 
@@ -1480,15 +1490,19 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       }
       progress("Done", 1);
       // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
-      // a ball sent back to the server goes the other way. The fastest flight sets the direction.
-      const skipped = [];
-      const motion = (sv) => (sv.phases || [sv]).find((r) => !r.error && r.flight) || null;
-      const fastest = serves.map(motion).filter(Boolean).sort((a, b) => b.flight.speed - a.flight.speed)[0];
-      for (let k = serves.length - 1; k >= 0 && fastest; k--) {
+      // a ball sent back to the server goes the other way, which only the user can tell us
+      // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
+      // stretch with the most frames; a short stretch's direction and speed are unreliable.
+      const skipped = { slow: 0, way: 0 };
+      const wayOk = {
+        any: () => true, toward: (f) => f[2] > 0.25, away: (f) => f[2] < -0.25, ltr: (f) => f[0] > 0.3, rtl: (f) => f[0] < -0.3,
+      }[opts.serveDir || "any"] || (() => true);
+      const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
+      for (let k = serves.length - 1; k >= 0; k--) {
         const m = motion(serves[k]);
-        if (!m || m === fastest) continue;
-        const slow = m.flight.speed < 1.5, back = dot(m.flight.dir, fastest.flight.dir) < 0;
-        if (slow || back) { skipped.push(slow ? "slow" : "back"); serves.splice(k, 1); }
+        if (!m) continue;
+        if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
+        else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
       }
       // With a clear serve in the video, a short unclear stretch with no bounce is something else
       // that moved (a hand, a ball being picked up), not a serve.
@@ -1501,10 +1515,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
       }
-      if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
+      if (!serves.length) {
+        const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
+        const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
+        return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
+      }
       const first = serves.find((s) => !s.error);
       const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
-        skipped: { slow: skipped.filter((x) => x === "slow").length, back: skipped.filter((x) => x === "back").length } };
+        skipped };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();
@@ -1717,7 +1735,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (a48f18c)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (e490afc)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1762,7 +1780,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value,
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -1789,7 +1807,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
         const sk = res.skipped || {}, parts = [];
-        if (sk.back) parts.push(`${sk.back} ball${sk.back > 1 ? "s" : ""} going the other way (sent back to the server)`);
+        if (sk.way) parts.push(`${sk.way} ball${sk.way > 1 ? "s" : ""} going the other way (see Settings: Serves go)`);
         if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
         $("skipnote").hidden = !parts.length;
         $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
@@ -1805,6 +1823,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
+  // remember "Serves go" on this device
+  try { const d = localStorage.getItem("serve-spin-meter.dir"); if (d) $("dir").value = d; } catch (e) {}
+  $("dir").addEventListener("change", () => { try { localStorage.setItem("serve-spin-meter.dir", $("dir").value); } catch (e) {} });
   render(EXAMPLE);
   renderLog();
 })();

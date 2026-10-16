@@ -214,11 +214,21 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           </select>
         </div>
         <div class="field">
+          <label class="label" for="dir">Serves go</label>
+          <select id="dir">
+            <option value="any">Any direction</option>
+            <option value="toward">Toward the camera</option>
+            <option value="away">Away from the camera</option>
+            <option value="ltr">Left to right</option>
+            <option value="rtl">Right to left</option>
+          </select>
+        </div>
+        <div class="field">
           <label class="label" for="hfov">Camera field of view (°)</label>
           <input id="hfov" type="number" min="40" max="120" step="1" value="68">
         </div>
       </div>
-      <p class="note">The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
+      <p class="note">"Serves go" leaves out other ball movements, such as balls sent back to the server. The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
     </details>
   </section>
 
@@ -540,7 +550,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value,
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -567,7 +577,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
         const sk = res.skipped || {}, parts = [];
-        if (sk.back) parts.push(`${sk.back} ball${sk.back > 1 ? "s" : ""} going the other way (sent back to the server)`);
+        if (sk.way) parts.push(`${sk.way} ball${sk.way > 1 ? "s" : ""} going the other way (see Settings: Serves go)`);
         if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
         $("skipnote").hidden = !parts.length;
         $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
@@ -583,6 +593,9 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
+  // remember "Serves go" on this device
+  try { const d = localStorage.getItem("serve-spin-meter.dir"); if (d) $("dir").value = d; } catch (e) {}
+  $("dir").addEventListener("change", () => { try { localStorage.setItem("serve-spin-meter.dir", $("dir").value); } catch (e) {} });
   render(EXAMPLE);
   renderLog();
 })();

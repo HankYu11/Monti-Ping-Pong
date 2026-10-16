@@ -1170,15 +1170,19 @@
       }
       progress("Done", 1);
       // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
-      // a ball sent back to the server goes the other way. The fastest flight sets the direction.
-      const skipped = [];
-      const motion = (sv) => (sv.phases || [sv]).find((r) => !r.error && r.flight) || null;
-      const fastest = serves.map(motion).filter(Boolean).sort((a, b) => b.flight.speed - a.flight.speed)[0];
-      for (let k = serves.length - 1; k >= 0 && fastest; k--) {
+      // a ball sent back to the server goes the other way, which only the user can tell us
+      // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
+      // stretch with the most frames; a short stretch's direction and speed are unreliable.
+      const skipped = { slow: 0, way: 0 };
+      const wayOk = {
+        any: () => true, toward: (f) => f[2] > 0.25, away: (f) => f[2] < -0.25, ltr: (f) => f[0] > 0.3, rtl: (f) => f[0] < -0.3,
+      }[opts.serveDir || "any"] || (() => true);
+      const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
+      for (let k = serves.length - 1; k >= 0; k--) {
         const m = motion(serves[k]);
-        if (!m || m === fastest) continue;
-        const slow = m.flight.speed < 1.5, back = dot(m.flight.dir, fastest.flight.dir) < 0;
-        if (slow || back) { skipped.push(slow ? "slow" : "back"); serves.splice(k, 1); }
+        if (!m) continue;
+        if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
+        else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
       }
       // With a clear serve in the video, a short unclear stretch with no bounce is something else
       // that moved (a hand, a ball being picked up), not a serve.
@@ -1191,10 +1195,14 @@
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
       }
-      if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
+      if (!serves.length) {
+        const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
+        const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
+        return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
+      }
       const first = serves.find((s) => !s.error);
       const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
-        skipped: { slow: skipped.filter((x) => x === "slow").length, back: skipped.filter((x) => x === "back").length } };
+        skipped };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();

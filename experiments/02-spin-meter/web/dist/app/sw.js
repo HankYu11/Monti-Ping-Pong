@@ -1,6 +1,6 @@
 // Serve Spin Meter service worker: works offline after the first visit, and receives videos
 // shared from other apps (Photos → Share → Spin Meter) through the manifest's share_target.
-const VERSION = "fab9ef5";
+const VERSION = "55a2de0";
 const SHELL = "shell-" + VERSION, LIBS = "libs-v1", SHARED = "shared";
 const SHELL_FILES = ["./", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 

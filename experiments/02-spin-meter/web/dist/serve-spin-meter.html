@@ -151,7 +151,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.3 · build fab9ef5</p>
+    <p class="note num">Version 2.3 · build 55a2de0</p>
     
   </header>
 
@@ -184,7 +184,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
       
-      <span>240 fps, phone in landscape and held still. One serve or a whole set in one video.</span>
+      <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
@@ -211,6 +211,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
             <option value="240">240 fps</option>
             <option value="120">120 fps</option>
             <option value="60">60 fps</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="per">Serves per video</label>
+          <select id="per">
+            <option value="one">One</option>
+            <option value="several">Several</option>
           </select>
         </div>
         <div class="field">
@@ -1512,6 +1519,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
           if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
         }
+      // One serve per video (the default): keep the best one, a clear reading first, then the
+      // one with the most frames; the rest count as other ball movements.
+      if (opts.single !== false && serves.length > 1) {
+        const frames = (sv) => (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+        const best = serves.slice().sort((a, b) => (b.clear - a.clear) || (frames(b) - frames(a)))[0];
+        skipped.other = (skipped.other || 0) + serves.length - 1;
+        serves.splice(0, serves.length, best);
+      }
       if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
@@ -1736,7 +1751,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (fab9ef5)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (55a2de0)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1781,7 +1796,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -1809,6 +1824,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         showServe(pick);
         const sk = res.skipped || {}, parts = [];
         if (sk.way) parts.push(`${sk.way} ball${sk.way > 1 ? "s" : ""} going the other way (see Settings: Serves go)`);
+        if (sk.other) parts.push(`${sk.other} other ball movement${sk.other > 1 ? "s" : ""} (one serve per video; see Settings)`);
         if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
         $("skipnote").hidden = !parts.length;
         $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
@@ -1824,9 +1840,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
-  // remember "Serves go" on this device
-  try { const d = localStorage.getItem("serve-spin-meter.dir"); if (d) $("dir").value = d; } catch (e) {}
-  $("dir").addEventListener("change", () => { try { localStorage.setItem("serve-spin-meter.dir", $("dir").value); } catch (e) {} });
+  // remember "Serves go" and "Serves per video" on this device
+  for (const [id, key] of [["dir", "serve-spin-meter.dir"], ["per", "serve-spin-meter.per"]]) {
+    try { const v = localStorage.getItem(key); if (v) $(id).value = v; } catch (e) {}
+    $(id).addEventListener("change", () => { try { localStorage.setItem(key, $(id).value); } catch (e) {} });
+  }
   render(EXAMPLE);
   renderLog();
 })();

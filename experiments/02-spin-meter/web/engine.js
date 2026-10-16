@@ -1192,6 +1192,14 @@
           const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
           if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
         }
+      // One serve per video (the default): keep the best one, a clear reading first, then the
+      // one with the most frames; the rest count as other ball movements.
+      if (opts.single !== false && serves.length > 1) {
+        const frames = (sv) => (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+        const best = serves.slice().sort((a, b) => (b.clear - a.clear) || (frames(b) - frames(a)))[0];
+        skipped.other = (skipped.other || 0) + serves.length - 1;
+        serves.splice(0, serves.length, best);
+      }
       if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));

@@ -201,6 +201,53 @@ says "Fits the after-the-bounce reading".
 
 All other rates are unchanged: p2, p4, w1–w4 and F.
 
+## Colour dots (2.5)
+
+The black half alone has three weak spots:
+- **It needs a full turn.** A stretch shorter than one turn can't be read.
+- **It fails when the spin axis runs through the black half's centre.** The black half then
+  barely moves.
+- **It can't read anything when the black half faces away the whole time.**
+
+Colour dots are sharp points, so where a dot is gives the turn from a few frames.
+
+**Marking** (optional; balls without dots read exactly as before):
+- Three dots on the white half, each about 8 mm across and filled solid: red, blue and green.
+- Each dot sits 1 cm (a finger-width) from the seam.
+- They are evenly spread: 12, 4 and 8 o'clock, looking at the white half straight on.
+- Near the seam, a dot comes into view whichever way the ball spins.
+- The old black line and black dot aren't used by this meter and can be left off.
+
+**How the dots are read:**
+- **Finding a dot.** Each dot is found by its hue, measured against the ball's own neutral colour so the light's tint cancels out. Its pixels are left out of the black-half measurement.
+- **Fitting the spin.** The black half's pole and every dot are fitted together as one ball turning at one rate about one axis. Turning each sighting back by the spin should bring all sightings of a mark to one spot.
+- **Starting points.** The fit starts from the black half's best rates and from each dot's own circle round the axis. It is then refined.
+- **How much turn is needed.** With a dot seen in 4 or more frames, a quarter turn is enough (otherwise the full-turn rule stays).
+- **Black half not seen.** If the black half can't be seen at all, the dots alone are used.
+
+**Traps found while testing:**
+- **Edge of the search area.** Compression smears colour, so the background bleeds 2–3 px into the ball. Dots are looked for only inside that edge, and a dot cut by it counts less. Before this, dots near the rim read too far in and the spin too slow (8–20% low).
+- **Blur.** Motion blur stretches the ball, so its radius is taken across the streak.
+- **Real clips without dots.** The blue table bled into the white ball and was taken for blue dots in many frames. That made two readings unclear (p4 after the bounce, and E1).
+- **The fix for that.** A dot near the rim is rejected when the background just outside the ball, in that direction, has the same colour. Patches are checked at three distances and three angles: one patch landed on the table's white edge line and missed it. With this, all real clips read as in 2.4.
+
+**Synthetic test** (`colsim.py`, in the scratch tests):
+- 16 random serves, 8–80 rps, 14–60 frames.
+- Exposure up to 1/300 s, a wavy hand-drawn black edge, 28–40 px ball.
+
+| | Rate error (median / worst) | Axis error (median) | Clear readings |
+|---|---|---|---|
+| With dots | 1% / 7% | 3° | 15 of 15 found |
+| Black half only (same serves) | 0% / 16% | 6° | 10 of 13 found |
+
+Notes on the results:
+- **The ± range.** Each dot reading's stated ± range covered its true rate. The worst errors (7%) were 12–13 rps serves seen for 18–24 frames, with ± of 1.5–2.5 rps.
+- **Serves only the dots could read:**
+  - a 9 rps serve seen for half a turn;
+  - a 16 rps serve whose black half faced away throughout (the old method said "marking too faint");
+  - an axis 8° from the black half's centre (fit 0.48 → 0.98).
+- **Not yet tested on real footage:** real marker colours under hall light, and the ball's printed logo (a red logo would count as a red dot; it turns with the ball, so it helps or is down-weighted).
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

@@ -238,7 +238,7 @@ Colour dots are sharp points, so where a dot is gives the turn from a few frames
 | | Rate error (median / worst) | Axis error (median) | Clear readings |
 |---|---|---|---|
 | With dots | 1% / 7% | 3° | 15 of 15 found |
-| Black half only (same serves) | 0% / 16% | 6° | 10 of 13 found |
+| Black half only (same serves) | 0% / 16% | 6° | 11 of 13 found (none on 3) |
 
 Notes on the results:
 - **The ± range.** Each dot reading's stated ± range covered its true rate. The worst errors (7%) were 12–13 rps serves seen for 18–24 frames, with ± of 1.5–2.5 rps.

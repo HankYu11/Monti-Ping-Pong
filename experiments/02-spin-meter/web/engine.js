@@ -811,6 +811,7 @@
     return { cx, cy, t, keep };
   }
 
+  let ROBUST = true;                          // weighted, outlier-resistant spin fit (false: the 2.3 fit, for comparison)
   let WHITE_REF = "auto";                     // "auto" | "ball" | "wall" (the last two for tests)
   function sizeFit(balls) {                  // robust straight-line fit of 1/radius over time -> radius at frame i
     const t = [], q = [];
@@ -872,7 +873,7 @@
     let lo = new Float64Array(nb * nb).fill(g10), hi = new Float64Array(nb * nb).fill(g95);
     for (let q = 0; q < nb * nb; q++) if (binsLo[q].length >= 30) { lo[q] = percentile(binsLo[q], 10); hi[q] = percentile(binsLo[q], 95); }
     lo = blur2d(lo, nb, 0.8); hi = blur2d(hi, nb, 0.8);
-    const t = [], B = [];
+    const t = [], B = [], Wt = [];
     for (const rw of rows) {
       let sum = 0, sx = 0, sy = 0;
       for (let k = 0; k < rw.D.length; k++) {
@@ -886,34 +887,61 @@
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
       b = scale(b, 1 / norm(b));
       t.push(rw.i); B.push(b);
+      const st = balls[rw.i] && balls[rw.i][3] ? balls[rw.i][3] : 1;   // smeared frames count less
+      Wt.push(1 / (1 + 6 * Math.max(0, st - 1.15) ** 2));
     }
-    return fitRotatingVector(t, B, fps);
+    return fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
   }
 
   // ------------------------------------------------------------ 3. rate scan
-  function fitRotatingVector(t, B, fps) {
-    const n = t.length, mean = [0, 1, 2].map((d) => B.reduce((s, b) => s + b[d], 0) / n);
-    let variance = 0;
-    for (const b of B) for (let d = 0; d < 3; d++) variance += (b[d] - mean[d]) ** 2;
-    if (variance / n < 0.02) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: Math.sqrt(variance / n), noSpin: true };
-    let best = null, resid = [], rates = [];
-    for (let k = 0; ; k++) {
-      const rps = 0.5 + k * 0.05;
-      if (rps >= fps / 2) break;
-      const w = 2 * Math.PI * rps / fps;
-      const X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
-      const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-      for (const x of X) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += x[i] * x[j];
-      const coef = [0, 1, 2].map((d) => {
-        const bvec = [0, 0, 0];
-        X.forEach((x, k2) => { for (let i = 0; i < 3; i++) bvec[i] += x[i] * B[k2][d]; });
-        return solve3(A, bvec);                 // [c_d, P_d, Q_d]
-      });
-      let res = 0;
-      X.forEach((x, k2) => { for (let d = 0; d < 3; d++) { const p = coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2]; res += (p - B[k2][d]) ** 2; } });
-      rates.push(rps); resid.push(res);
-      if (!best || res < best.res) best = { res, rps, coef };
+  // Fit a vector turning at a steady rate to the pole directions B(t). wts: how much each frame
+  // counts (blurred frames less). With ROBUST, frames that disagree strongly with a first fit are
+  // down-weighted and the fit is repeated, so a few bad frames (ball crossing the net, half
+  // hidden) can't pull the rate. Also returns the best few rates (candidates) with their fits.
+  function fitRotatingVector(t, B, fps, wts = null) {
+    const n = t.length;
+    function scan(W) {
+      const sw = W.reduce((s, v) => s + v, 0);
+      const mean = [0, 1, 2].map((d) => B.reduce((s, b, k) => s + W[k] * b[d], 0) / sw);
+      let variance = 0;
+      B.forEach((b, k) => { for (let d = 0; d < 3; d++) variance += W[k] * (b[d] - mean[d]) ** 2; });
+      if (variance / sw < 0.02) return { noSpin: true, variance, sw };
+      let best = null; const resid = [], rates = [];
+      for (let k = 0; ; k++) {
+        const rps = 0.5 + k * 0.05;
+        if (rps >= fps / 2) break;
+        const w = 2 * Math.PI * rps / fps;
+        const X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
+        const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        X.forEach((x, k2) => { for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += W[k2] * x[i] * x[j]; });
+        const coef = [0, 1, 2].map((d) => {
+          const bvec = [0, 0, 0];
+          X.forEach((x, k2) => { for (let i = 0; i < 3; i++) bvec[i] += W[k2] * x[i] * B[k2][d]; });
+          return solve3(A, bvec);               // [c_d, P_d, Q_d]
+        });
+        let res = 0;
+        X.forEach((x, k2) => { for (let d = 0; d < 3; d++) { const p = coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2]; res += W[k2] * (p - B[k2][d]) ** 2; } });
+        rates.push(rps); resid.push(res);
+        if (!best || res < best.res) best = { res, rps, coef, w };
+      }
+      return { best, rates, resid, variance, sw };
     }
+    let W = wts ? wts.slice() : t.map(() => 1);
+    let S = scan(W);
+    if (S.noSpin) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: Math.sqrt(S.variance / S.sw), noSpin: true, candidates: [] };
+    if (ROBUST && n >= 8) {
+      const { coef, w } = S.best;
+      const err = t.map((ti, k) => {
+        const x = [1, Math.cos(w * ti), Math.sin(w * ti)];
+        let e = 0; for (let d = 0; d < 3; d++) e += (coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2] - B[k][d]) ** 2;
+        return Math.sqrt(e);
+      });
+      const c = Math.max(0.05, 2 * median(err));
+      W = W.map((v, k) => v / (1 + (err[k] / c) ** 2));
+      const S2 = scan(W);
+      if (!S2.noSpin) S = S2;
+    }
+    const { best, rates, resid, variance } = S;
     const P = [best.coef[0][1], best.coef[1][1], best.coef[2][1]], Q = [best.coef[0][2], best.coef[1][2], best.coef[2][2]];
     let a = cross(P, Q); a = scale(a, 1 / (norm(a) + 1e-12));
     const r2 = 1 - best.res / variance;
@@ -923,7 +951,11 @@
     const swing = 0.5 * (norm(P) + norm(Q));
     let score = Math.max(0, r2) * Math.min(1, swing / 0.4);
     if (Number.isFinite(runner) && runner > r2 - 0.05) score *= 0.5;
-    return { rps: best.rps, axis: a, score, runner, r2, swing };
+    // the best few distinct rates (local minima of the misfit), for checks against other evidence
+    const candidates = [];
+    for (let k = 1; k < resid.length - 1; k++) if (resid[k] <= resid[k - 1] && resid[k] <= resid[k + 1]) candidates.push({ rps: rates[k], r2: 1 - resid[k] / variance });
+    candidates.sort((x, y) => y.r2 - x.r2);
+    return { rps: best.rps, axis: a, score, runner, r2, swing, candidates: candidates.slice(0, 5) };
   }
 
   // ------------------------------------------------------------ 4. geometry + labels
@@ -1112,7 +1144,7 @@
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
-      axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner,
+      axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
@@ -1125,6 +1157,7 @@
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     WHITE_REF = opts.whiteRef || "auto";
+    ROBUST = opts.robust === true;            // off by default until checked on the labelled clips
     DBG = {};
     planesBroken = !!opts.forceCanvas;        // tests: read frames through a canvas, as some phones must
     const progress = opts.onProgress || (() => {});

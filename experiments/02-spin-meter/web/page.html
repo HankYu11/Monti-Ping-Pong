@@ -383,12 +383,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       return;
     }
     $("rpm").textContent = fmt(res.rpm);
-    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
+    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second` + (res.plusMinusRps ? ` · ±${fmt(60 * res.plusMinusRps)} RPM` : "");
     $("type").textContent = typeText(res.spinType);
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(`<span class="chip ok">Clear reading</span>`);
     if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
+    if (res.crossCheck && res.crossCheck.ok) chips.push(`<span class="chip ok">Fits the after-the-bounce reading</span>`);
     if (res.nFrames) chips.push(`<span class="chip">${res.nFrames} frames</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
@@ -470,7 +471,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     renderServes(current, k);
     const missing = notes.filter((n) => n.phase !== "flight" && !readings.some((r) => r.phase === n.phase));
     const tiles = readings.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error || !r.reliable ? "bad" : ""}">
-      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames</span></button>`)
+      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames${r.crossCheck && r.crossCheck.ok ? " · fits the bounce reading" : ""}</span></button>`)
       .concat(missing.map((n) => `<button type="button" disabled><b>${PHASE[n.phase]}</b><span>not measured: ${n.frames ? `only ${n.frames} frames` : "too few frames"}</span></button>`));
     const order = (h) => (h.includes("After the bounce") ? 1 : 0);
     tiles.sort((x, y) => order(x) - order(y));

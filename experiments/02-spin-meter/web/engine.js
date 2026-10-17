@@ -945,17 +945,26 @@
     const P = [best.coef[0][1], best.coef[1][1], best.coef[2][1]], Q = [best.coef[0][2], best.coef[1][2], best.coef[2][2]];
     let a = cross(P, Q); a = scale(a, 1 / (norm(a) + 1e-12));
     const r2 = 1 - best.res / variance;
-    let far = Infinity;
-    rates.forEach((rr, k) => { if (Math.abs(rr - best.rps) > 2.0 && resid[k] < far) far = resid[k]; });
-    const runner = far < Infinity ? 1 - far / variance : NaN;
+    // The best rate's peak: nearby rates that fit almost as well. A short stretch gives a wide
+    // peak (a less precise rate), which is not the same as a second, different rate fitting.
+    const ib = rates.indexOf(best.rps), thr = best.res + 0.5 * best.res + 0.01 * variance;
+    let lo = ib, hi = ib;
+    while (lo > 0 && resid[lo - 1] <= thr) lo--;
+    while (hi < resid.length - 1 && resid[hi + 1] <= thr) hi++;
+    const plusMinus = Math.max(0.05, (rates[hi] - rates[lo]) / 2);
+    // separate rates (other local minima outside the peak), best first
+    const candidates = [];
+    for (let k = 1; k < resid.length - 1; k++)
+      if (resid[k] <= resid[k - 1] && resid[k] <= resid[k + 1]) candidates.push({ rps: rates[k], r2: 1 - resid[k] / variance, own: k >= lo && k <= hi });
+    candidates.sort((x, y) => y.r2 - x.r2);
+    const rival = candidates.find((c) => !c.own);
+    const runner = rival ? rival.r2 : NaN;      // the best different rate: a real alternative
     const swing = 0.5 * (norm(P) + norm(Q));
     let score = Math.max(0, r2) * Math.min(1, swing / 0.4);
     if (Number.isFinite(runner) && runner > r2 - 0.05) score *= 0.5;
-    // the best few distinct rates (local minima of the misfit), for checks against other evidence
-    const candidates = [];
-    for (let k = 1; k < resid.length - 1; k++) if (resid[k] <= resid[k - 1] && resid[k] <= resid[k + 1]) candidates.push({ rps: rates[k], r2: 1 - resid[k] / variance });
-    candidates.sort((x, y) => y.r2 - x.r2);
-    return { rps: best.rps, axis: a, score, runner, r2, swing, candidates: candidates.slice(0, 5) };
+    const turns = (t[t.length - 1] - t[0]) * best.rps / fps;   // how much of a turn the stretch shows
+    return { rps: best.rps, axis: a, score, runner, r2, swing, plusMinus, turns,
+      candidates: candidates.slice(0, 5).map((c) => ({ rps: c.rps, r2: c.r2 })) };
   }
 
   // ------------------------------------------------------------ 4. geometry + labels
@@ -1070,7 +1079,8 @@
   // (A short stretch can fit several rates almost equally well; then it's a guess.)
   function isClear(r) {
     const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
-    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2);
+    // at least one full turn: a part of a turn fits almost any rate
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < 1);
   }
 
   // What in the footage stood in the way of a clear reading, each with what to change.
@@ -1086,6 +1096,8 @@
       add(`The ball is smeared by motion blur (stretched ${s.stretch.toFixed(1)}× along its path).`, "Add light: daylight or extra lamps make the camera's shutter faster.");
     if (s.contrast !== undefined && s.contrast < 0.3)
       add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
+    if (r && r.turns < 1)
+      add(`The ball turned only ${r.turns < 0.1 ? "a little" : "about " + Math.round(r.turns * 100) + "% of a turn"} in this stretch, too little to tell the rate.`, "Keep more of the flight in view, so the ball turns at least once.");
     if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
       add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
     if (r && !clear && !out.length)
@@ -1145,6 +1157,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
+      plusMinusRps: r.plusMinus, turns: r.turns,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
@@ -1152,12 +1165,31 @@
     };
   }
 
+  // Off the paddle vs after the bounce. The table's friction takes backspin away, so a backspin
+  // serve should spin a little faster off the paddle than after the bounce: in our clips by
+  // 1.35–1.6×. Off the paddle is the shorter stretch, so when the two disagree it is the one
+  // doubted (a wrong rate there is usually half or double the true one).
+  const BOUNCE_RATIO = [0.9, 2.2];
+  function crossCheck(readings) {
+    const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
+    const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
+    if (!pad || !bnc || pad.lift <= 0 || bnc.lift <= 0) return;
+    const ratio = pad.rps / bnc.rps, ok = ratio >= BOUNCE_RATIO[0] && ratio <= BOUNCE_RATIO[1];
+    pad.crossCheck = { ratio, ok };
+    if (ok) return;
+    pad.reliable = false;
+    pad.issues = (pad.issues || []).concat({
+      text: `Off the paddle (${Math.round(pad.rpm)} RPM) doesn't fit after the bounce (${Math.round(bnc.rpm)} RPM): backspin should drop a little on the bounce, not ${ratio < 1 ? "rise" : "fall by more than half"}.`,
+      fix: "Trust the after-the-bounce reading. Keep more of the flight before the bounce in view so the paddle stretch is longer.",
+    });
+  }
+
   // ------------------------------------------------------------ main entry
   // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     WHITE_REF = opts.whiteRef || "auto";
-    ROBUST = opts.robust === true;            // off by default until checked on the labelled clips
+    ROBUST = opts.robust !== false;
     DBG = {};
     planesBroken = !!opts.forceCanvas;        // tests: read frames through a canvas, as some phones must
     const progress = opts.onProgress || (() => {});
@@ -1190,6 +1222,7 @@
           const one = await measureSegment(R, part, fps, hfov);
           readings.push(Object.assign(one, { phase: part.kind }));
         }
+        crossCheck(readings);
         // the headline: off the paddle when it reads clearly, else the clearest stretch
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||

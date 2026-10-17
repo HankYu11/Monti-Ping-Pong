@@ -169,6 +169,38 @@ reason, the longest moving tracks, the serves chosen, and each stretch's frames,
 problems. One tap copies it. Also checked: NV12 frames (phone hardware decoders) read the same
 as I420, and full-range video gives the same result as video range.
 
+## Fewer readings thrown away, and a check against the bounce (2.4)
+
+Tested on the 16 Oct clips (A–H), the earlier hall clips (p2–p4) and the home clips (w1–w4).
+
+**A clear reading needs at least one full turn of the ball.** Below that the rate can't be
+told: H's after-the-bounce stretch was 15 frames, a quarter of a turn, and gave 4–5 rps. It now
+shows "The ball turned only about 27% of a turn in this stretch".
+
+**Ambiguous means a *different* rate fits as well.** Before, the runner-up could be the best
+rate's own neighbour. Short stretches always have a wide best match, so every off-the-paddle
+reading looked ambiguous. Now the runner-up must be a separate match. The best match's width
+is shown as ± RPM.
+
+**Blurred frames count less.** Each frame is weighted down by how stretched the ball is. Frames
+far off the fitted spin are weighted down step by step, so one bad frame can't pull the rate.
+
+**Off the paddle vs after the bounce.** The table takes some backspin away. When both stretches
+read clearly as backspin, the off-the-paddle rate must be 0.9–2.2× the after-the-bounce rate.
+If it isn't, the off-the-paddle reading is not shown, with the reason. If it fits, the result
+says "Fits the after-the-bounce reading".
+
+| Clip | Off the paddle | After the bounce | Ratio |
+|---|---|---|---|
+| A | 39.0 rps (±2.8), was "low" | 27.6 | 1.41 |
+| B | 50.8 (±3.0), was "low" | 34.6 | 1.47 |
+| D | 41.4 (±1.4), was "low" | 25.8 | 1.61 |
+| E2 | 52.8 (±2.3), was "low" | 38.8 | 1.36 |
+| H | 15.6 (±0.8), was "low" | not clear (¼ turn) | – |
+| p3 | 44.3 (±4.2), was "low" | 32.9 | 1.35 |
+
+All other rates are unchanged: p2, p4, w1–w4 and F.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

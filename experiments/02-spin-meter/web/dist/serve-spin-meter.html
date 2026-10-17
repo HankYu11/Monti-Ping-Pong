@@ -143,6 +143,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 .ballsvg { width: 120px; max-width: 100%; height: auto; display: block; }
 .ballsvg circle.white { fill: #f4f4f1; stroke: var(--line); }
 .ballsvg path, .ballsvg .mark { fill: #121212; }
+.ballsvg .seam { fill: none; stroke: #121212; stroke-width: 3; }
+.ballsvg .dot-red { fill: #d0202a; } .ballsvg .dot-blue { fill: #1f47c4; } .ballsvg .dot-green { fill: #1e9a3c; }
+.balls { display: grid; gap: 10px; justify-items: center; }
+@media (max-width: 480px) { .balls { grid-auto-flow: column; justify-content: start; } }
 @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
 </style>
 
@@ -151,7 +155,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.3 · build 75a10b5</p>
+    <p class="note num">Version 2.5 · build 203451b</p>
     
   </header>
 
@@ -184,7 +188,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
       
-      <span>240 fps, phone in landscape and held still. One serve or a whole set in one video.</span>
+      <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
@@ -214,11 +218,28 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           </select>
         </div>
         <div class="field">
+          <label class="label" for="per">Serves per video</label>
+          <select id="per">
+            <option value="one">One</option>
+            <option value="several">Several</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="dir">Serves go</label>
+          <select id="dir">
+            <option value="any">Any direction</option>
+            <option value="toward">Toward the camera</option>
+            <option value="away">Away from the camera</option>
+            <option value="ltr">Left to right</option>
+            <option value="rtl">Right to left</option>
+          </select>
+        </div>
+        <div class="field">
           <label class="label" for="hfov">Camera field of view (°)</label>
           <input id="hfov" type="number" min="40" max="120" step="1" value="68">
         </div>
       </div>
-      <p class="note">The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
+      <p class="note">"Serves go" leaves out other ball movements, such as balls sent back to the server. The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
     </details>
   </section>
 
@@ -227,6 +248,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
+    <p class="note" id="skipnote" hidden></p>
     <div id="servesbox" hidden>
       <span class="label" id="serves-label">Serves in this video</span>
       <p class="note num" id="serves-sum"></p>
@@ -285,14 +307,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   <section class="panel" aria-labelledby="howto-h">
     <h2 id="howto-h">How to record</h2>
     <div class="howto">
-      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Marked ball: one half black, one line and one dot on the white half">
+      <div class="balls">
+      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Side view: one half of the ball black, edge on the seam">
         <circle class="white" cx="60" cy="60" r="54"></circle>
         <path d="M6 60 A54 54 0 0 1 114 60 Z"></path>
-        <rect class="mark" x="56" y="60" width="8" height="54"></rect>
-        <circle class="mark" cx="34" cy="84" r="7"></circle>
       </svg>
+      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="The white half seen straight on: a red dot at 12 o'clock, a blue dot at 4 and a green dot at 8, each a finger-width in from the seam">
+        <circle class="white" cx="60" cy="60" r="54"></circle>
+        <circle class="seam" cx="60" cy="60" r="54"></circle>
+        <circle class="dot-red" cx="60.0" cy="16.8" r="8"></circle>
+        <circle class="dot-blue" cx="97.4" cy="81.6" r="8"></circle>
+        <circle class="dot-green" cx="22.6" cy="81.6" r="8"></circle>
+      </svg>
+      </div>
       <ol>
-        <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
+        <li><b>Mark the ball:</b> colour one half black along the seam (two coats).</li>
+        <li><b>Add three colour dots</b> on the white half, each about 8 mm across (a bit bigger than a pencil's eraser), filled solid: <b>red, blue and green</b>. Put them a finger-width (1 cm) from the seam, evenly spread: like <b>12, 4 and 8 o'clock</b> when you look at the white half straight on. Permanent markers work; avoid pale, neon or metallic ones. The dots let short or slow-spinning serves be read, and spins the black half alone can't follow.</li>
         <li><b>Slow motion at 240 fps</b>, phone in landscape, <b>held still</b>: on a tripod, or leaned against something solid.</li>
         <li><b>Best: beside the table, level with the server's half</b>, about 1–1.5 m from the path from paddle to first bounce, 40–60 cm above the table and tilted down a little, so the table is behind the ball. Then the spin is read <b>off the paddle</b> and again <b>after the bounce</b>.</li>
         <li>Also works: <b>from the far end of the table</b>, a little to one side, looking back at the server. The ball comes toward the camera; usually only the spin after the bounce can be read.</li>
@@ -1102,7 +1132,16 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
     if (!best) return null;
     const [cx, cy, r] = minEnclosingCircle(best.pix);
-    return [cx, cy, Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05), Math.max(best.w, best.h) / Math.min(best.w, best.h)];
+    // across the blur streak the ball keeps its true size: radius from the blob's narrow width
+    let sxx = 0, syy = 0, sxy = 0;
+    for (let k = 0; k < best.pix.length; k += 2) {
+      const dx = best.pix[k] - best.cx, dy = best.pix[k + 1] - best.cy;
+      sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+    }
+    sxx /= best.area; syy /= best.area; sxy /= best.area;
+    const narrow = 0.5 * (sxx + syy - Math.sqrt((sxx - syy) ** 2 + 4 * sxy * sxy));
+    const rFit = Math.min(r, Math.sqrt(best.area / Math.PI) * 1.05);
+    return [cx, cy, rFit, Math.max(best.w, best.h) / Math.min(best.w, best.h), Math.min(rFit, 2 * Math.sqrt(Math.max(narrow - 1 / 12, 0)) * 1.05)];
   }
 
   function smoothFit(balls, tol, factor) {    // robust quadratic fits of x(t), y(t)
@@ -1120,10 +1159,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return { cx, cy, t, keep };
   }
 
+  let ROBUST = true;                          // weighted, outlier-resistant spin fit (false: the 2.3 fit, for comparison)
   let WHITE_REF = "auto";                     // "auto" | "ball" | "wall" (the last two for tests)
-  function sizeFit(balls) {                  // robust straight-line fit of 1/radius over time -> radius at frame i
+  function sizeFit(balls, j = 2) {           // robust straight-line fit of 1/radius over time -> radius at frame i
     const t = [], q = [];
-    balls.forEach((b, i) => { if (b) { t.push(i); q.push(1 / b[2]); } });
+    balls.forEach((b, i) => { if (b) { t.push(i); q.push(1 / b[j]); } });
     let keep = t.map(() => true), c = [0, median(q)];
     for (let it = 0; it < 3; it++) {
       const tk = t.filter((_, k) => keep[k]), qk = q.filter((_, k) => keep[k]);
@@ -1135,28 +1175,290 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const lo = Math.min(...q), hi = Math.max(...q);
     return (i) => 1 / clamp(polyval(c, i), lo, hi);
   }
-  function measurePole(frames, balls, W, H, fps, inner = 0.88, nb = 10, stats = {}) {
+  // ------------------------------------------------------------ colour dots
+  // Optional marks on the white half: up to three dots, red, blue and green, about 1 cm from the
+  // seam and a third of the way round from each other. Each is told apart by its hue (angle in
+  // the U, V plane, measured against the ball's own neutral colour, so the light's tint cancels).
+  // A dot is a sharp point, so where it is gives the ball's turn from a few frames, unlike the
+  // black half's centre, which needs a full turn.
+  const DOT_HUES = { red: [70, 150], blue: [-65, 40], green: [-170, -80] };   // degrees
+  function findDots(rw, r, outside = null) {  // rw: { DX, DY, CU, CV } for the pixels inside the ball;
+                                              // outside(ux, uy): colours of patches outside the ball that way
+    // Colour is stored at half size and smeared by compression, so the background bleeds into
+    // the last 2–3 px of the ball: look only inside that. A dot cut by this edge is placed too far
+    // in (it would seem to turn too slowly), so it counts less.
+    const X = rw.DX, Y = rw.DY, n = X.length, nu = median(rw.CU), nv = median(rw.CV);
+    const edge = clamp(1 - 2.5 / r, 0.75, 0.92);
+    const mag = new Float32Array(n), hue = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      const du = rw.CU[k] - nu, dv = rw.CV[k] - nv;
+      mag[k] = Math.hypot(du, dv); hue[k] = Math.atan2(dv, du) * 180 / Math.PI;
+    }
+    const T = Math.max(12, 4 * median(mag)), nMin = Math.max(4, 0.006 * Math.PI * r * r), out = {};
+    for (const [name, [h0, h1]] of Object.entries(DOT_HUES)) {
+      const idx = []; let pk = -1;
+      for (let k = 0; k < n; k++) {
+        if (mag[k] < T || hue[k] < h0 || hue[k] > h1 || X[k] ** 2 + Y[k] ** 2 > edge * edge) continue;
+        idx.push(k); if (pk < 0 || mag[k] > mag[pk]) pk = k;
+      }
+      if (idx.length < nMin) continue;
+      // from the strongest pixel, settle on the dot's centre, ignoring stray pixels of that hue
+      let mx = X[pk], my = Y[pk], cnt = 0, size = 0, cut = false;
+      for (let it = 0; it < 4; it++) {
+        let s = 0, sx = 0, sy = 0; cnt = 0; size = 0; cut = false;
+        for (const k of idx) {
+          const d = Math.hypot(X[k] - mx, Y[k] - my);
+          if (d > 0.3) continue;
+          if (mag[k] < 0.4 * mag[pk]) continue;   // the dot's shape, not its shading: equal weights
+          s++; sx += X[k]; sy += Y[k]; cnt++;
+          size = Math.max(size, d); if (Math.hypot(X[k], Y[k]) > edge - 0.06) cut = true;
+        }
+        mx = sx / s; my = sy / s;
+      }
+      const rr = Math.hypot(mx, my);
+      if (cnt < nMin || rr > edge) continue;
+      // near the rim, a patch with the same colour as the background just outside is the
+      // background bleeding in (a blue table round a white ball), not a dot
+      if (outside && rr > 0.5) {
+        let du = 0, dv = 0, m = 0;
+        for (const k of idx) if (Math.hypot(X[k] - mx, Y[k] - my) <= 0.3) { du += rw.CU[k] - nu; dv += rw.CV[k] - nv; m++; }
+        du /= m; dv /= m;
+        const dm = Math.hypot(du, dv);
+        const bleed = outside(mx / rr, my / rr).some(([ou, ov]) => {
+          const bu = ou - nu, bv = ov - nv, bm = Math.hypot(bu, bv);
+          return bm >= 0.4 * dm && (du * bu + dv * bv) / (dm * bm + 1e-9) > 0.8;
+        });
+        if (bleed) continue;
+      }
+      out[name] = { v: [mx, my, Math.sqrt(1 - rr * rr)], n: cnt, at: [mx, my], size, cut };
+    }
+    return out;
+  }
+
+  // Rigid spin fit: every mark (the black half's pole, each dot) turns with the same axis and rate.
+  // Turning each sighting back by the spin should bring all sightings of one mark to one spot.
+  // tracks: [{ name, t, v, w }]; a = unit axis, w = radians per frame.
+  function turnVec(v, a, th) {
+    const c = Math.cos(th), s = Math.sin(th), k = dot(a, v), x = cross(a, v);
+    return [v[0] * c + x[0] * s + a[0] * k * (1 - c), v[1] * c + x[1] * s + a[1] * k * (1 - c), v[2] * c + x[2] * s + a[2] * k * (1 - c)];
+  }
+  function rigidCost(tracks, a, w, tm) {
+    let res = 0;
+    for (const tr of tracks) {
+      let sx = 0, sy = 0, sz = 0, sw = 0;
+      for (let k = 0; k < tr.t.length; k++) {
+        const u = turnVec(tr.v[k], a, -w * (tr.t[k] - tm)), q = tr.w[k];
+        sx += q * u[0]; sy += q * u[1]; sz += q * u[2]; sw += q;
+      }
+      if (sw > 0) res += sw - (sx * sx + sy * sy + sz * sz) / sw;
+    }
+    return res;
+  }
+  function rigidErrors(tracks, a, w, tm) {    // per sighting: distance from its mark's spot
+    return tracks.map((tr) => {
+      const U = tr.v.map((v, k) => turnVec(v, a, -w * (tr.t[k] - tm)));
+      const sw = tr.w.reduce((s, q) => s + q, 0) || 1;
+      const m = [0, 1, 2].map((d) => U.reduce((s, u, k) => s + tr.w[k] * u[d], 0) / sw);
+      return U.map((u) => Math.hypot(u[0] - m[0], u[1] - m[1], u[2] - m[2]));
+    });
+  }
+  const toAxis = (th, ph) => [Math.sin(th) * Math.cos(ph), Math.sin(th) * Math.sin(ph), Math.cos(th)];
+  const fromAxis = (a) => [Math.acos(clamp(a[2], -1, 1)), Math.atan2(a[1], a[0])];
+  function nelderMead(f, x0, step, iters = 160) {
+    const n = x0.length;
+    let pts = [x0.slice()].concat(step.map((s, i) => { const p = x0.slice(); p[i] += s; return p; }));
+    let val = pts.map(f);
+    for (let it = 0; it < iters; it++) {
+      const ord = val.map((v, i) => i).sort((i, j) => val[i] - val[j]);
+      pts = ord.map((i) => pts[i]); val = ord.map((i) => val[i]);
+      if (Math.abs(val[n] - val[0]) <= 1e-9 * (Math.abs(val[0]) + 1e-12)) break;
+      const c = Array(n).fill(0);
+      for (let i = 0; i < n; i++) for (let d = 0; d < n; d++) c[d] += pts[i][d] / n;
+      const along = (t) => c.map((v, d) => v + t * (pts[n][d] - v));
+      const xr = along(-1), fr = f(xr);
+      if (fr < val[0]) { const xe = along(-2), fe = f(xe); [pts[n], val[n]] = fe < fr ? [xe, fe] : [xr, fr]; }
+      else if (fr < val[n - 1]) { pts[n] = xr; val[n] = fr; }
+      else {
+        const xc = along(fr < val[n] ? -0.5 : 0.5), fc = f(xc);
+        if (fc < Math.min(fr, val[n])) { pts[n] = xc; val[n] = fc; }
+        else for (let i = 1; i <= n; i++) { pts[i] = pts[i].map((v, d) => pts[0][d] + 0.5 * (v - pts[0][d])); val[i] = f(pts[i]); }
+      }
+    }
+    const i = val.indexOf(Math.min(...val));
+    return { x: pts[i], f: val[i] };
+  }
+  function eigSym3(M) {                       // Jacobi: [values, vectors as columns]
+    const A = M.map((r) => r.slice()), V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    for (let sweep = 0; sweep < 30; sweep++) {
+      for (let p = 0; p < 2; p++) for (let q = p + 1; q < 3; q++) {
+        if (Math.abs(A[p][q]) < 1e-14) continue;
+        const th = 0.5 * Math.atan2(2 * A[p][q], A[q][q] - A[p][p]), c = Math.cos(th), s = Math.sin(th);
+        for (let k = 0; k < 3; k++) { const akp = A[k][p], akq = A[k][q]; A[k][p] = c * akp - s * akq; A[k][q] = s * akp + c * akq; }
+        for (let k = 0; k < 3; k++) { const apk = A[p][k], aqk = A[q][k]; A[p][k] = c * apk - s * aqk; A[q][k] = s * apk + c * aqk; }
+        for (let k = 0; k < 3; k++) { const vkp = V[k][p], vkq = V[k][q]; V[k][p] = c * vkp - s * vkq; V[k][q] = s * vkp + c * vkq; }
+      }
+    }
+    return [[A[0][0], A[1][1], A[2][2]], V];
+  }
+  // Axis and rate from one dot alone: its sightings lie on a circle round the axis; consecutive
+  // frames give the angle turned per frame (under half a turn per frame, as for the whole meter).
+  function dotSeed(tr) {
+    if (tr.t.length < 3) return null;
+    const m = [0, 1, 2].map((d) => tr.v.reduce((s, v) => s + v[d], 0) / tr.v.length);
+    const C = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (const v of tr.v) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += (v[i] - m[i]) * (v[j] - m[j]);
+    const [vals, V] = eigSym3(C), i0 = vals.indexOf(Math.min(...vals));
+    let a = [V[0][i0], V[1][i0], V[2][i0]];
+    const steps = [];
+    for (let k = 1; k < tr.t.length; k++) {
+      const dt = tr.t[k] - tr.t[k - 1];
+      if (dt > 2) continue;
+      const p = [0, 1, 2].map((d) => tr.v[k - 1][d] - m[d]), q = [0, 1, 2].map((d) => tr.v[k][d] - m[d]);
+      steps.push(Math.atan2(dot(a, cross(p, q)), dot(p, q)) / dt);
+    }
+    if (!steps.length) return { axis: a, w: null };
+    let w = median(steps);
+    if (w < 0) { a = scale(a, -1); w = -w; }
+    return { axis: a, w };
+  }
+  function poleAxisAt(t, B, W, w) {          // the black half's own fit at one rate (as fitRotatingVector)
+    const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
+    X.forEach((x, k) => { for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += W[k] * x[i] * x[j]; });
+    const coef = [0, 1, 2].map((d) => { const b = [0, 0, 0]; X.forEach((x, k) => { for (let i = 0; i < 3; i++) b[i] += W[k] * x[i] * B[k][d]; }); return solve3(A, b); });
+    const a = cross([coef[0][1], coef[1][1], coef[2][1]], [coef[0][2], coef[1][2], coef[2][2]]);
+    return scale(a, 1 / (norm(a) + 1e-12));
+  }
+  function fitRigid(tracks, fps, poleFit, t, B, Wp) {
+    const all = tracks.flatMap((tr) => tr.t), tm = 0.5 * (Math.min(...all) + Math.max(...all));
+    const wOf = (rps) => 2 * Math.PI * rps / fps, maxRps = fps / 2;
+    const spread = (trs) => rigidCost(trs, [0, 0, 1], 0, tm);
+    const sumW = tracks.reduce((s, tr) => s + tr.w.reduce((a, q) => a + q, 0), 0);
+    let V = spread(tracks);
+    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots" };
+    // starting points: the black half's best rates, each dot's own circle, then for every
+    // starting axis the best few rates along it
+    const axes = [];
+    if (poleFit && !poleFit.noSpin) {
+      axes.push(poleFit.axis);
+      for (const c of poleFit.candidates || []) axes.push(poleAxisAt(t, B, Wp, wOf(c.rps)));
+    }
+    const seeds = [];
+    for (const tr of tracks) {
+      if (tr.name === "pole") continue;
+      const s = dotSeed(tr);
+      if (!s) continue;
+      axes.push(s.axis);
+      if (s.w) seeds.push({ a: s.axis, rps: s.w * fps / (2 * Math.PI) });
+    }
+    if (poleFit && !poleFit.noSpin) seeds.push({ a: poleFit.axis, rps: poleFit.rps });
+    const scanAxis = (a, lo, hi, step) => {
+      const rates = [], res = [];
+      for (let rps = lo; rps < hi; rps += step) { rates.push(rps); res.push(rigidCost(tracks, a, wOf(rps), tm)); }
+      return { rates, res };
+    };
+    for (const a of axes) {
+      const { rates, res } = scanAxis(a, 0.5, maxRps, 0.25), mins = [];
+      for (let k = 1; k < res.length - 1; k++) if (res[k] <= res[k - 1] && res[k] <= res[k + 1]) mins.push(k);
+      mins.sort((i, j) => res[i] - res[j]);
+      for (const k of mins.slice(0, 3)) seeds.push({ a, rps: rates[k] });
+    }
+    const refine = (s) => {
+      const [th, ph] = fromAxis(s.a);
+      const f = (x) => rigidCost(tracks, toAxis(x[0], x[1]), wOf(x[2]), tm);
+      const o = nelderMead(f, [th, ph, s.rps], [0.15, 0.15, Math.max(0.3, 0.03 * s.rps)]);
+      let a = toAxis(o.x[0], o.x[1]), rps = o.x[2];
+      if (rps < 0) { a = scale(a, -1); rps = -rps; }
+      return { a, rps, res: o.f };
+    };
+    let fits = seeds.filter((s) => s.rps > 0.3 && s.rps < maxRps).map(refine);
+    if (!fits.length) return null;
+    fits.sort((x, y) => x.res - y.res);
+    // weigh each kind of mark by how well it agrees, then let a few stray sightings count less
+    if (ROBUST) {
+      const b = fits[0], err = rigidErrors(tracks, b.a, wOf(b.rps), tm);
+      tracks.forEach((tr, j) => {
+        const sw = tr.w.reduce((s, q) => s + q, 0), e2 = tr.w.reduce((s, q, k) => s + q * err[j][k] ** 2, 0) / Math.max(sw, 1e-9);
+        const lam = 1 / Math.max(e2, 0.002), c = Math.max(0.05, 2 * median(err[j]));
+        tr.w = tr.w.map((q, k) => q * lam / (1 + (err[j][k] / c) ** 2));
+      });
+      const norm0 = tracks.reduce((s, tr) => s + tr.w.reduce((a, q) => a + q, 0), 0);
+      tracks.forEach((tr) => { tr.w = tr.w.map((q) => q * sumW / norm0); });
+      V = spread(tracks);
+      fits = fits.slice(0, 6).map((f) => refine({ a: f.a, rps: f.rps }));
+      fits.sort((x, y) => x.res - y.res);
+    }
+    const best = fits[0], r2 = 1 - best.res / V;
+    // the best rate's own peak along its axis, then the best fit at a clearly different rate
+    const thr = 1.5 * best.res + 0.01 * V;
+    let lo = best.rps, hi = best.rps;
+    while (lo > 0.5 && rigidCost(tracks, best.a, wOf(lo - 0.05), tm) <= thr) lo -= 0.05;
+    while (hi < maxRps && rigidCost(tracks, best.a, wOf(hi + 0.05), tm) <= thr) hi += 0.05;
+    const plusMinus = Math.max(0.05, (hi - lo) / 2);
+    const far = (f) => Math.abs(f.rps - best.rps) > Math.max(2 * plusMinus, 0.08 * best.rps);
+    const rival = fits.find(far);
+    const runner = rival ? 1 - rival.res / V : NaN;
+    // how far the marks sit from the axis: marks near it barely move and tell little
+    let swing = 0;
+    for (const tr of tracks) {
+      if (tr.t.length < 4) continue;
+      const sw = tr.w.reduce((s, q) => s + q, 0);
+      swing = Math.max(swing, tr.v.reduce((s, v, k) => s + tr.w[k] * norm(cross(best.a, v)), 0) / Math.max(sw, 1e-9));
+    }
+    let score = Math.max(0, r2) * Math.min(1, swing / 0.4);
+    if (Number.isFinite(runner) && runner > r2 - 0.05) score *= 0.5;
+    const dotT = tracks.filter((tr) => tr.name !== "pole").flatMap((tr) => tr.t);
+    const dotFrames = new Set(dotT).size, dotSpan = dotT.length ? Math.max(...dotT) - Math.min(...dotT) : 0;
+    const turns = (Math.max(...all) - Math.min(...all)) * best.rps / fps, dotTurns = dotSpan * best.rps / fps;
+    // a dot seen in several frames shows the turn directly: a quarter turn is enough
+    const minTurns = dotFrames >= 4 && dotTurns >= 0.25 ? 0.25 : 1;
+    const candidates = [];
+    for (const f of fits) if (!candidates.some((c) => Math.abs(c.rps - f.rps) < 0.5)) candidates.push({ rps: f.rps, r2: 1 - f.res / V });
+    return { rps: best.rps, axis: best.a, score, runner, r2, swing, plusMinus, turns, minTurns, dotFrames, dotTurns,
+      candidates: candidates.slice(0, 5), method: "dots" };
+  }
+
+  function measurePole(frames, balls, W, H, fps, inner = 0.88, nb = 10, stats = {}, chroma = null) {
     const idx = balls.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     if (idx.length < 8) return null;
     const { cx: cxp, cy: cyp } = smoothFit(balls, 2.5, 2.5);
     // ball size per frame: a ball coming closer grows (1/size changes linearly with time)
-    const rAt = sizeFit(balls);
+    const rAt = sizeFit(balls), rDotAt = chroma ? sizeFit(balls, balls.find(Boolean).length > 4 ? 4 : 2) : null;
     const rows = [], Dall = [];
     for (const i of idx) {
-      const cx = polyval(cxp, i), cy = polyval(cyp, i), r = rAt(i);
+      const cx = polyval(cxp, i), cy = polyval(cyp, i), r = rAt(i), rd = rDotAt ? rDotAt(i) : r;
       const x0 = Math.trunc(Math.max(0, cx - r - 1)), x1 = Math.trunc(Math.min(W, cx + r + 2));
       const y0 = Math.trunc(Math.max(0, cy - r - 1)), y1 = Math.trunc(Math.min(H, cy + r + 2));
-      const g = frames[i], vals = [], UX = [], UY = [], ring = [];
+      const g = frames[i], vals = [], UX = [], UY = [], ring = [], DX = [], DY = [], CU = [], CV = [], col = chroma && chroma[i];
       const X0 = Math.trunc(Math.max(0, cx - 2.6 * r)), X1 = Math.trunc(Math.min(W, cx + 2.6 * r + 1));
       const Y0 = Math.trunc(Math.max(0, cy - 2.6 * r)), Y1 = Math.trunc(Math.min(H, cy + 2.6 * r + 1));
       for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
         const dx = x - cx, dy = y - cy, rr = Math.hypot(dx, dy);
         if (rr <= inner * r) { vals.push(g[y * W + x]); UX.push(dx / r); UY.push(dy / r); }
         else if (rr >= 1.6 * r && rr <= 2.5 * r) ring.push(g[y * W + x]);
+        if (col && rr <= 0.95 * rd) { DX.push(dx / rd); DY.push(dy / rd); CU.push(col.u[y * W + x]); CV.push(col.v[y * W + x]); }
       }
       if (vals.length < 20) continue;
       const even = ring.length >= 20 && percentile(ring, 75) - percentile(ring, 25) < 0.15 * median(ring);
-      rows.push({ i, vals, UX, UY, top: percentile(vals, 92), wall: ring.length >= 20 ? median(ring) : NaN, even });
+      const rw = { i, r, vals, UX, UY, top: percentile(vals, 92), wall: ring.length >= 20 ? median(ring) : NaN, even };
+      if (col) {
+        // a coloured dot is darker than the white but isn't the black half: leave its pixels out
+        const outside = (ux, uy) => {       // small patches 1.2–1.75 radii out, within 25° of that way
+          const out = [];
+          for (const da of [-0.44, 0, 0.44]) for (const k of [1.2, 1.45, 1.75]) {
+            const c = Math.cos(da), sn = Math.sin(da), vx = ux * c - uy * sn, vy = ux * sn + uy * c;
+            const px = Math.round(cx + k * rd * vx), py = Math.round(cy + k * rd * vy);
+            let su = 0, sv = 0, m = 0;
+            for (let y = py - 1; y <= py + 1; y++) for (let x = px - 1; x <= px + 1; x++)
+              if (x >= 0 && y >= 0 && x < W && y < H) { su += col.u[y * W + x]; sv += col.v[y * W + x]; m++; }
+            if (m) out.push([su / m, sv / m]);
+          }
+          return out;
+        };
+        rw.dots = findDots({ DX, DY, CU, CV }, rd, outside);
+        const ds = Object.values(rw.dots);
+        rw.onDot = Uint8Array.from(UX, (ux, k) => (ds.some((d) => Math.hypot(ux * r - d.at[0] * rd, UY[k] * r - d.at[1] * rd) <= (d.size + 0.05) * rd) ? 1 : 0));
+      }
+      rows.push(rw);
     }
     // Darkness is measured against a reference level. Behind the ball, an even background (a
     // plain wall, the table top) works well and per frame cancels light flicker. In front of a
@@ -1168,11 +1470,24 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     for (const rw of rows) {
       const ref = useWall && rw.wall > 0 ? rw.wall : Math.max(rw.top, 0.9 * ballWhite);
       rw.D = rw.vals.map((v) => clamp(1 - v / Math.max(ref, 1), 0, 1));
-      for (const v of rw.D) Dall.push(v);
+      rw.D.forEach((v, k) => { if (!(rw.onDot && rw.onDot[k])) Dall.push(v); });
     }
     if (rows.length < 8) return null;
     stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
-    if (stats.contrast < 0.15) return { error: "The marking is too faint to read. Use more light and a fully black half." };
+    const seen = {};
+    for (const name of Object.keys(DOT_HUES)) seen[name] = rows.filter((rw) => rw.dots && rw.dots[name]).length;
+    const dotFrames = rows.filter((rw) => rw.dots && Object.keys(rw.dots).length).length;
+    stats.dots = { seen, frames: dotFrames, of: rows.length };
+    // troubleshooting: per frame with a dot, "frame colour x,y" (x, y in ball radii; C = cut by the edge)
+    DBG.dots = (DBG.dots || []).concat(rows.filter((rw) => rw.dots && Object.keys(rw.dots).length)
+      .map((rw) => rw.i + " " + Object.entries(rw.dots).map(([c, d]) => `${c[0]}${d.v[0].toFixed(2)},${d.v[1].toFixed(2)}${d.cut ? "C" : ""}`).join(" ")).join(" | "));
+    // the black half can face away for the whole flight: then the dots alone can still tell
+    const faint = stats.contrast < 0.15;
+    if (faint && dotFrames < 4) return { error: "The marking is too faint to read. Use more light and a fully black half." };
+    const Wt = rows.map((rw) => {
+      const st = balls[rw.i] && balls[rw.i][3] ? balls[rw.i][3] : 1;   // smeared frames count less
+      return 1 / (1 + 6 * Math.max(0, st - 1.15) ** 2);
+    });
     // per-spot white/black levels (removes the lighting gradient across the ball)
     const binsLo = Array.from({ length: nb * nb }, () => []);
     const bin = (u) => clamp(Math.trunc((u + 1) / 2 * nb), 0, nb - 1);
@@ -1181,58 +1496,113 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     let lo = new Float64Array(nb * nb).fill(g10), hi = new Float64Array(nb * nb).fill(g95);
     for (let q = 0; q < nb * nb; q++) if (binsLo[q].length >= 30) { lo[q] = percentile(binsLo[q], 10); hi[q] = percentile(binsLo[q], 95); }
     lo = blur2d(lo, nb, 0.8); hi = blur2d(hi, nb, 0.8);
-    const t = [], B = [];
+    const t = rows.map((rw) => rw.i), B = [];
     for (const rw of rows) {
       let sum = 0, sx = 0, sy = 0;
       for (let k = 0; k < rw.D.length; k++) {
         const q = bin(rw.UX[k]) * nb + bin(rw.UY[k]);
-        const s = clamp((rw.D[k] - lo[q]) / Math.max(hi[q] - lo[q], 0.05), 0, 1);
+        const s = rw.onDot && rw.onDot[k] ? 0 : clamp((rw.D[k] - lo[q]) / Math.max(hi[q] - lo[q], 0.05), 0, 1);
         sum += s; sx += s * rw.UX[k]; sy += s * rw.UY[k];
       }
       const f = sum / rw.D.length, bz = clamp(2 * f - 1, -0.98, 0.98);
       const mx = sum > 1e-6 ? sx / sum : 0, my = sum > 1e-6 ? sy / sum : 0, n = Math.hypot(mx, my);
       const rho = Math.sqrt(1 - bz * bz);
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
-      b = scale(b, 1 / norm(b));
-      t.push(rw.i); B.push(b);
+      B.push(scale(b, 1 / norm(b)));
     }
-    return fitRotatingVector(t, B, fps);
+    const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
+    // colour dots: seen in enough frames, all marks are fitted together as one turning ball
+    if (dotFrames < 4) return poleFit;
+    const wOfRow = new Map(t.map((ti, k) => [ti, Wt[k]]));
+    const tracks = faint ? [] : [{ name: "pole", t: t.slice(), v: B.slice(), w: Wt.slice() }];
+    for (const name of Object.keys(DOT_HUES)) {
+      const tr = { name, t: [], v: [], w: [] };
+      for (const rw of rows) {
+        const d = rw.dots && rw.dots[name];
+        if (!d || !wOfRow.has(rw.i)) continue;
+        // near the rim a dot's depth is unsure: count it less
+        tr.t.push(rw.i); tr.v.push(d.v); tr.w.push(4 * wOfRow.get(rw.i) * clamp(d.v[2] / 0.6, 0.2, 1) * (d.cut ? 0.25 : 1));
+      }
+      if (tr.t.length >= 2) tracks.push(tr);
+    }
+    const rigid = fitRigid(tracks, fps, poleFit, t, B, Wt);
+    if (!rigid) return poleFit || { error: "The colour dots couldn't be followed: too few frames in a row." };
+    if (poleFit) { rigid.poleRps = poleFit.rps; rigid.poleAxis = poleFit.axis; }
+    return rigid;
   }
 
   // ------------------------------------------------------------ 3. rate scan
-  function fitRotatingVector(t, B, fps) {
-    const n = t.length, mean = [0, 1, 2].map((d) => B.reduce((s, b) => s + b[d], 0) / n);
-    let variance = 0;
-    for (const b of B) for (let d = 0; d < 3; d++) variance += (b[d] - mean[d]) ** 2;
-    if (variance / n < 0.02) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: Math.sqrt(variance / n), noSpin: true };
-    let best = null, resid = [], rates = [];
-    for (let k = 0; ; k++) {
-      const rps = 0.5 + k * 0.05;
-      if (rps >= fps / 2) break;
-      const w = 2 * Math.PI * rps / fps;
-      const X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
-      const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-      for (const x of X) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += x[i] * x[j];
-      const coef = [0, 1, 2].map((d) => {
-        const bvec = [0, 0, 0];
-        X.forEach((x, k2) => { for (let i = 0; i < 3; i++) bvec[i] += x[i] * B[k2][d]; });
-        return solve3(A, bvec);                 // [c_d, P_d, Q_d]
-      });
-      let res = 0;
-      X.forEach((x, k2) => { for (let d = 0; d < 3; d++) { const p = coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2]; res += (p - B[k2][d]) ** 2; } });
-      rates.push(rps); resid.push(res);
-      if (!best || res < best.res) best = { res, rps, coef };
+  // Fit a vector turning at a steady rate to the pole directions B(t). wts: how much each frame
+  // counts (blurred frames less). With ROBUST, frames that disagree strongly with a first fit are
+  // down-weighted and the fit is repeated, so a few bad frames (ball crossing the net, half
+  // hidden) can't pull the rate. Also returns the best few rates (candidates) with their fits.
+  function fitRotatingVector(t, B, fps, wts = null) {
+    const n = t.length;
+    function scan(W) {
+      const sw = W.reduce((s, v) => s + v, 0);
+      const mean = [0, 1, 2].map((d) => B.reduce((s, b, k) => s + W[k] * b[d], 0) / sw);
+      let variance = 0;
+      B.forEach((b, k) => { for (let d = 0; d < 3; d++) variance += W[k] * (b[d] - mean[d]) ** 2; });
+      if (variance / sw < 0.02) return { noSpin: true, variance, sw };
+      let best = null; const resid = [], rates = [];
+      for (let k = 0; ; k++) {
+        const rps = 0.5 + k * 0.05;
+        if (rps >= fps / 2) break;
+        const w = 2 * Math.PI * rps / fps;
+        const X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
+        const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        X.forEach((x, k2) => { for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += W[k2] * x[i] * x[j]; });
+        const coef = [0, 1, 2].map((d) => {
+          const bvec = [0, 0, 0];
+          X.forEach((x, k2) => { for (let i = 0; i < 3; i++) bvec[i] += W[k2] * x[i] * B[k2][d]; });
+          return solve3(A, bvec);               // [c_d, P_d, Q_d]
+        });
+        let res = 0;
+        X.forEach((x, k2) => { for (let d = 0; d < 3; d++) { const p = coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2]; res += W[k2] * (p - B[k2][d]) ** 2; } });
+        rates.push(rps); resid.push(res);
+        if (!best || res < best.res) best = { res, rps, coef, w };
+      }
+      return { best, rates, resid, variance, sw };
     }
+    let W = wts ? wts.slice() : t.map(() => 1);
+    let S = scan(W);
+    if (S.noSpin) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: Math.sqrt(S.variance / S.sw), noSpin: true, candidates: [] };
+    if (ROBUST && n >= 8) {
+      const { coef, w } = S.best;
+      const err = t.map((ti, k) => {
+        const x = [1, Math.cos(w * ti), Math.sin(w * ti)];
+        let e = 0; for (let d = 0; d < 3; d++) e += (coef[d][0] * x[0] + coef[d][1] * x[1] + coef[d][2] * x[2] - B[k][d]) ** 2;
+        return Math.sqrt(e);
+      });
+      const c = Math.max(0.05, 2 * median(err));
+      W = W.map((v, k) => v / (1 + (err[k] / c) ** 2));
+      const S2 = scan(W);
+      if (!S2.noSpin) S = S2;
+    }
+    const { best, rates, resid, variance } = S;
     const P = [best.coef[0][1], best.coef[1][1], best.coef[2][1]], Q = [best.coef[0][2], best.coef[1][2], best.coef[2][2]];
     let a = cross(P, Q); a = scale(a, 1 / (norm(a) + 1e-12));
     const r2 = 1 - best.res / variance;
-    let far = Infinity;
-    rates.forEach((rr, k) => { if (Math.abs(rr - best.rps) > 2.0 && resid[k] < far) far = resid[k]; });
-    const runner = far < Infinity ? 1 - far / variance : NaN;
+    // The best rate's peak: nearby rates that fit almost as well. A short stretch gives a wide
+    // peak (a less precise rate), which is not the same as a second, different rate fitting.
+    const ib = rates.indexOf(best.rps), thr = best.res + 0.5 * best.res + 0.01 * variance;
+    let lo = ib, hi = ib;
+    while (lo > 0 && resid[lo - 1] <= thr) lo--;
+    while (hi < resid.length - 1 && resid[hi + 1] <= thr) hi++;
+    const plusMinus = Math.max(0.05, (rates[hi] - rates[lo]) / 2);
+    // separate rates (other local minima outside the peak), best first
+    const candidates = [];
+    for (let k = 1; k < resid.length - 1; k++)
+      if (resid[k] <= resid[k - 1] && resid[k] <= resid[k + 1]) candidates.push({ rps: rates[k], r2: 1 - resid[k] / variance, own: k >= lo && k <= hi });
+    candidates.sort((x, y) => y.r2 - x.r2);
+    const rival = candidates.find((c) => !c.own);
+    const runner = rival ? rival.r2 : NaN;      // the best different rate: a real alternative
     const swing = 0.5 * (norm(P) + norm(Q));
     let score = Math.max(0, r2) * Math.min(1, swing / 0.4);
     if (Number.isFinite(runner) && runner > r2 - 0.05) score *= 0.5;
-    return { rps: best.rps, axis: a, score, runner, r2, swing };
+    const turns = (t[t.length - 1] - t[0]) * best.rps / fps;   // how much of a turn the stretch shows
+    return { rps: best.rps, axis: a, score, runner, r2, swing, plusMinus, turns,
+      candidates: candidates.slice(0, 5).map((c) => ({ rps: c.rps, r2: c.r2 })) };
   }
 
   // ------------------------------------------------------------ 4. geometry + labels
@@ -1334,28 +1704,47 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       else out.push(chk("size", "ok", `Ball size good (${d} px across)`));
     }
     if (s.frames < 20) out.push(chk("frames", "warn", `Ball seen in only ${s.frames} frames`, "Keep more of the flight in view."));
+    const dotsRead = s.dots && s.dots.frames >= 4;
     if (s.contrast !== undefined) {
       const c = `Contrast ${Math.round(100 * s.contrast)}%. `;
-      if (s.contrast < 0.15) out.push(chk("marks", "bad", "Marking not visible", c + "Use more light, and colour the black half fully."));
+      if (s.contrast < 0.15 && dotsRead) out.push(chk("marks", "warn", "Black half not seen", c + "Read from the colour dots alone."));
+      else if (s.contrast < 0.15) out.push(chk("marks", "bad", "Marking not visible", c + "Use more light, and colour the black half fully."));
       else if (s.contrast < 0.3) out.push(chk("marks", "warn", "Marking faint", c + "More light, or a darker marker, makes the reading surer."));
       else out.push(chk("marks", "ok", "Marking clear", `Contrast ${Math.round(100 * s.contrast)}%`));
     }
+    const d = s.dots;
+    if (d && d.frames) {
+      const which = Object.entries(d.seen).filter(([, n]) => n).map(([c, n]) => `${c} in ${n}`).join(", ");
+      if (d.frames >= 4) out.push(chk("dots", "ok", "Colour dots seen", `${which} of ${d.of} frames`));
+      else out.push(chk("dots", "warn", "Colour dots barely seen", `${which} of ${d.of} frames; at least 4 are needed. Make the dots bigger and stronger in colour, with more light.`));
+    }
     return out;
+  }
+
+  // A clear reading: the spin fit is good AND clearly ahead of the best quite different spin rate.
+  // (A short stretch can fit several rates almost equally well; then it's a guess.)
+  function isClear(r) {
+    const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
+    // at least one full turn: a part of a turn fits almost any rate (a quarter turn when colour
+    // dots were seen in several frames: a dot shows the turn directly)
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1));
   }
 
   // What in the footage stood in the way of a clear reading, each with what to change.
   // r: the spin fit (null when there was none). Only problems are listed.
   function diagnose(s, r) {
     const out = [], add = (text, fix) => out.push({ text, fix });
-    const clear = r && (r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2));
+    const clear = r && isClear(r);
     if (s.total && s.frames < 0.7 * s.total)
       add(`The ball was found in only ${s.frames} of ${s.total} frames.`, "Something kept hiding or blending with it: keep the paddle and body out of its path, and the background behind it even (tilt the camera so the table is behind the ball).");
     if (s.ballR && s.ballR < 10)
       add(`The ball is only ${Math.round(2 * s.ballR)} px across.`, "Move the camera closer: 1–1.5 m from the ball's path, so it is 30–50 px across.");
     if (s.stretch && s.stretch > 1.35)
       add(`The ball is smeared by motion blur (stretched ${s.stretch.toFixed(1)}× along its path).`, "Add light: daylight or extra lamps make the camera's shutter faster.");
-    if (s.contrast !== undefined && s.contrast < 0.3)
+    if (s.contrast !== undefined && s.contrast < 0.3 && !(clear && r.method === "dots"))
       add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
+    if (r && r.turns < (r.minTurns || 1))
+      add(`The ball turned only ${r.turns < 0.1 ? "a little" : "about " + Math.round(r.turns * 100) + "% of a turn"} in this stretch, too little to tell the rate.`, "Keep more of the flight in view, so the ball turns at least once.");
     if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
       add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
     if (r && !clear && !out.length)
@@ -1402,7 +1791,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
     const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
     if (found.length < 4) return fail("The ball was found in too few frames.");
-    const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats);
+    const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
     if (!r) return fail("The ball was found in too few frames in a row.");
     if (r.error) return fail(r.error);
     const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
@@ -1414,12 +1803,32 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
-      axis, fit: r.score, reliable: r.score >= 0.75 || (r.score >= 0.5 && r.score - r.runner >= 0.2), runnerUp: r.runner,
+      axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg },
+      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
+  }
+
+  // Off the paddle vs after the bounce. The table's friction takes backspin away, so a backspin
+  // serve should spin a little faster off the paddle than after the bounce: in our clips by
+  // 1.35–1.6×. Off the paddle is the shorter stretch, so when the two disagree it is the one
+  // doubted (a wrong rate there is usually half or double the true one).
+  const BOUNCE_RATIO = [0.9, 2.2];
+  function crossCheck(readings) {
+    const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
+    const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
+    if (!pad || !bnc || pad.lift <= 0 || bnc.lift <= 0) return;
+    const ratio = pad.rps / bnc.rps, ok = ratio >= BOUNCE_RATIO[0] && ratio <= BOUNCE_RATIO[1];
+    pad.crossCheck = { ratio, ok };
+    if (ok) return;
+    pad.reliable = false;
+    pad.issues = (pad.issues || []).concat({
+      text: `Off the paddle (${Math.round(pad.rpm)} RPM) doesn't fit after the bounce (${Math.round(bnc.rpm)} RPM): backspin should drop a little on the bounce, not ${ratio < 1 ? "rise" : "fall by more than half"}.`,
+      fix: "Trust the after-the-bounce reading. Keep more of the flight before the bounce in view so the paddle stretch is longer.",
+    });
   }
 
   // ------------------------------------------------------------ main entry
@@ -1427,6 +1836,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
   async function analyze(file, opts = {}) {
     WHITE_REF = opts.whiteRef || "auto";
+    ROBUST = opts.robust !== false;
     DBG = {};
     planesBroken = !!opts.forceCanvas;        // tests: read frames through a canvas, as some phones must
     const progress = opts.onProgress || (() => {});
@@ -1459,6 +1869,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           const one = await measureSegment(R, part, fps, hfov);
           readings.push(Object.assign(one, { phase: part.kind }));
         }
+        crossCheck(readings);
         // the headline: off the paddle when it reads clearly, else the clearest stretch
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
@@ -1471,6 +1882,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         serves.push(one);
       }
       progress("Done", 1);
+      // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
+      // a ball sent back to the server goes the other way, which only the user can tell us
+      // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
+      // stretch with the most frames; a short stretch's direction and speed are unreliable.
+      const skipped = { slow: 0, way: 0 };
+      const wayOk = {
+        // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
+        any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
+      }[opts.serveDir || "any"] || (() => true);
+      const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
+      for (let k = serves.length - 1; k >= 0; k--) {
+        const m = motion(serves[k]);
+        if (!m) continue;
+        if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
+        else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
+      }
       // With a clear serve in the video, a short unclear stretch with no bounce is something else
       // that moved (a hand, a ball being picked up), not a serve.
       if (serves.some((sv) => sv.clear))
@@ -1478,13 +1905,26 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
           if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
         }
+      // One serve per video (the default): keep the best one, a clear reading first, then the
+      // one with the most frames; the rest count as other ball movements.
+      if (opts.single !== false && serves.length > 1) {
+        const frames = (sv) => (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+        const best = serves.slice().sort((a, b) => (b.clear - a.clear) || (frames(b) - frames(a)))[0];
+        skipped.other = (skipped.other || 0) + serves.length - 1;
+        serves.splice(0, serves.length, best);
+      }
       if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
         const fc = checks.findIndex((c) => c.key === "flight");
         if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
       }
-      if (!serves.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
+      if (!serves.length) {
+        const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
+        const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
+        return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
+      }
       const first = serves.find((s) => !s.error);
-      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing() };
+      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
+        skipped };
       return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
     } finally {
       R.close();
@@ -1568,12 +2008,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       return;
     }
     $("rpm").textContent = fmt(res.rpm);
-    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
+    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second` + (res.plusMinusRps ? ` · ±${fmt(60 * res.plusMinusRps)} RPM` : "");
     $("type").textContent = typeText(res.spinType);
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(`<span class="chip ok">Clear reading</span>`);
+    if (res.marking === "dots") chips.push(`<span class="chip">Read with the colour dots</span>`);
     if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
+    if (res.crossCheck && res.crossCheck.ok) chips.push(`<span class="chip ok">Fits the after-the-bounce reading</span>`);
     if (res.nFrames) chips.push(`<span class="chip">${res.nFrames} frames</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
@@ -1625,7 +2067,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   function showDebug(res, file) {
     const serveInfo = (res.serves || []).map((s) => (s.phases || [s]).map((r) => ({ phase: r.phase, frames: r.nFrames,
-      rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error,
+      rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error, marking: r.marking, dots: r.dots && r.dots.seen,
       issues: (r.issues || []).map((i) => i.text) })).concat((s.notes || []).map((n) => ({ note: n.text }))));
     const info = Object.assign({ version: VERSION, browser: navigator.userAgent, seconds: res.meta && +res.meta.seconds.toFixed(1) },
       res.meta && res.meta.debug, { checks: (res.checks || []).filter((c) => c.status !== "ok").map((c) => c.title), serves: serveInfo });
@@ -1655,7 +2097,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     renderServes(current, k);
     const missing = notes.filter((n) => n.phase !== "flight" && !readings.some((r) => r.phase === n.phase));
     const tiles = readings.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error || !r.reliable ? "bad" : ""}">
-      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames</span></button>`)
+      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames${r.crossCheck && r.crossCheck.ok ? " · fits the bounce reading" : ""}</span></button>`)
       .concat(missing.map((n) => `<button type="button" disabled><b>${PHASE[n.phase]}</b><span>not measured: ${n.frames ? `only ${n.frames} frames` : "too few frames"}</span></button>`));
     const order = (h) => (h.includes("After the bounce") ? 1 : 0);
     tiles.sort((x, y) => order(x) - order(y));
@@ -1697,7 +2139,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.3 (75a10b5)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.5 (203451b)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -1742,7 +2184,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -1752,7 +2194,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
-        current = null;
+        current = null; $("skipnote").hidden = true;
         render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
           .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
         $("servesbox").hidden = true; $("phasebox").hidden = true;
@@ -1768,6 +2210,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
+        const sk = res.skipped || {}, parts = [];
+        if (sk.way) parts.push(`${sk.way} ball${sk.way > 1 ? "s" : ""} going the other way (see Settings: Serves go)`);
+        if (sk.other) parts.push(`${sk.other} other ball movement${sk.other > 1 ? "s" : ""} (one serve per video; see Settings)`);
+        if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
+        $("skipnote").hidden = !parts.length;
+        $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       showDebug(res, file);
@@ -1780,6 +2228,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
+  // remember "Serves go" and "Serves per video" on this device
+  for (const [id, key] of [["dir", "serve-spin-meter.dir"], ["per", "serve-spin-meter.per"]]) {
+    try { const v = localStorage.getItem(key); if (v) $(id).value = v; } catch (e) {}
+    $(id).addEventListener("change", () => { try { localStorage.setItem(key, $(id).value); } catch (e) {} });
+  }
   render(EXAMPLE);
   renderLog();
 })();

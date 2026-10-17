@@ -143,6 +143,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 .ballsvg { width: 120px; max-width: 100%; height: auto; display: block; }
 .ballsvg circle.white { fill: #f4f4f1; stroke: var(--line); }
 .ballsvg path, .ballsvg .mark { fill: #121212; }
+.ballsvg .seam { fill: none; stroke: #121212; stroke-width: 3; }
+.ballsvg .dot-red { fill: #d0202a; } .ballsvg .dot-blue { fill: #1f47c4; } .ballsvg .dot-green { fill: #1e9a3c; }
+.balls { display: grid; gap: 10px; justify-items: center; }
+@media (max-width: 480px) { .balls { grid-auto-flow: column; justify-content: start; } }
 @media (prefers-reduced-motion: reduce) { .bar > i { transition: none; } }
 </style>
 
@@ -184,7 +188,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <input id="file" type="file" accept="video/*">
       <strong>Choose a slow-motion video</strong>
       <!--APP_PICK_HINT-->
-      <span>240 fps, phone in landscape and held still. One serve or a whole set in one video.</span>
+      <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
@@ -214,11 +218,28 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           </select>
         </div>
         <div class="field">
+          <label class="label" for="per">Serves per video</label>
+          <select id="per">
+            <option value="one">One</option>
+            <option value="several">Several</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="dir">Serves go</label>
+          <select id="dir">
+            <option value="any">Any direction</option>
+            <option value="toward">Toward the camera</option>
+            <option value="away">Away from the camera</option>
+            <option value="ltr">Left to right</option>
+            <option value="rtl">Right to left</option>
+          </select>
+        </div>
+        <div class="field">
           <label class="label" for="hfov">Camera field of view (°)</label>
           <input id="hfov" type="number" min="40" max="120" step="1" value="68">
         </div>
       </div>
-      <p class="note">The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
+      <p class="note">"Serves go" leaves out other ball movements, such as balls sent back to the server. The frame rate is read from Android slow-motion files. The field of view (Pixel 8 main camera ≈ 68°) only matters for balls flying toward or away from the camera.</p>
     </details>
   </section>
 
@@ -227,6 +248,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <h2 id="result-h">Reading</h2>
       <div class="chips" id="chips"></div>
     </div>
+    <p class="note" id="skipnote" hidden></p>
     <div id="servesbox" hidden>
       <span class="label" id="serves-label">Serves in this video</span>
       <p class="note num" id="serves-sum"></p>
@@ -285,14 +307,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   <section class="panel" aria-labelledby="howto-h">
     <h2 id="howto-h">How to record</h2>
     <div class="howto">
-      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Marked ball: one half black, one line and one dot on the white half">
+      <div class="balls">
+      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Side view: one half of the ball black, edge on the seam">
         <circle class="white" cx="60" cy="60" r="54"></circle>
         <path d="M6 60 A54 54 0 0 1 114 60 Z"></path>
-        <rect class="mark" x="56" y="60" width="8" height="54"></rect>
-        <circle class="mark" cx="34" cy="84" r="7"></circle>
       </svg>
+      <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="The white half seen straight on: a red dot at 12 o'clock, a blue dot at 4 and a green dot at 8, each a finger-width in from the seam">
+        <circle class="white" cx="60" cy="60" r="54"></circle>
+        <circle class="seam" cx="60" cy="60" r="54"></circle>
+        <circle class="dot-red" cx="60.0" cy="16.8" r="8"></circle>
+        <circle class="dot-blue" cx="97.4" cy="81.6" r="8"></circle>
+        <circle class="dot-green" cx="22.6" cy="81.6" r="8"></circle>
+      </svg>
+      </div>
       <ol>
-        <li><b>Mark the ball:</b> colour one half black along the seam, draw one 5 mm line over the white half, and add one dot beside it.</li>
+        <li><b>Mark the ball:</b> colour one half black along the seam (two coats).</li>
+        <li><b>Add three colour dots</b> on the white half, each about 8 mm across (a bit bigger than a pencil's eraser), filled solid: <b>red, blue and green</b>. Put them a finger-width (1 cm) from the seam, evenly spread: like <b>12, 4 and 8 o'clock</b> when you look at the white half straight on. Permanent markers work; avoid pale, neon or metallic ones. The dots let short or slow-spinning serves be read, and spins the black half alone can't follow.</li>
         <li><b>Slow motion at 240 fps</b>, phone in landscape, <b>held still</b>: on a tripod, or leaned against something solid.</li>
         <li><b>Best: beside the table, level with the server's half</b>, about 1–1.5 m from the path from paddle to first bounce, 40–60 cm above the table and tilted down a little, so the table is behind the ball. Then the spin is read <b>off the paddle</b> and again <b>after the bounce</b>.</li>
         <li>Also works: <b>from the far end of the table</b>, a little to one side, looking back at the server. The ball comes toward the camera; usually only the spin after the bounce can be read.</li>
@@ -365,12 +395,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       return;
     }
     $("rpm").textContent = fmt(res.rpm);
-    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second`;
+    $("rps").textContent = `${fmt(res.rps, 1)} revolutions per second` + (res.plusMinusRps ? ` · ±${fmt(60 * res.plusMinusRps)} RPM` : "");
     $("type").textContent = typeText(res.spinType);
     const chips = [];
     if (res.example) chips.push(`<span class="chip example">${res.caption}</span>`);
     chips.push(`<span class="chip ok">Clear reading</span>`);
+    if (res.marking === "dots") chips.push(`<span class="chip">Read with the colour dots</span>`);
     if (res.phase === "paddle" || res.phase === "bounce") chips.push(`<span class="chip">${PHASE[res.phase]}</span>`);
+    if (res.crossCheck && res.crossCheck.ok) chips.push(`<span class="chip ok">Fits the after-the-bounce reading</span>`);
     if (res.nFrames) chips.push(`<span class="chip">${res.nFrames} frames</span>`);
     const mt = res.meta || {};
     if (mt.seconds) chips.push(`<span class="chip">${fmt(mt.seconds, 0)} s · ${{ direct: "direct", canvas: "canvas", seek: "seek" }[mt.frameRead] || ""}</span>`);
@@ -422,7 +454,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   function showDebug(res, file) {
     const serveInfo = (res.serves || []).map((s) => (s.phases || [s]).map((r) => ({ phase: r.phase, frames: r.nFrames,
-      rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error,
+      rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error, marking: r.marking, dots: r.dots && r.dots.seen,
       issues: (r.issues || []).map((i) => i.text) })).concat((s.notes || []).map((n) => ({ note: n.text }))));
     const info = Object.assign({ version: VERSION, browser: navigator.userAgent, seconds: res.meta && +res.meta.seconds.toFixed(1) },
       res.meta && res.meta.debug, { checks: (res.checks || []).filter((c) => c.status !== "ok").map((c) => c.title), serves: serveInfo });
@@ -452,7 +484,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     renderServes(current, k);
     const missing = notes.filter((n) => n.phase !== "flight" && !readings.some((r) => r.phase === n.phase));
     const tiles = readings.map((r, j) => `<button type="button" data-p="${j}" aria-pressed="${j === active}" class="${r.error || !r.reliable ? "bad" : ""}">
-      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames</span></button>`)
+      <b>${PHASE[r.phase]}</b><span>${r.error || !r.reliable ? "no clear reading" : fmt(r.rpm) + " RPM · " + typeText(r.spinType)} · ${r.nFrames} frames${r.crossCheck && r.crossCheck.ok ? " · fits the bounce reading" : ""}</span></button>`)
       .concat(missing.map((n) => `<button type="button" disabled><b>${PHASE[n.phase]}</b><span>not measured: ${n.frames ? `only ${n.frames} frames` : "too few frames"}</span></button>`));
     const order = (h) => (h.includes("After the bounce") ? 1 : 0);
     tiles.sort((x, y) => order(x) - order(y));
@@ -539,7 +571,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -549,7 +581,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
-        current = null;
+        current = null; $("skipnote").hidden = true;
         render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
           .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
         $("servesbox").hidden = true; $("phasebox").hidden = true;
@@ -565,6 +597,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
         showServe(pick);
+        const sk = res.skipped || {}, parts = [];
+        if (sk.way) parts.push(`${sk.way} ball${sk.way > 1 ? "s" : ""} going the other way (see Settings: Serves go)`);
+        if (sk.other) parts.push(`${sk.other} other ball movement${sk.other > 1 ? "s" : ""} (one serve per video; see Settings)`);
+        if (sk.slow) parts.push(`${sk.slow} slow ball${sk.slow > 1 ? "s" : ""} (bounced on the table before serving)`);
+        $("skipnote").hidden = !parts.length;
+        $("skipnote").textContent = parts.length ? `Not counted as serves: ${parts.join(" and ")}.` : "";
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
       }
       showDebug(res, file);
@@ -577,6 +615,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
+  // remember "Serves go" and "Serves per video" on this device
+  for (const [id, key] of [["dir", "serve-spin-meter.dir"], ["per", "serve-spin-meter.per"]]) {
+    try { const v = localStorage.getItem(key); if (v) $(id).value = v; } catch (e) {}
+    $(id).addEventListener("change", () => { try { localStorage.setItem(key, $(id).value); } catch (e) {} });
+  }
   render(EXAMPLE);
   renderLog();
 })();

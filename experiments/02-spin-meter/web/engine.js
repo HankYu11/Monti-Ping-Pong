@@ -1131,10 +1131,13 @@
     for (const rw of rows) {
       const ref = useWall && rw.wall > 0 ? rw.wall : Math.max(rw.top, 0.9 * ballWhite);
       rw.D = rw.vals.map((v) => clamp(1 - v / Math.max(ref, 1), 0, 1));
+      rw.blackFrac = rw.D.filter((v) => v > 0.5).length / Math.max(1, rw.D.length);
       rw.D.forEach((v, k) => { if (!(rw.onDot && rw.onDot[k])) Dall.push(v); });
     }
     if (rows.length < 8) return null;
     stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
+    stats.oneSide = rows.filter((rw) => rw.blackFrac > 0.85 || rw.blackFrac < 0.15).length / rows.length;
+    stats.blackFrac = median(rows.map((rw) => rw.blackFrac));
     const seen = {};
     for (const name of Object.keys(DOT_HUES)) seen[name] = rows.filter((rw) => rw.dots && rw.dots[name]).length;
     const dotFrames = rows.filter((rw) => rw.dots && Object.keys(rw.dots).length).length;
@@ -1450,6 +1453,17 @@
     });
     stats.bgChange = median(changed);
     if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
+    // how coloured the "ball" is: a white-and-black ball is near grey; skin, a paddle or a shirt isn't
+    if (colour && found.length) {
+      stats.ballChroma = median(balls.map((b, k) => {
+        const f = cols[k], vals = [];
+        if (!b || !f) return NaN;
+        for (let y = Math.max(0, Math.floor(b[1] - b[2])); y < Math.min(rh, b[1] + b[2]); y++)
+          for (let x = Math.max(0, Math.floor(b[0] - b[2])); x < Math.min(rw, b[0] + b[2]); x++)
+            if (Math.hypot(x - b[0], y - b[1]) <= 0.7 * b[2]) vals.push(Math.hypot(f.u[y * rw + x], f.v[y * rw + x]));
+        return vals.length ? median(vals) : NaN;
+      }).filter(Number.isFinite));
+    }
     const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
     if (found.length < 4) return fail("The ball was found in too few frames.");
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
@@ -1465,7 +1479,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.oneSide, blackFrac: stats.blackFrac, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,

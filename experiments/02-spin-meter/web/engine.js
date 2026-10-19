@@ -1145,6 +1145,25 @@
       for (const rw of rows) rw.white = rw.vals.filter((v) => v > mid).length / rw.vals.length;
       stats.oneSide = rows.filter((rw) => rw.white < 0.12 || rw.white > 0.88).length / rows.length;
       stats.whiteShare = median(rows.map((rw) => rw.white));
+      // does the pattern change? per spot on the ball (6 x 6 grid, inner part), how much its
+      // white share varies over the frames: a turning ball flips spots between black and white
+      const G = 6, cell = (u) => clamp(Math.trunc((u + 0.7) / 1.4 * G), 0, G - 1), per = [];
+      for (const rw of rows) {
+        const cnt = new Float64Array(G * G), wh = new Float64Array(G * G);
+        rw.vals.forEach((v, k) => {
+          if (Math.abs(rw.UX[k]) > 0.7 || Math.abs(rw.UY[k]) > 0.7) return;
+          const q = cell(rw.UY[k]) * G + cell(rw.UX[k]); cnt[q]++; if (v > mid) wh[q]++;
+        });
+        per.push(Array.from(cnt, (c, q) => (c >= 2 ? wh[q] / c : NaN)));
+      }
+      const sds = [];
+      for (let q = 0; q < G * G; q++) {
+        const xs = per.map((a) => a[q]).filter(Number.isFinite);
+        if (xs.length < 6) continue;
+        const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+        sds.push(Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length));
+      }
+      if (sds.length) stats.change = sds.reduce((a, b) => a + b, 0) / sds.length;
     }
     const seen = {};
     for (const name of Object.keys(DOT_HUES)) seen[name] = rows.filter((rw) => rw.dots && rw.dots[name]).length;
@@ -1487,7 +1506,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.oneSide, blackFrac: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.change, blackFrac: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,

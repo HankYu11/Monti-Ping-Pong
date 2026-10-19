@@ -1202,6 +1202,7 @@
       B.push(scale(b, 1 / norm(b)));
     }
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
+    if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
     if (dotFrames < 4) return poleFit;
     const wOfRow = new Map(t.map((ti, k) => [ti, Wt[k]]));
@@ -1414,11 +1415,15 @@
 
   // A clear reading: the spin fit is good AND clearly ahead of the best quite different spin rate.
   // (A short stretch can fit several rates almost equally well; then it's a guess.)
+  // The marking hardly changed over the stretch: the same side faced the camera all along (a
+  // black disc), so any rate fitted to it is noise. Real clips: 0.11 and up when readable, 0.08
+  // for a black-only stretch.
+  const steady = (r) => r.method !== "dots" && r.change < 0.1;
   function isClear(r) {
     const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
     // at least one full turn: a part of a turn fits almost any rate (a quarter turn when colour
     // dots were seen in several frames: a dot shows the turn directly)
-    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1));
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1)) && !steady(r);
   }
 
   // What in the footage stood in the way of a clear reading, each with what to change.
@@ -1436,7 +1441,9 @@
       add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
     if (r && r.turns < (r.minTurns || 1))
       add(`The ball turned only ${r.turns < 0.1 ? "a little" : "about " + Math.round(r.turns * 100) + "% of a turn"} in this stretch, too little to tell the rate.`, "Keep more of the flight in view, so the ball turns at least once.");
-    if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
+    if (r && steady(r))
+      add("The ball showed the same side all the way (its marking hardly changed), so there is nothing to read the spin from.", "Film from the side of the ball's path, so both halves come into view as it turns.");
+    if (r && !clear && !steady(r) && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
       add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
     if (r && !clear && !out.length)
       add(`The marking couldn't be followed reliably (fit ${r.score.toFixed(2)}, needs 0.75).`, "Check that the ball's marking is sharp in the slow-motion video; more light helps most.");
@@ -1506,7 +1513,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.change, blackFrac: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,

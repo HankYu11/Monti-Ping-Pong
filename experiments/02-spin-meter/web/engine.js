@@ -1135,6 +1135,36 @@
     }
     if (rows.length < 8) return null;
     stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
+    // How much of each frame's ball is white: against the brightest the ball ever gets, or the
+    // background behind it. A ball that shows only one side (the black half facing the camera all
+    // the way) gives a steady disc: nothing in it turns, so there is nothing to read.
+    const allV = rows.flatMap((rw) => rw.vals), walls = rows.map((rw) => rw.wall).filter(Number.isFinite);
+    const blackLv = percentile(allV, 10), whiteLv = Math.max(percentile(allV, 95), walls.length ? median(walls) : 0);
+    if (whiteLv - blackLv >= 40) {
+      const mid = 0.5 * (blackLv + whiteLv);
+      for (const rw of rows) rw.white = rw.vals.filter((v) => v > mid).length / rw.vals.length;
+      stats.oneSide = rows.filter((rw) => rw.white < 0.12 || rw.white > 0.88).length / rows.length;
+      stats.whiteShare = median(rows.map((rw) => rw.white));
+      // does the pattern change? per spot on the ball (6 x 6 grid, inner part), how much its
+      // white share varies over the frames: a turning ball flips spots between black and white
+      const G = 6, cell = (u) => clamp(Math.trunc((u + 0.7) / 1.4 * G), 0, G - 1), per = [];
+      for (const rw of rows) {
+        const cnt = new Float64Array(G * G), wh = new Float64Array(G * G);
+        rw.vals.forEach((v, k) => {
+          if (Math.abs(rw.UX[k]) > 0.7 || Math.abs(rw.UY[k]) > 0.7) return;
+          const q = cell(rw.UY[k]) * G + cell(rw.UX[k]); cnt[q]++; if (v > mid) wh[q]++;
+        });
+        per.push(Array.from(cnt, (c, q) => (c >= 2 ? wh[q] / c : NaN)));
+      }
+      const sds = [];
+      for (let q = 0; q < G * G; q++) {
+        const xs = per.map((a) => a[q]).filter(Number.isFinite);
+        if (xs.length < 6) continue;
+        const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+        sds.push(Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length));
+      }
+      if (sds.length) stats.change = sds.reduce((a, b) => a + b, 0) / sds.length;
+    }
     const seen = {};
     for (const name of Object.keys(DOT_HUES)) seen[name] = rows.filter((rw) => rw.dots && rw.dots[name]).length;
     const dotFrames = rows.filter((rw) => rw.dots && Object.keys(rw.dots).length).length;
@@ -1172,6 +1202,7 @@
       B.push(scale(b, 1 / norm(b)));
     }
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
+    if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
     if (dotFrames < 4) return poleFit;
     const wOfRow = new Map(t.map((ti, k) => [ti, Wt[k]]));
@@ -1384,11 +1415,15 @@
 
   // A clear reading: the spin fit is good AND clearly ahead of the best quite different spin rate.
   // (A short stretch can fit several rates almost equally well; then it's a guess.)
+  // The marking hardly changed over the stretch: the same side faced the camera all along (a
+  // black disc), so any rate fitted to it is noise. Real clips: 0.11 and up when readable, 0.08
+  // for a black-only stretch.
+  const steady = (r) => r.method !== "dots" && r.change < 0.1;
   function isClear(r) {
     const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
     // at least one full turn: a part of a turn fits almost any rate (a quarter turn when colour
     // dots were seen in several frames: a dot shows the turn directly)
-    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1));
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1)) && !steady(r);
   }
 
   // What in the footage stood in the way of a clear reading, each with what to change.
@@ -1406,7 +1441,9 @@
       add(`The black half is faint (contrast ${Math.round(100 * s.contrast)}%).`, "More light, and colour the black half fully and darkly.");
     if (r && r.turns < (r.minTurns || 1))
       add(`The ball turned only ${r.turns < 0.1 ? "a little" : "about " + Math.round(r.turns * 100) + "% of a turn"} in this stretch, too little to tell the rate.`, "Keep more of the flight in view, so the ball turns at least once.");
-    if (r && !clear && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
+    if (r && steady(r))
+      add("The ball showed the same side all the way (its marking hardly changed), so there is nothing to read the spin from.", "Film from the side of the ball's path, so both halves come into view as it turns.");
+    if (r && !clear && !steady(r) && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
       add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
     if (r && !clear && !out.length)
       add(`The marking couldn't be followed reliably (fit ${r.score.toFixed(2)}, needs 0.75).`, "Check that the ball's marking is sharp in the slow-motion video; more light helps most.");
@@ -1450,6 +1487,17 @@
     });
     stats.bgChange = median(changed);
     if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
+    // how coloured the "ball" is: a white-and-black ball is near grey; skin, a paddle or a shirt isn't
+    if (colour && found.length) {
+      stats.ballChroma = median(balls.map((b, k) => {
+        const f = cols[k], vals = [];
+        if (!b || !f) return NaN;
+        for (let y = Math.max(0, Math.floor(b[1] - b[2])); y < Math.min(rh, b[1] + b[2]); y++)
+          for (let x = Math.max(0, Math.floor(b[0] - b[2])); x < Math.min(rw, b[0] + b[2]); x++)
+            if (Math.hypot(x - b[0], y - b[1]) <= 0.7 * b[2]) vals.push(Math.hypot(f.u[y * rw + x], f.v[y * rw + x]));
+        return vals.length ? median(vals) : NaN;
+      }).filter(Number.isFinite));
+    }
     const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
     if (found.length < 4) return fail("The ball was found in too few frames.");
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
@@ -1465,7 +1513,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,

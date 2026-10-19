@@ -248,6 +248,21 @@ Notes on the results:
   - an axis 8° from the black half's centre (fit 0.48 → 0.98).
 - **Not yet tested on real footage:** real marker colours under hall light, and the ball's printed logo (a red logo would count as a red dot; it turns with the ball, so it helps or is down-weighted).
 
+## Same side all the way (2.6)
+
+Home clips filmed face-on (19 Oct, I–L) showed a new way to get a wrong "clear" reading.
+
+- **The problem.** In clip K the black half faced the camera for the whole stretch: a black disc with a sliver of white now and then. The fit turned that noise into "backspin, 1,710 RPM, clear" on a topspin serve.
+- **The measure.** Each stretch now gets a "pattern change" score: how much each spot on the ball flips between black and white over the frames. The ball is split into a 6 × 6 grid for this.
+
+| Stretch | Pattern change |
+|---|---|
+| Readable stretches in all labelled clips | 0.11 (w3, dim room) and up; mostly 0.3–0.4 |
+| Clip K, black disc | 0.08 |
+
+- **The rule.** Below 0.10 there is no clear reading for the black-half method. The tool says the ball showed the same side all the way, and suggests filming from the side. Readings from colour dots are exempt.
+- **Result.** All labelled readings are unchanged.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

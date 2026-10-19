@@ -1131,13 +1131,21 @@
     for (const rw of rows) {
       const ref = useWall && rw.wall > 0 ? rw.wall : Math.max(rw.top, 0.9 * ballWhite);
       rw.D = rw.vals.map((v) => clamp(1 - v / Math.max(ref, 1), 0, 1));
-      rw.blackFrac = rw.D.filter((v) => v > 0.5).length / Math.max(1, rw.D.length);
       rw.D.forEach((v, k) => { if (!(rw.onDot && rw.onDot[k])) Dall.push(v); });
     }
     if (rows.length < 8) return null;
     stats.contrast = percentile(Dall, 95) - percentile(Dall, 10);
-    stats.oneSide = rows.filter((rw) => rw.blackFrac > 0.85 || rw.blackFrac < 0.15).length / rows.length;
-    stats.blackFrac = median(rows.map((rw) => rw.blackFrac));
+    // How much of each frame's ball is white: against the brightest the ball ever gets, or the
+    // background behind it. A ball that shows only one side (the black half facing the camera all
+    // the way) gives a steady disc: nothing in it turns, so there is nothing to read.
+    const allV = rows.flatMap((rw) => rw.vals), walls = rows.map((rw) => rw.wall).filter(Number.isFinite);
+    const blackLv = percentile(allV, 10), whiteLv = Math.max(percentile(allV, 95), walls.length ? median(walls) : 0);
+    if (whiteLv - blackLv >= 40) {
+      const mid = 0.5 * (blackLv + whiteLv);
+      for (const rw of rows) rw.white = rw.vals.filter((v) => v > mid).length / rw.vals.length;
+      stats.oneSide = rows.filter((rw) => rw.white < 0.12 || rw.white > 0.88).length / rows.length;
+      stats.whiteShare = median(rows.map((rw) => rw.white));
+    }
     const seen = {};
     for (const name of Object.keys(DOT_HUES)) seen[name] = rows.filter((rw) => rw.dots && rw.dots[name]).length;
     const dotFrames = rows.filter((rw) => rw.dots && Object.keys(rw.dots).length).length;
@@ -1479,7 +1487,7 @@
       gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.oneSide, blackFrac: stats.blackFrac, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { oneSide: stats.oneSide, blackFrac: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,

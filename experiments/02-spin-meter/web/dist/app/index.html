@@ -164,7 +164,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.6 · build f78fa25</p>
+    <p class="note num">Version 2.6 · build 3ac4098</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -1552,6 +1552,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
       B.push(scale(b, 1 / norm(b)));
     }
+    // troubleshooting: where the black half pointed in each frame (x right, y down, z toward the camera)
+    DBG.poles = (DBG.poles || []).concat([rows.map((rw, k) => [rw.i, ...B[k].map((x) => +x.toFixed(2)), +rw.r.toFixed(1)])]);
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
     if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
@@ -2199,7 +2201,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.6 (f78fa25)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.6 (3ac4098)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -2313,7 +2315,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="f78fa25" hidden></span>
+<span id="app-build" data-build="3ac4098" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

@@ -1201,6 +1201,8 @@
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
       B.push(scale(b, 1 / norm(b)));
     }
+    // troubleshooting: where the black half pointed in each frame (x right, y down, z toward the camera)
+    DBG.poles = (DBG.poles || []).concat([rows.map((rw, k) => [rw.i, ...B[k].map((x) => +x.toFixed(2)), +rw.r.toFixed(1)])]);
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
     if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball

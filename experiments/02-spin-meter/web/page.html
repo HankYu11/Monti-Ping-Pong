@@ -134,6 +134,13 @@ td.num { text-align: right; }
 .btn { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--table); background: var(--table); color: var(--table-ink); cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--table); }
 .btn:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.trim { display: grid; gap: 10px; }
+.trim video { width: 100%; max-height: 55vh; background: #000; border-radius: 10px; display: block; }
+.trimbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trimbar .step { min-width: 44px; }
+.trimbar.marks { display: grid; grid-template-columns: auto 1fr 1fr auto; }
+.trimbar.marks .btn { padding-inline: 10px; white-space: nowrap; }
 td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
 /* how-to */
@@ -190,6 +197,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <!--APP_PICK_HINT-->
       <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
+    <div class="trim" id="trimbox" hidden>
+      <video id="tv" controls playsinline muted preload="auto"></video>
+      <div class="trimbar marks">
+        <button class="btn ghost step" id="tprev" type="button" aria-label="Back one frame">‹</button>
+        <button class="btn ghost" id="tstart" type="button">Start</button>
+        <button class="btn ghost" id="tend" type="button">End</button>
+        <button class="btn ghost step" id="tnext" type="button" aria-label="Forward one frame">›</button>
+      </div>
+      <p class="note" id="trimtext"></p>
+      <div class="trimbar">
+        <button class="btn" id="measure" type="button">Measure</button>
+        <button class="btn ghost" id="twhole" type="button" hidden>Use the whole video</button>
+      </div>
+    </div>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
       <p class="note" id="step">Starting…</p>
@@ -559,19 +580,62 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
 
   // ---------------------------------------------------------- analysis
-  $("file").addEventListener("change", async (ev) => {
+  $("file").addEventListener("change", (ev) => {
     const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    try { await analyseFile(file); } finally { ev.target.value = ""; }
+    if (file) openTrim(file);
+    ev.target.value = "";
   });
-  window.SpinPage = { analyseFile };       // the app build hands shared videos in here
+  window.SpinPage = { analyseFile: openTrim };   // the app build hands shared videos in here
 
-  async function analyseFile(file) {
+  // ---------------------------------------------------------- trim: measure only the part with the serve
+  // Decoding every frame is most of the work, so a few seconds around the serve instead of a whole
+  // minute is many times faster, and other ball movements in the video can't be mistaken for it.
+  const tv = $("tv"), STEP = 1 / 30;       // phone slow motion is stored as 30 frames per second of video
+  let pendingFile = null, trim = { start: null, end: null }, tvUrl = null, tvBroken = false;
+  const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  function openTrim(file) {
+    pendingFile = file; trim = { start: null, end: null }; tvBroken = false;
+    if (tvUrl) URL.revokeObjectURL(tvUrl);
+    tvUrl = URL.createObjectURL(file); tv.src = tvUrl;
+    $("error").hidden = true; $("trimbox").hidden = false;
+    showTrim();
+    $("trimbox").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  tv.addEventListener("loadedmetadata", showTrim);
+  tv.addEventListener("error", () => { tvBroken = true; showTrim(); });
+  function showTrim() {
+    const dur = tv.duration, ok = !tvBroken && Number.isFinite(dur);
+    for (const id of ["tprev", "tstart", "tend", "tnext"]) $(id).disabled = !ok;
+    const a = trim.start != null ? trim.start : 0, b = trim.end != null ? trim.end : dur;
+    const set = trim.start != null || trim.end != null;
+    $("twhole").hidden = !set;
+    $("measure").textContent = set ? "Measure this part" : "Measure the whole video";
+    if (!ok) { $("trimtext").textContent = tvBroken ? "This browser can't show the video, so the whole video will be measured." : "Loading the video…"; return; }
+    $("trimtext").textContent = !set
+      ? `${clock(dur)} of video. To save time, play or drag to just before the serve and tap Start, then just after the bounce and tap End.`
+      : b > a ? `Measuring ${clock(a)} to ${clock(b)}: ${(b - a).toFixed(1)} s of the ${dur.toFixed(1)} s video, about ${Math.round((b - a) / STEP)} frames.`
+      : "The end is before the start: move one of them.";
+    $("measure").disabled = set && !(b > a);
+  }
+  $("tstart").addEventListener("click", () => { trim.start = tv.currentTime; showTrim(); });
+  $("tend").addEventListener("click", () => { trim.end = tv.currentTime; showTrim(); });
+  $("twhole").addEventListener("click", () => { trim = { start: null, end: null }; showTrim(); });
+  for (const [id, d] of [["tprev", -1], ["tnext", 1]])
+    $(id).addEventListener("click", () => { tv.pause(); tv.currentTime = Math.max(0, Math.min(tv.duration || 0, tv.currentTime + d * STEP)); });
+  $("measure").addEventListener("click", async () => {
+    if (!pendingFile) return;
+    tv.pause();
+    const range = trim.start != null || trim.end != null ? { start: trim.start || 0, end: trim.end != null ? trim.end : undefined } : null;
+    $("trimbox").hidden = true;
+    await analyseFile(pendingFile, range);
+  });
+
+  async function analyseFile(file, range = null) {
     $("error").hidden = true; $("progress").hidden = false; renderChecks([]); $("bar").style.width = "0%";
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several", trim: range,
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });

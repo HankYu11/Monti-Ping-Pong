@@ -263,6 +263,25 @@ Home clips filmed face-on (19 Oct, I–L) showed a new way to get a wrong "clear
 - **The rule.** Below 0.10 there is no clear reading for the black-half method. The tool says the ball showed the same side all the way, and suggests filming from the side. Readings from colour dots are exempt.
 - **Result.** All labelled readings are unchanged.
 
+## Measure only part of the video (2.7)
+
+Decoding every frame is most of the work. A 20–60 s video with one serve in it spent most of its time on frames that don't matter, and other ball movements in it could be mistaken for the serve.
+
+**On the page:**
+- Choosing a video now opens it in a player first.
+- Play or drag to just before the serve and tap **Start**, then to just after the bounce and tap **End**. The ‹ › buttons step one frame.
+- **Measure this part** decodes only those frames, starting at the keyframe before Start.
+- **Measure the whole video** still works as before.
+- If the browser can't show the video, it is measured whole.
+
+| Clip | Whole video | Trimmed to 3–4 s | Readings |
+|---|---|---|---|
+| N | 64 s | 23 s | Same |
+| Q | 68 s | 24 s | Same off the paddle; after the bounce a longer stretch, 48.75 vs 49.10 rps |
+| S | 52 s | 12 s | Same after the bounce; off the paddle starts earlier, same mirror problem |
+
+Times are from the test browser on a laptop; phones are slower, so the saving there is bigger in seconds.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

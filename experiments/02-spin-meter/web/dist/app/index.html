@@ -143,6 +143,13 @@ td.num { text-align: right; }
 .btn { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--table); background: var(--table); color: var(--table-ink); cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--table); }
 .btn:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.trim { display: grid; gap: 10px; }
+.trim video { width: 100%; max-height: 55vh; background: #000; border-radius: 10px; display: block; }
+.trimbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trimbar .step { min-width: 44px; }
+.trimbar.marks { display: grid; grid-template-columns: auto 1fr 1fr auto; }
+.trimbar.marks .btn { padding-inline: 10px; white-space: nowrap; }
 td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
 /* how-to */
@@ -164,7 +171,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.6 · build 3ac4098</p>
+    <p class="note num">Version 2.7 · build 0efd3d4</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -202,6 +209,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span data-app-hint hidden>Or in Photos: open the video, tap Share, choose Spin Meter.</span>
       <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
+    <div class="trim" id="trimbox" hidden>
+      <video id="tv" controls playsinline muted preload="auto"></video>
+      <div class="trimbar marks">
+        <button class="btn ghost step" id="tprev" type="button" aria-label="Back one frame">‹</button>
+        <button class="btn ghost" id="tstart" type="button">Start</button>
+        <button class="btn ghost" id="tend" type="button">End</button>
+        <button class="btn ghost step" id="tnext" type="button" aria-label="Forward one frame">›</button>
+      </div>
+      <p class="note" id="trimtext"></p>
+      <div class="trimbar">
+        <button class="btn" id="measure" type="button">Measure</button>
+        <button class="btn ghost" id="twhole" type="button" hidden>Use the whole video</button>
+      </div>
+    </div>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
       <p class="note" id="step">Starting…</p>
@@ -694,9 +715,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
     const presOfTs = new Map(), decOfPres = new Array(samples.length);
     order.forEach(([t, k], i) => { presOfTs.set(t, i); decOfPres[i] = k; });
-    const Wc = track.video.width, Hc = track.video.height;
+    const Wc = track.video.width, Hc = track.video.height, presT = order.map(([t]) => t);
     return {
       kind: "decoder", n: samples.length, W: Wc, H: Hc,
+      indexAt(sec) {                          // first frame shown at or after this time in the file
+        const t = sec * 1e6 - 1000; let lo = 0, hi = presT.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (presT[m] < t) lo = m + 1; else hi = m; }
+        return Math.min(lo, presT.length);
+      },
       async run(from, to, cb) {
         to = Math.min(to, samples.length);
         let dFrom = Infinity, dTo = -1;
@@ -736,6 +762,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     };
   }
 
+  // Only part of a video: frames a..b-1, numbered from 0 (decoding starts at the keyframe before a)
+  function trimReader(R, a, b) {
+    return Object.assign({}, R, { n: b - a, trimFrom: a,
+      run: (from, to, cb) => R.run(from + a, Math.min(to + a, b), (i, src) => cb(i - a, src)) });
+  }
   async function seekReader(file, playbackFps, nFramesHint) {   // fallback: slow but universal
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -754,6 +785,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
+      indexAt: (sec) => clamp(Math.round(sec * playbackFps), 0, n),
       async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
@@ -1912,13 +1944,18 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
+    // the part of the video the user picked (times in the file, as the video player shows them)
+    if (opts.trim && R.indexAt) {
+      const a = R.indexAt(Math.max(0, opts.trim.start || 0)), b = opts.trim.end ? Math.max(a + 1, R.indexAt(opts.trim.end)) : R.n;
+      if (a > 0 || b < R.n) { DBG.trim = { from: a, to: b, of: R.n }; R = trimReader(R, a, b); }
+    }
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
       const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
       checks.push(flightCheck(segs)); emit();
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
+      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation, trimFrom: R.trimFrom || 0 };
       DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
@@ -2201,7 +2238,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.6 (3ac4098)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.7 (0efd3d4)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -2234,19 +2271,62 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
 
   // ---------------------------------------------------------- analysis
-  $("file").addEventListener("change", async (ev) => {
+  $("file").addEventListener("change", (ev) => {
     const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    try { await analyseFile(file); } finally { ev.target.value = ""; }
+    if (file) openTrim(file);
+    ev.target.value = "";
   });
-  window.SpinPage = { analyseFile };       // the app build hands shared videos in here
+  window.SpinPage = { analyseFile: openTrim };   // the app build hands shared videos in here
 
-  async function analyseFile(file) {
+  // ---------------------------------------------------------- trim: measure only the part with the serve
+  // Decoding every frame is most of the work, so a few seconds around the serve instead of a whole
+  // minute is many times faster, and other ball movements in the video can't be mistaken for it.
+  const tv = $("tv"), STEP = 1 / 30;       // phone slow motion is stored as 30 frames per second of video
+  let pendingFile = null, trim = { start: null, end: null }, tvUrl = null, tvBroken = false;
+  const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  function openTrim(file) {
+    pendingFile = file; trim = { start: null, end: null }; tvBroken = false;
+    if (tvUrl) URL.revokeObjectURL(tvUrl);
+    tvUrl = URL.createObjectURL(file); tv.src = tvUrl;
+    $("error").hidden = true; $("trimbox").hidden = false;
+    showTrim();
+    $("trimbox").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  tv.addEventListener("loadedmetadata", showTrim);
+  tv.addEventListener("error", () => { tvBroken = true; showTrim(); });
+  function showTrim() {
+    const dur = tv.duration, ok = !tvBroken && Number.isFinite(dur);
+    for (const id of ["tprev", "tstart", "tend", "tnext"]) $(id).disabled = !ok;
+    const a = trim.start != null ? trim.start : 0, b = trim.end != null ? trim.end : dur;
+    const set = trim.start != null || trim.end != null;
+    $("twhole").hidden = !set;
+    $("measure").textContent = set ? "Measure this part" : "Measure the whole video";
+    if (!ok) { $("trimtext").textContent = tvBroken ? "This browser can't show the video, so the whole video will be measured." : "Loading the video…"; return; }
+    $("trimtext").textContent = !set
+      ? `${clock(dur)} of video. To save time, play or drag to just before the serve and tap Start, then just after the bounce and tap End.`
+      : b > a ? `Measuring ${clock(a)} to ${clock(b)}: ${(b - a).toFixed(1)} s of the ${dur.toFixed(1)} s video, about ${Math.round((b - a) / STEP)} frames.`
+      : "The end is before the start: move one of them.";
+    $("measure").disabled = set && !(b > a);
+  }
+  $("tstart").addEventListener("click", () => { trim.start = tv.currentTime; showTrim(); });
+  $("tend").addEventListener("click", () => { trim.end = tv.currentTime; showTrim(); });
+  $("twhole").addEventListener("click", () => { trim = { start: null, end: null }; showTrim(); });
+  for (const [id, d] of [["tprev", -1], ["tnext", 1]])
+    $(id).addEventListener("click", () => { tv.pause(); tv.currentTime = Math.max(0, Math.min(tv.duration || 0, tv.currentTime + d * STEP)); });
+  $("measure").addEventListener("click", async () => {
+    if (!pendingFile) return;
+    tv.pause();
+    const range = trim.start != null || trim.end != null ? { start: trim.start || 0, end: trim.end != null ? trim.end : undefined } : null;
+    $("trimbox").hidden = true;
+    await analyseFile(pendingFile, range);
+  });
+
+  async function analyseFile(file, range = null) {
     $("error").hidden = true; $("progress").hidden = false; renderChecks([]); $("bar").style.width = "0%";
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several", trim: range,
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -2315,7 +2395,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="3ac4098" hidden></span>
+<span id="app-build" data-build="0efd3d4" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

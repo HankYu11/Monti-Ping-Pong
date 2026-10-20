@@ -306,6 +306,19 @@ All labelled readings are unchanged (q5 off the paddle 52.70 → 53.00 rps).
 
 Times are from the test browser with phone-like keyframes.
 
+**Then the real cost turned up.** Each video measured on its own, on the same files:
+- The old pass was about 6 s fixed plus about 5.6 ms per frame. The keyframe pass was about 150 ms per keyframe.
+- So S and O saved about the same 6.5 s, although O is 3× longer: O has 44 keyframes, more than the old 40 samples.
+- Timing inside: reading a frame took 14 ms. Storing it compactly took 134 ms, because `TypedArray.from` called a function for every one of the ~1.5 M values in the frame.
+- Plain loops give identical bytes, 7× faster.
+
+| Clip | Background: old | Keyframes | Plain loops | Total: old → now |
+|---|---|---|---|---|
+| S | 7.9–9.3 s | 2.1 s | 0.4 s | ~20 → 10.9 s |
+| O | 13.1–14.1 s | 6.3–7.5 s | 1.1 s | ~45 → 32 s |
+
+The ball search, about 22 ms a frame, is now nearly all the time. Decoding alone is about 5–6 ms of it.
+
 **Automatic trimming: tried, not reliable yet.**
 - *Compressed frame sizes* (free to read): motion during the serve is only 1.0–1.1× the clip's usual level, and 4–12% of frames are busier.
 - *White ball-like spots in keyframes:* 18–33 during a serve, but just as many elsewhere (up to 46): the ball basket, shirts, hands.

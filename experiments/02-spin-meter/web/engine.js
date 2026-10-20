@@ -643,9 +643,15 @@
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
-    // background samples, kept small: brightness as bytes, colour as signed bytes
-    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
-      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
+    // background samples, kept small: brightness as bytes, colour as signed bytes. Plain loops:
+    // TypedArray.from with a function per pixel took 150 ms a frame, most of this pass.
+    const bytes = (a, T, lo, hi) => {
+      const o = new T(a.length);
+      for (let p = 0; p < a.length; p++) { const v = Math.round(a[p]); o[p] = v < lo ? lo : v > hi ? hi : v; }
+      return o;
+    };
+    const keep = (k, x) => samples.push({ k, g: bytes(x.g, Uint8Array, 0, 255),
+      u: x.u ? bytes(x.u, Int8Array, -128, 127) : null, v: x.v ? bytes(x.v, Int8Array, -128, 127) : null });
     // Keyframes decode on their own, so a spread of them is enough to learn the background, without
     // decoding the whole video for it (phones put one every 30 frames: about half the time saved).
     const keys = R.runKeys && R.keys ? R.keys.filter((i, j, all) => j % Math.max(1, Math.ceil(all.length / 60)) === 0) : [];

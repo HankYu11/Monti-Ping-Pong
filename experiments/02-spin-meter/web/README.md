@@ -319,6 +319,24 @@ Times are from the test browser with phone-like keyframes.
 
 The ball search, about 22 ms a frame, is now nearly all the time. Decoding alone is about 5–6 ms of it.
 
+**The ball search, profiled** (clip O, 1,307 frames, 3 workers on a 4-core test machine):
+- Copying a frame out of the decoder takes 2.5 ms. The main thread then waits 52 ms per frame for a free worker, so the workers set the pace.
+- Per frame, in a worker:
+
+| Step | Before | After |
+|---|---|---|
+| Brightness to half size | 7.2 ms | 7.0 ms |
+| Colour to half size | 6.5 ms | 6.9 ms |
+| Even out flicker | 9.4 ms | 6.4 ms (no full corrected copy) |
+| Moving mask | 14.3 ms | 14.6 ms (one plain loop; the arithmetic itself is ~10 ms) |
+| Remove specks | 6.3 ms | 6.8 ms |
+| Group into blobs | 12.4 ms | 3.1 ms (work arrays reused, not 2 × 2 MB a frame) |
+| **Total** | **56 ms** | **45 ms** |
+
+- **Same arithmetic.** The mask loop includes the float32 rounding the old code had, so all labelled readings are identical.
+- **Totals for O:** about 45 s → 32.0 s (background) → 26.7 s (search).
+- **More workers.** Up to 7 now, one per core but one: phones have 8–9 cores, so the search should scale there. That isn't tested on a phone yet.
+
 **Automatic trimming: tried, not reliable yet.**
 - *Compressed frame sizes* (free to read): motion during the serve is only 1.0–1.1× the clip's usual level, and 4–12% of frames are busier.
 - *White ball-like spots in keyframes:* 18–33 during a serve, but just as many elsewhere (up to 46): the ball basket, shirts, hands.

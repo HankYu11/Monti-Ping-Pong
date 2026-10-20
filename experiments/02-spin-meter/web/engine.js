@@ -149,8 +149,11 @@
   const opening = (m, W, H, k) => morph(morph(m, W, H, k, k, "erode"), W, H, k, k, "dilate");
   const closing = (m, W, H, k) => morph(morph(m, W, H, k, k, "dilate"), W, H, k, k, "erode");
 
+  let compBuf = null;                         // work arrays, reused from frame to frame
   function components(mask, W, H, keepPixels) {   // 8-connected; stats like cv2
-    const lab = new Int32Array(W * H), comps = [], stack = new Int32Array(W * H);
+    if (!compBuf || compBuf.lab.length !== W * H) compBuf = { lab: new Int32Array(W * H), stack: new Int32Array(W * H) };
+    const { lab, stack } = compBuf, comps = [];
+    lab.fill(0);
     let next = 0;
     for (let p0 = 0; p0 < W * H; p0++) {
       if (!mask[p0] || lab[p0]) continue;
@@ -212,7 +215,7 @@
     }
     return out;
   }
-  function deflickerOne(g, bg, W, H, rowStep) {   // per-row brightness ratio, smoothed vertically
+  function deflickerRows(g, bg, W, H, rowStep) {  // per-row brightness ratio, smoothed vertically
     const ratio = new Float64Array(H), tmp = new Float64Array(Math.ceil(W / rowStep));
     for (let y = 0; y < H; y++) {
       let n = 0;
@@ -220,8 +223,12 @@
       ratio[y] = medianInPlace(tmp, n);
     }
     const sm = blur1d(ratio, 9, 73);
-    const out = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) { const r = Math.max(sm[y], 0.2); for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
+    for (let y = 0; y < H; y++) sm[y] = Math.max(sm[y], 0.2);
+    return sm;
+  }
+  function deflickerOne(g, bg, W, H, rowStep) {
+    const rows = deflickerRows(g, bg, W, H, rowStep), out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) { const r = rows[y]; for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
     return out;
   }
 
@@ -546,9 +553,23 @@
       if (job.pu) { u = chromaHalf(P, job.pu, W, H); v = chromaHalf(P, job.pv, W, H); }
     }
     const col = u && bgU ? { u, v, bgU, bgV } : null;
-    const d = deflickerOne(g, bgf, sw, sh, 2);
-    const mask = new Uint8Array(sw * sh);
-    for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(clamp(Math.floor(d[p]), 0, 255), bg[p], col, p) > 30 ? 1 : 0;
+    // moving pixels: brightness (evened out for light flicker) or colour differs from the background.
+    // One plain loop, the same arithmetic as deflickerOne + colourDiff (a helper call per pixel was
+    // the slowest part of the search).
+    const rows = deflickerRows(g, bgf, sw, sh, 2), mask = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) {
+      const r = rows[y];
+      for (let p = y * sw, end = p + sw; p < end; p++) {
+        let gv = Math.floor(Math.fround(g[p] / r));
+        gv = gv < 0 ? 0 : gv > 255 ? 255 : gv;
+        let d = Math.abs(gv - bg[p]);
+        if (col) {
+          const du = CHROMA_GAIN * Math.abs(u[p] - bgU[p]), dv = CHROMA_GAIN * Math.abs(v[p] - bgV[p]);
+          if (du > d) d = du; if (dv > d) d = dv;
+        }
+        mask[p] = d > 30 ? 1 : 0;
+      }
+    }
     const m2 = opening(mask, sw, sh, 2);
     const fc = [];
     for (const c of components(m2, sw, sh, false)) {
@@ -563,7 +584,8 @@
   // workers are unavailable, e.g. blocked by the page's security policy.
   async function scanPool(ctx) {
     if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof document === "undefined") return null;
-    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    // one core stays with the decoder; phones have 8 or more (the search is limited by this)
+    const n = Math.max(1, Math.min(7, (navigator.hardwareConcurrency || 2) - 1));
     if (n < 2) return null;
     let url = null;
     const workers = [];
@@ -593,6 +615,7 @@
         w.onmessage = (e) => { store(e.data.i, e.data.fc); free(w); };
         w.postMessage({ job }, [job.buf ? job.buf.buffer : job.g.buffer]);
       },
+      size: workers.length,
       async drain() { while (busy > 0) { if (failure) throw failure; await new Promise((r) => waiting.push(r)); } if (failure) throw failure; },
       close() { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); },
     };
@@ -700,6 +723,7 @@
         else store(i, scanFrame(job, scanCtx));
       });
       if (pool) await pool.drain();
+      DBG.workers = pool ? pool.size : 0;
     } finally { if (pool) pool.close(); }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];

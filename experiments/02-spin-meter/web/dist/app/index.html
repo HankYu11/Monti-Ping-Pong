@@ -143,6 +143,13 @@ td.num { text-align: right; }
 .btn { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--table); background: var(--table); color: var(--table-ink); cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--table); }
 .btn:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.trim { display: grid; gap: 10px; }
+.trim video { width: 100%; max-height: 55vh; background: #000; border-radius: 10px; display: block; }
+.trimbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trimbar .step { min-width: 44px; }
+.trimbar.marks { display: grid; grid-template-columns: auto 1fr 1fr auto; }
+.trimbar.marks .btn { padding-inline: 10px; white-space: nowrap; }
 td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
 /* how-to */
@@ -164,7 +171,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.6 · build f78fa25</p>
+    <p class="note num">Version 2.8 · build 27a2026</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -202,6 +209,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span data-app-hint hidden>Or in Photos: open the video, tap Share, choose Spin Meter.</span>
       <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
+    <div class="trim" id="trimbox" hidden>
+      <video id="tv" controls playsinline muted preload="auto"></video>
+      <div class="trimbar marks">
+        <button class="btn ghost step" id="tprev" type="button" aria-label="Back one frame">‹</button>
+        <button class="btn ghost" id="tstart" type="button">Start</button>
+        <button class="btn ghost" id="tend" type="button">End</button>
+        <button class="btn ghost step" id="tnext" type="button" aria-label="Forward one frame">›</button>
+      </div>
+      <p class="note" id="trimtext"></p>
+      <div class="trimbar">
+        <button class="btn" id="measure" type="button">Measure</button>
+        <button class="btn ghost" id="twhole" type="button" hidden>Use the whole video</button>
+      </div>
+    </div>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
       <p class="note" id="step">Starting…</p>
@@ -500,8 +521,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   const opening = (m, W, H, k) => morph(morph(m, W, H, k, k, "erode"), W, H, k, k, "dilate");
   const closing = (m, W, H, k) => morph(morph(m, W, H, k, k, "dilate"), W, H, k, k, "erode");
 
+  let compBuf = null;                         // work arrays, reused from frame to frame
   function components(mask, W, H, keepPixels) {   // 8-connected; stats like cv2
-    const lab = new Int32Array(W * H), comps = [], stack = new Int32Array(W * H);
+    if (!compBuf || compBuf.lab.length !== W * H) compBuf = { lab: new Int32Array(W * H), stack: new Int32Array(W * H) };
+    const { lab, stack } = compBuf, comps = [];
+    lab.fill(0);
     let next = 0;
     for (let p0 = 0; p0 < W * H; p0++) {
       if (!mask[p0] || lab[p0]) continue;
@@ -563,7 +587,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
     return out;
   }
-  function deflickerOne(g, bg, W, H, rowStep) {   // per-row brightness ratio, smoothed vertically
+  function deflickerRows(g, bg, W, H, rowStep) {  // per-row brightness ratio, smoothed vertically
     const ratio = new Float64Array(H), tmp = new Float64Array(Math.ceil(W / rowStep));
     for (let y = 0; y < H; y++) {
       let n = 0;
@@ -571,8 +595,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       ratio[y] = medianInPlace(tmp, n);
     }
     const sm = blur1d(ratio, 9, 73);
-    const out = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) { const r = Math.max(sm[y], 0.2); for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
+    for (let y = 0; y < H; y++) sm[y] = Math.max(sm[y], 0.2);
+    return sm;
+  }
+  function deflickerOne(g, bg, W, H, rowStep) {
+    const rows = deflickerRows(g, bg, W, H, rowStep), out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) { const r = rows[y]; for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
     return out;
   }
 
@@ -694,9 +722,45 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
     const presOfTs = new Map(), decOfPres = new Array(samples.length);
     order.forEach(([t, k], i) => { presOfTs.set(t, i); decOfPres[i] = k; });
-    const Wc = track.video.width, Hc = track.video.height;
+    const Wc = track.video.width, Hc = track.video.height, presT = order.map(([t]) => t);
     return {
       kind: "decoder", n: samples.length, W: Wc, H: Hc,
+      // frames that decode on their own (keyframes), by frame number
+      keys: samples.map((x, k) => (x.is_sync ? presOfTs.get(ts[k]) : -1)).filter((i) => i >= 0).sort((u, v) => u - v),
+      async runKeys(list, cb) {               // decode just these keyframes, each on its own
+        let failure = null, pending = 0, wake = null;
+        const want = new Set(list);
+        const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
+        const wait = () => new Promise((r) => { wake = r; setTimeout(kick, 50); });
+        const dec = new VideoDecoder({
+          output: (frame) => {
+            const i = presOfTs.get(frame.timestamp);
+            if (i === undefined || !want.has(i) || failure) { frame.close(); return; }
+            pending++;
+            Promise.resolve().then(() => cb(i, frame)).catch((e) => { failure = failure || e; })
+              .finally(() => { frame.close(); pending--; kick(); });
+          },
+          error: (e) => { failure = e; kick(); },
+        });
+        dec.ondequeue = kick;
+        dec.configure(config);
+        for (const i of list) {
+          if (failure) break;
+          const k = decOfPres[i], x = samples[k];
+          if (!x.is_sync) continue;
+          while ((dec.decodeQueueSize > 4 || pending > 2) && !failure) await wait();
+          dec.decode(new EncodedVideoChunk({ type: "key", timestamp: ts[k], duration: Math.round(1e6 * x.duration / x.timescale), data: x.data }));
+        }
+        if (!failure) { try { await dec.flush(); } catch (e) { failure = failure || e; } }
+        while (pending > 0) await wait();
+        try { dec.close(); } catch (e) { /* already closed after an error */ }
+        if (failure) throw failure;
+      },
+      indexAt(sec) {                          // first frame shown at or after this time in the file
+        const t = sec * 1e6 - 1000; let lo = 0, hi = presT.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (presT[m] < t) lo = m + 1; else hi = m; }
+        return Math.min(lo, presT.length);
+      },
       async run(from, to, cb) {
         to = Math.min(to, samples.length);
         let dFrom = Infinity, dTo = -1;
@@ -736,6 +800,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     };
   }
 
+  // Only part of a video: frames a..b-1, numbered from 0 (decoding starts at the keyframe before a)
+  function trimReader(R, a, b) {
+    return Object.assign({}, R, { n: b - a, trimFrom: a,
+      run: (from, to, cb) => R.run(from + a, Math.min(to + a, b), (i, src) => cb(i - a, src)),
+      keys: R.keys && R.keys.filter((i) => i >= a && i < b).map((i) => i - a),
+      runKeys: R.runKeys && ((list, cb) => R.runKeys(list.map((i) => i + a), (i, src) => cb(i - a, src))) });
+  }
   async function seekReader(file, playbackFps, nFramesHint) {   // fallback: slow but universal
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -754,6 +825,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
+      indexAt: (sec) => clamp(Math.round(sec * playbackFps), 0, n),
       async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
@@ -853,9 +925,23 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (job.pu) { u = chromaHalf(P, job.pu, W, H); v = chromaHalf(P, job.pv, W, H); }
     }
     const col = u && bgU ? { u, v, bgU, bgV } : null;
-    const d = deflickerOne(g, bgf, sw, sh, 2);
-    const mask = new Uint8Array(sw * sh);
-    for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(clamp(Math.floor(d[p]), 0, 255), bg[p], col, p) > 30 ? 1 : 0;
+    // moving pixels: brightness (evened out for light flicker) or colour differs from the background.
+    // One plain loop, the same arithmetic as deflickerOne + colourDiff (a helper call per pixel was
+    // the slowest part of the search).
+    const rows = deflickerRows(g, bgf, sw, sh, 2), mask = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) {
+      const r = rows[y];
+      for (let p = y * sw, end = p + sw; p < end; p++) {
+        let gv = Math.floor(Math.fround(g[p] / r));
+        gv = gv < 0 ? 0 : gv > 255 ? 255 : gv;
+        let d = Math.abs(gv - bg[p]);
+        if (col) {
+          const du = CHROMA_GAIN * Math.abs(u[p] - bgU[p]), dv = CHROMA_GAIN * Math.abs(v[p] - bgV[p]);
+          if (du > d) d = du; if (dv > d) d = dv;
+        }
+        mask[p] = d > 30 ? 1 : 0;
+      }
+    }
     const m2 = opening(mask, sw, sh, 2);
     const fc = [];
     for (const c of components(m2, sw, sh, false)) {
@@ -870,7 +956,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   // workers are unavailable, e.g. blocked by the page's security policy.
   async function scanPool(ctx) {
     if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof document === "undefined") return null;
-    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    // one core stays with the decoder; phones have 8 or more (the search is limited by this)
+    const n = Math.max(1, Math.min(7, (navigator.hardwareConcurrency || 2) - 1));
     if (n < 2) return null;
     let url = null;
     const workers = [];
@@ -900,6 +987,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         w.onmessage = (e) => { store(e.data.i, e.data.fc); free(w); };
         w.postMessage({ job }, [job.buf ? job.buf.buffer : job.g.buffer]);
       },
+      size: workers.length,
       async drain() { while (busy > 0) { if (failure) throw failure; await new Promise((r) => waiting.push(r)); } if (failure) throw failure; },
       close() { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); },
     };
@@ -946,14 +1034,26 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
-    const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
+    const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H), tFind = performance.now();
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
-    // background samples, kept small: brightness as bytes, colour as signed bytes
-    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
-      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
-    if (R.kind === "seek") {
+    // background samples, kept small: brightness as bytes, colour as signed bytes. Plain loops:
+    // TypedArray.from with a function per pixel took 150 ms a frame, most of this pass.
+    const bytes = (a, T, lo, hi) => {
+      const o = new T(a.length);
+      for (let p = 0; p < a.length; p++) { const v = Math.round(a[p]); o[p] = v < lo ? lo : v > hi ? hi : v; }
+      return o;
+    };
+    const keep = (k, x) => samples.push({ k, g: bytes(x.g, Uint8Array, 0, 255),
+      u: x.u ? bytes(x.u, Int8Array, -128, 127) : null, v: x.v ? bytes(x.v, Int8Array, -128, 127) : null });
+    // Keyframes decode on their own, so a spread of them is enough to learn the background, without
+    // decoding the whole video for it (phones put one every 30 frames: about half the time saved).
+    const keys = R.runKeys && R.keys ? R.keys.filter((i, j, all) => j % Math.max(1, Math.ceil(all.length / 60)) === 0) : [];
+    if (keys.length >= 12) {
+      await R.runKeys(keys, async (k, src) => { keep(k, await grabHalf(ctx, src, R.W, R.H)); progress("Learning the background", 0.1 * samples.length / keys.length); });
+      samples.sort((u, v) => u.k - v.k);
+    } else if (R.kind === "seek") {
       for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => keep(k, await grabHalf(ctx, src, R.W, R.H)));
     } else {
       await R.run(0, nFrames, async (k, src) => {
@@ -961,6 +1061,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
+    DBG.time = { background: +((performance.now() - tFind) / 1000).toFixed(1) };
     const withColour = samples.every((s) => s.u);
     function background(set) {               // still background from a set of samples
       const bgf = medianFrames(set.map((s) => s.g), sw * sh);
@@ -994,6 +1095,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         else store(i, scanFrame(job, scanCtx));
       });
       if (pool) await pool.drain();
+      DBG.workers = pool ? pool.size : 0;
     } finally { if (pool) pool.close(); }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];
@@ -1552,6 +1654,8 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
       B.push(scale(b, 1 / norm(b)));
     }
+    // troubleshooting: where the black half pointed in each frame (x right, y down, z toward the camera)
+    DBG.poles = (DBG.poles || []).concat([rows.map((rw, k) => [rw.i, ...B[k].map((x) => +x.toFixed(2)), +rw.r.toFixed(1)])]);
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
     if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
@@ -1891,6 +1995,44 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     });
   }
 
+  // Off the paddle vs after the bounce, back or top. A bounce can weaken backspin but not turn a
+  // strong backspin into a strong topspin, nor topspin into backspin. When the two disagree, one of
+  // them is mirrored front to back: the black half mostly swung sideways in the picture, and whether
+  // it faced toward or away from the camera on the way (the only clue to over-the-top vs
+  // under-the-bottom) was misjudged. Clip S: a smeared ball in front of a dark wall read backspin.
+  // Colour dots show the turn directly, so a reading with them decides; without, neither is trusted.
+  function mirrored(r) {                      // the same spin seen in a front-to-back mirror
+    const axis = [r.axis[0], r.axis[1], -r.axis[2]], c = spinComponents(r.rps, axis, r.flight.dir);
+    Object.assign(r, { axis, spinType: spinLabel(r.rps, c), backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift),
+      sidespin: Math.abs(c.curve), sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
+      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true });
+  }
+  function mirrorCheck(readings) {
+    const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
+    const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
+    if (!pad || !bnc) return;
+    const strong = (r) => Math.abs(r.lift) >= Math.max(8, 0.4 * r.rps);
+    if (!strong(pad) || !strong(bnc) || Math.sign(pad.lift) === Math.sign(bnc.lift)) return;
+    const word = (r) => (r.lift > 0 ? "backspin" : "topspin");
+    const was = `Off the paddle read as ${word(pad)}, after the bounce as ${word(bnc)}: a bounce can't do that, so one was seen mirrored front to back.`;
+    const pd = pad.marking === "dots", bd = bnc.marking === "dots";
+    if (pd !== bd) {
+      const wrong = pd ? bnc : pad;
+      mirrored(wrong);
+      wrong.issues = (wrong.issues || []).concat({ text: `${was} The colour dots ${pd ? "off the paddle" : "after the bounce"} show which way it turned, so this one was turned round to match.` });
+      return;
+    }
+    const side = Math.max(pad.sidespin, bnc.sidespin), dir = pad.sideCurves !== "none" ? pad.sideCurves : bnc.sideCurves;
+    for (const r of [pad, bnc]) {
+      r.reliable = false;
+      r.issues = (r.issues || []).concat({
+        text: `${was} The black half mostly swung sideways in the picture, and whether it faced toward or away from the camera, which tells topspin from backspin, wasn't clear.` +
+          (side >= 1 ? ` The sidespin holds either way: about ${Math.round(side * 60).toLocaleString("en-US")} RPM, curving ${dir}.` : ""),
+        fix: "Colour dots big and strong enough to be seen settle it. A lighter background behind the first part of the flight, and more light, make the black half easier to judge.",
+      });
+    }
+  }
+
   // ------------------------------------------------------------ main entry
   // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
@@ -1910,13 +2052,20 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
+    // the part of the video the user picked (times in the file, as the video player shows them)
+    if (opts.trim && R.indexAt) {
+      const a = R.indexAt(Math.max(0, opts.trim.start || 0)), b = opts.trim.end ? Math.max(a + 1, R.indexAt(opts.trim.end)) : R.n;
+      if (a > 0 || b < R.n) { DBG.trim = { from: a, to: b, of: R.n }; R = trimReader(R, a, b); }
+    }
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
       const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
       checks.push(flightCheck(segs)); emit();
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
+      const tFound = performance.now();
+      DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
+      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation, trimFrom: R.trimFrom || 0 };
       DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
@@ -1930,6 +2079,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           readings.push(Object.assign(one, { phase: part.kind }));
         }
         crossCheck(readings);
+        mirrorCheck(readings);
         // the headline: off the paddle when it reads clearly, else the clearest stretch
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
@@ -2199,7 +2349,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.6 (f78fa25)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "2.8 (27a2026)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -2232,19 +2382,62 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
 
   // ---------------------------------------------------------- analysis
-  $("file").addEventListener("change", async (ev) => {
+  $("file").addEventListener("change", (ev) => {
     const file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    try { await analyseFile(file); } finally { ev.target.value = ""; }
+    if (file) openTrim(file);
+    ev.target.value = "";
   });
-  window.SpinPage = { analyseFile };       // the app build hands shared videos in here
+  window.SpinPage = { analyseFile: openTrim };   // the app build hands shared videos in here
 
-  async function analyseFile(file) {
+  // ---------------------------------------------------------- trim: measure only the part with the serve
+  // Decoding every frame is most of the work, so a few seconds around the serve instead of a whole
+  // minute is many times faster, and other ball movements in the video can't be mistaken for it.
+  const tv = $("tv"), STEP = 1 / 30;       // phone slow motion is stored as 30 frames per second of video
+  let pendingFile = null, trim = { start: null, end: null }, tvUrl = null, tvBroken = false;
+  const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  function openTrim(file) {
+    pendingFile = file; trim = { start: null, end: null }; tvBroken = false;
+    if (tvUrl) URL.revokeObjectURL(tvUrl);
+    tvUrl = URL.createObjectURL(file); tv.src = tvUrl;
+    $("error").hidden = true; $("trimbox").hidden = false;
+    showTrim();
+    $("trimbox").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  tv.addEventListener("loadedmetadata", showTrim);
+  tv.addEventListener("error", () => { tvBroken = true; showTrim(); });
+  function showTrim() {
+    const dur = tv.duration, ok = !tvBroken && Number.isFinite(dur);
+    for (const id of ["tprev", "tstart", "tend", "tnext"]) $(id).disabled = !ok;
+    const a = trim.start != null ? trim.start : 0, b = trim.end != null ? trim.end : dur;
+    const set = trim.start != null || trim.end != null;
+    $("twhole").hidden = !set;
+    $("measure").textContent = set ? "Measure this part" : "Measure the whole video";
+    if (!ok) { $("trimtext").textContent = tvBroken ? "This browser can't show the video, so the whole video will be measured." : "Loading the video…"; return; }
+    $("trimtext").textContent = !set
+      ? `${clock(dur)} of video. To save time, play or drag to just before the serve and tap Start, then just after the bounce and tap End.`
+      : b > a ? `Measuring ${clock(a)} to ${clock(b)}: ${(b - a).toFixed(1)} s of the ${dur.toFixed(1)} s video, about ${Math.round((b - a) / STEP)} frames.`
+      : "The end is before the start: move one of them.";
+    $("measure").disabled = set && !(b > a);
+  }
+  $("tstart").addEventListener("click", () => { trim.start = tv.currentTime; showTrim(); });
+  $("tend").addEventListener("click", () => { trim.end = tv.currentTime; showTrim(); });
+  $("twhole").addEventListener("click", () => { trim = { start: null, end: null }; showTrim(); });
+  for (const [id, d] of [["tprev", -1], ["tnext", 1]])
+    $(id).addEventListener("click", () => { tv.pause(); tv.currentTime = Math.max(0, Math.min(tv.duration || 0, tv.currentTime + d * STEP)); });
+  $("measure").addEventListener("click", async () => {
+    if (!pendingFile) return;
+    tv.pause();
+    const range = trim.start != null || trim.end != null ? { start: trim.start || 0, end: trim.end != null ? trim.end : undefined } : null;
+    $("trimbox").hidden = true;
+    await analyseFile(pendingFile, range);
+  });
+
+  async function analyseFile(file, range = null) {
     $("error").hidden = true; $("progress").hidden = false; renderChecks([]); $("bar").style.width = "0%";
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several", trim: range,
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -2313,7 +2506,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="f78fa25" hidden></span>
+<span id="app-build" data-build="27a2026" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

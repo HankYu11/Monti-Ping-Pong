@@ -149,8 +149,11 @@
   const opening = (m, W, H, k) => morph(morph(m, W, H, k, k, "erode"), W, H, k, k, "dilate");
   const closing = (m, W, H, k) => morph(morph(m, W, H, k, k, "dilate"), W, H, k, k, "erode");
 
+  let compBuf = null;                         // work arrays, reused from frame to frame
   function components(mask, W, H, keepPixels) {   // 8-connected; stats like cv2
-    const lab = new Int32Array(W * H), comps = [], stack = new Int32Array(W * H);
+    if (!compBuf || compBuf.lab.length !== W * H) compBuf = { lab: new Int32Array(W * H), stack: new Int32Array(W * H) };
+    const { lab, stack } = compBuf, comps = [];
+    lab.fill(0);
     let next = 0;
     for (let p0 = 0; p0 < W * H; p0++) {
       if (!mask[p0] || lab[p0]) continue;
@@ -212,7 +215,7 @@
     }
     return out;
   }
-  function deflickerOne(g, bg, W, H, rowStep) {   // per-row brightness ratio, smoothed vertically
+  function deflickerRows(g, bg, W, H, rowStep) {  // per-row brightness ratio, smoothed vertically
     const ratio = new Float64Array(H), tmp = new Float64Array(Math.ceil(W / rowStep));
     for (let y = 0; y < H; y++) {
       let n = 0;
@@ -220,8 +223,12 @@
       ratio[y] = medianInPlace(tmp, n);
     }
     const sm = blur1d(ratio, 9, 73);
-    const out = new Float32Array(W * H);
-    for (let y = 0; y < H; y++) { const r = Math.max(sm[y], 0.2); for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
+    for (let y = 0; y < H; y++) sm[y] = Math.max(sm[y], 0.2);
+    return sm;
+  }
+  function deflickerOne(g, bg, W, H, rowStep) {
+    const rows = deflickerRows(g, bg, W, H, rowStep), out = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) { const r = rows[y]; for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
     return out;
   }
 
@@ -343,9 +350,45 @@
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
     const presOfTs = new Map(), decOfPres = new Array(samples.length);
     order.forEach(([t, k], i) => { presOfTs.set(t, i); decOfPres[i] = k; });
-    const Wc = track.video.width, Hc = track.video.height;
+    const Wc = track.video.width, Hc = track.video.height, presT = order.map(([t]) => t);
     return {
       kind: "decoder", n: samples.length, W: Wc, H: Hc,
+      // frames that decode on their own (keyframes), by frame number
+      keys: samples.map((x, k) => (x.is_sync ? presOfTs.get(ts[k]) : -1)).filter((i) => i >= 0).sort((u, v) => u - v),
+      async runKeys(list, cb) {               // decode just these keyframes, each on its own
+        let failure = null, pending = 0, wake = null;
+        const want = new Set(list);
+        const kick = () => { if (wake) { const w = wake; wake = null; w(); } };
+        const wait = () => new Promise((r) => { wake = r; setTimeout(kick, 50); });
+        const dec = new VideoDecoder({
+          output: (frame) => {
+            const i = presOfTs.get(frame.timestamp);
+            if (i === undefined || !want.has(i) || failure) { frame.close(); return; }
+            pending++;
+            Promise.resolve().then(() => cb(i, frame)).catch((e) => { failure = failure || e; })
+              .finally(() => { frame.close(); pending--; kick(); });
+          },
+          error: (e) => { failure = e; kick(); },
+        });
+        dec.ondequeue = kick;
+        dec.configure(config);
+        for (const i of list) {
+          if (failure) break;
+          const k = decOfPres[i], x = samples[k];
+          if (!x.is_sync) continue;
+          while ((dec.decodeQueueSize > 4 || pending > 2) && !failure) await wait();
+          dec.decode(new EncodedVideoChunk({ type: "key", timestamp: ts[k], duration: Math.round(1e6 * x.duration / x.timescale), data: x.data }));
+        }
+        if (!failure) { try { await dec.flush(); } catch (e) { failure = failure || e; } }
+        while (pending > 0) await wait();
+        try { dec.close(); } catch (e) { /* already closed after an error */ }
+        if (failure) throw failure;
+      },
+      indexAt(sec) {                          // first frame shown at or after this time in the file
+        const t = sec * 1e6 - 1000; let lo = 0, hi = presT.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (presT[m] < t) lo = m + 1; else hi = m; }
+        return Math.min(lo, presT.length);
+      },
       async run(from, to, cb) {
         to = Math.min(to, samples.length);
         let dFrom = Infinity, dTo = -1;
@@ -385,6 +428,13 @@
     };
   }
 
+  // Only part of a video: frames a..b-1, numbered from 0 (decoding starts at the keyframe before a)
+  function trimReader(R, a, b) {
+    return Object.assign({}, R, { n: b - a, trimFrom: a,
+      run: (from, to, cb) => R.run(from + a, Math.min(to + a, b), (i, src) => cb(i - a, src)),
+      keys: R.keys && R.keys.filter((i) => i >= a && i < b).map((i) => i - a),
+      runKeys: R.runKeys && ((list, cb) => R.runKeys(list.map((i) => i + a), (i, src) => cb(i - a, src))) });
+  }
   async function seekReader(file, playbackFps, nFramesHint) {   // fallback: slow but universal
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -403,6 +453,7 @@
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
+      indexAt: (sec) => clamp(Math.round(sec * playbackFps), 0, n),
       async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
@@ -502,9 +553,23 @@
       if (job.pu) { u = chromaHalf(P, job.pu, W, H); v = chromaHalf(P, job.pv, W, H); }
     }
     const col = u && bgU ? { u, v, bgU, bgV } : null;
-    const d = deflickerOne(g, bgf, sw, sh, 2);
-    const mask = new Uint8Array(sw * sh);
-    for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(clamp(Math.floor(d[p]), 0, 255), bg[p], col, p) > 30 ? 1 : 0;
+    // moving pixels: brightness (evened out for light flicker) or colour differs from the background.
+    // One plain loop, the same arithmetic as deflickerOne + colourDiff (a helper call per pixel was
+    // the slowest part of the search).
+    const rows = deflickerRows(g, bgf, sw, sh, 2), mask = new Uint8Array(sw * sh);
+    for (let y = 0; y < sh; y++) {
+      const r = rows[y];
+      for (let p = y * sw, end = p + sw; p < end; p++) {
+        let gv = Math.floor(Math.fround(g[p] / r));
+        gv = gv < 0 ? 0 : gv > 255 ? 255 : gv;
+        let d = Math.abs(gv - bg[p]);
+        if (col) {
+          const du = CHROMA_GAIN * Math.abs(u[p] - bgU[p]), dv = CHROMA_GAIN * Math.abs(v[p] - bgV[p]);
+          if (du > d) d = du; if (dv > d) d = dv;
+        }
+        mask[p] = d > 30 ? 1 : 0;
+      }
+    }
     const m2 = opening(mask, sw, sh, 2);
     const fc = [];
     for (const c of components(m2, sw, sh, false)) {
@@ -519,7 +584,8 @@
   // workers are unavailable, e.g. blocked by the page's security policy.
   async function scanPool(ctx) {
     if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof document === "undefined") return null;
-    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    // one core stays with the decoder; phones have 8 or more (the search is limited by this)
+    const n = Math.max(1, Math.min(7, (navigator.hardwareConcurrency || 2) - 1));
     if (n < 2) return null;
     let url = null;
     const workers = [];
@@ -549,6 +615,7 @@
         w.onmessage = (e) => { store(e.data.i, e.data.fc); free(w); };
         w.postMessage({ job }, [job.buf ? job.buf.buffer : job.g.buffer]);
       },
+      size: workers.length,
       async drain() { while (busy > 0) { if (failure) throw failure; await new Promise((r) => waiting.push(r)); } if (failure) throw failure; },
       close() { workers.forEach((w) => w.terminate()); URL.revokeObjectURL(url); },
     };
@@ -595,14 +662,26 @@
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
-    const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H);
+    const nFrames = R.n, { ctx } = makeCanvas(R.W, R.H), tFind = performance.now();
     const stride = Math.max(4, Math.ceil(nFrames / 40));
     const samples = [];
     let sw = Math.floor(R.W / 2), sh = Math.floor(R.H / 2);
-    // background samples, kept small: brightness as bytes, colour as signed bytes
-    const keep = (k, x) => samples.push({ k, g: Uint8Array.from(x.g, (v) => clamp(Math.round(v), 0, 255)),
-      u: x.u ? Int8Array.from(x.u, (v) => clamp(Math.round(v), -128, 127)) : null, v: x.v ? Int8Array.from(x.v, (v) => clamp(Math.round(v), -128, 127)) : null });
-    if (R.kind === "seek") {
+    // background samples, kept small: brightness as bytes, colour as signed bytes. Plain loops:
+    // TypedArray.from with a function per pixel took 150 ms a frame, most of this pass.
+    const bytes = (a, T, lo, hi) => {
+      const o = new T(a.length);
+      for (let p = 0; p < a.length; p++) { const v = Math.round(a[p]); o[p] = v < lo ? lo : v > hi ? hi : v; }
+      return o;
+    };
+    const keep = (k, x) => samples.push({ k, g: bytes(x.g, Uint8Array, 0, 255),
+      u: x.u ? bytes(x.u, Int8Array, -128, 127) : null, v: x.v ? bytes(x.v, Int8Array, -128, 127) : null });
+    // Keyframes decode on their own, so a spread of them is enough to learn the background, without
+    // decoding the whole video for it (phones put one every 30 frames: about half the time saved).
+    const keys = R.runKeys && R.keys ? R.keys.filter((i, j, all) => j % Math.max(1, Math.ceil(all.length / 60)) === 0) : [];
+    if (keys.length >= 12) {
+      await R.runKeys(keys, async (k, src) => { keep(k, await grabHalf(ctx, src, R.W, R.H)); progress("Learning the background", 0.1 * samples.length / keys.length); });
+      samples.sort((u, v) => u.k - v.k);
+    } else if (R.kind === "seek") {
       for (let i = 0; i < nFrames; i += stride) await R.run(i, i + 1, async (k, src) => keep(k, await grabHalf(ctx, src, R.W, R.H)));
     } else {
       await R.run(0, nFrames, async (k, src) => {
@@ -610,6 +689,7 @@
         if (k % 8 === 0) progress("Learning the background", 0.1 * k / nFrames);
       });
     }
+    DBG.time = { background: +((performance.now() - tFind) / 1000).toFixed(1) };
     const withColour = samples.every((s) => s.u);
     function background(set) {               // still background from a set of samples
       const bgf = medianFrames(set.map((s) => s.g), sw * sh);
@@ -643,6 +723,7 @@
         else store(i, scanFrame(job, scanCtx));
       });
       if (pool) await pool.drain();
+      DBG.workers = pool ? pool.size : 0;
     } finally { if (pool) pool.close(); }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];
@@ -1201,6 +1282,8 @@
       let b = n > 1e-6 ? [rho * mx / n, rho * my / n, bz] : [0, 0, Math.sign(bz)];
       B.push(scale(b, 1 / norm(b)));
     }
+    // troubleshooting: where the black half pointed in each frame (x right, y down, z toward the camera)
+    DBG.poles = (DBG.poles || []).concat([rows.map((rw, k) => [rw.i, ...B[k].map((x) => +x.toFixed(2)), +rw.r.toFixed(1)])]);
     const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
     if (poleFit) poleFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
@@ -1540,6 +1623,44 @@
     });
   }
 
+  // Off the paddle vs after the bounce, back or top. A bounce can weaken backspin but not turn a
+  // strong backspin into a strong topspin, nor topspin into backspin. When the two disagree, one of
+  // them is mirrored front to back: the black half mostly swung sideways in the picture, and whether
+  // it faced toward or away from the camera on the way (the only clue to over-the-top vs
+  // under-the-bottom) was misjudged. Clip S: a smeared ball in front of a dark wall read backspin.
+  // Colour dots show the turn directly, so a reading with them decides; without, neither is trusted.
+  function mirrored(r) {                      // the same spin seen in a front-to-back mirror
+    const axis = [r.axis[0], r.axis[1], -r.axis[2]], c = spinComponents(r.rps, axis, r.flight.dir);
+    Object.assign(r, { axis, spinType: spinLabel(r.rps, c), backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift),
+      sidespin: Math.abs(c.curve), sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
+      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true });
+  }
+  function mirrorCheck(readings) {
+    const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
+    const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
+    if (!pad || !bnc) return;
+    const strong = (r) => Math.abs(r.lift) >= Math.max(8, 0.4 * r.rps);
+    if (!strong(pad) || !strong(bnc) || Math.sign(pad.lift) === Math.sign(bnc.lift)) return;
+    const word = (r) => (r.lift > 0 ? "backspin" : "topspin");
+    const was = `Off the paddle read as ${word(pad)}, after the bounce as ${word(bnc)}: a bounce can't do that, so one was seen mirrored front to back.`;
+    const pd = pad.marking === "dots", bd = bnc.marking === "dots";
+    if (pd !== bd) {
+      const wrong = pd ? bnc : pad;
+      mirrored(wrong);
+      wrong.issues = (wrong.issues || []).concat({ text: `${was} The colour dots ${pd ? "off the paddle" : "after the bounce"} show which way it turned, so this one was turned round to match.` });
+      return;
+    }
+    const side = Math.max(pad.sidespin, bnc.sidespin), dir = pad.sideCurves !== "none" ? pad.sideCurves : bnc.sideCurves;
+    for (const r of [pad, bnc]) {
+      r.reliable = false;
+      r.issues = (r.issues || []).concat({
+        text: `${was} The black half mostly swung sideways in the picture, and whether it faced toward or away from the camera, which tells topspin from backspin, wasn't clear.` +
+          (side >= 1 ? ` The sidespin holds either way: about ${Math.round(side * 60).toLocaleString("en-US")} RPM, curving ${dir}.` : ""),
+        fix: "Colour dots big and strong enough to be seen settle it. A lighter background behind the first part of the flight, and more light, make the black half easier to judge.",
+      });
+    }
+  }
+
   // ------------------------------------------------------------ main entry
   // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
@@ -1559,13 +1680,20 @@
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
+    // the part of the video the user picked (times in the file, as the video player shows them)
+    if (opts.trim && R.indexAt) {
+      const a = R.indexAt(Math.max(0, opts.trim.start || 0)), b = opts.trim.end ? Math.max(a + 1, R.indexAt(opts.trim.end)) : R.n;
+      if (a > 0 || b < R.n) { DBG.trim = { from: a, to: b, of: R.n }; R = trimReader(R, a, b); }
+    }
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
       const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
       checks.push(flightCheck(segs)); emit();
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
+      const tFound = performance.now();
+      DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
+      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation, trimFrom: R.trimFrom || 0 };
       DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
@@ -1579,6 +1707,7 @@
           readings.push(Object.assign(one, { phase: part.kind }));
         }
         crossCheck(readings);
+        mirrorCheck(readings);
         // the headline: off the paddle when it reads clearly, else the clearest stretch
         const ok = readings.filter((r) => !r.error);
         const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||

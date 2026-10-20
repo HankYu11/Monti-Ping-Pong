@@ -263,6 +263,85 @@ Home clips filmed face-on (19 Oct, I–L) showed a new way to get a wrong "clear
 - **The rule.** Below 0.10 there is no clear reading for the black-half method. The tool says the ball showed the same side all the way, and suggests filming from the side. Readings from colour dots are exempt.
 - **Result.** All labelled readings are unchanged.
 
+## Measure only part of the video (2.7)
+
+Decoding every frame is most of the work. A 20–60 s video with one serve in it spent most of its time on frames that don't matter, and other ball movements in it could be mistaken for the serve.
+
+**On the page:**
+- Choosing a video now opens it in a player first.
+- Play or drag to just before the serve and tap **Start**, then to just after the bounce and tap **End**. The ‹ › buttons step one frame.
+- **Measure this part** decodes only those frames, starting at the keyframe before Start.
+- **Measure the whole video** still works as before.
+- If the browser can't show the video, it is measured whole.
+
+| Clip | Whole video | Trimmed to 3–4 s | Readings |
+|---|---|---|---|
+| N | 64 s | 23 s | Same |
+| Q | 68 s | 24 s | Same off the paddle; after the bounce a longer stretch, 48.75 vs 49.10 rps |
+| S | 52 s | 12 s | Same after the bounce; off the paddle starts earlier, same mirror problem |
+
+Times are from the test browser on a laptop; phones are slower, so the saving there is bigger in seconds.
+
+## Backspin vs topspin mirrors, and a faster first pass (2.8)
+
+**Clip S (20 Oct): what went wrong.** The serve was sidespin with topspin. The tool read it as sidespin with backspin off the paddle, and sidespin with topspin after the bounce, both marked clear.
+
+- **Sideways swing hides the direction.** Off the paddle, the black half mostly swung left↔right in the picture, about once every 4 frames (55 rps). A sideways swing looks the same whether the ball turns over the top or under the bottom.
+- **The toward/away clue was skewed.** The only thing that tells those apart is whether the black half faces toward or away from the camera on the way. In these frames the ball was smeared grey by its own spin, in front of a dark wall. The toward/away part reached only +0.26 toward the camera but −0.73 away; a true circle about this axis reaches about ±0.6 both ways.
+- **The data favoured the mirror.** Fitted about the after-bounce axis, the frames fit 0.25; fitted about its front-back mirror, 0.62. The fit followed the skewed data.
+- **No dot was seen** in S. A dot would have settled it.
+
+**The fix.** A bounce can weaken backspin but can't turn a strong backspin into a strong topspin, or topspin into backspin. So when the two stretches disagree (both with at least 40% back/top), one of them is mirrored:
+- if one stretch has colour dots, it decides, and the other is turned round to match;
+- otherwise neither is clear, and the app says so, keeping the sidespin (S: about 1,460 RPM, curving right), which holds either way.
+
+All labelled readings are unchanged (q5 off the paddle 52.70 → 53.00 rps).
+
+**Faster first pass.** Phone videos have a keyframe every 30 frames, and a keyframe decodes on its own. The background is now learned from up to 60 keyframes instead of decoding the whole video for it.
+
+| Clip | Frames | Background step | Total |
+|---|---|---|---|
+| S | 419 | 10.2 → 2.2 s | 23.6 → 12.9 s |
+| O | 1,307 | 14.9 → 7.3 s | 48.6 → 41.3 s |
+
+Times are from the test browser with phone-like keyframes.
+
+**Then the real cost turned up.** Each video measured on its own, on the same files:
+- The old pass was about 6 s fixed plus about 5.6 ms per frame. The keyframe pass was about 150 ms per keyframe.
+- So S and O saved about the same 6.5 s, although O is 3× longer: O has 44 keyframes, more than the old 40 samples.
+- Timing inside: reading a frame took 14 ms. Storing it compactly took 134 ms, because `TypedArray.from` called a function for every one of the ~1.5 M values in the frame.
+- Plain loops give identical bytes, 7× faster.
+
+| Clip | Background: old | Keyframes | Plain loops | Total: old → now |
+|---|---|---|---|---|
+| S | 7.9–9.3 s | 2.1 s | 0.4 s | ~20 → 10.9 s |
+| O | 13.1–14.1 s | 6.3–7.5 s | 1.1 s | ~45 → 32 s |
+
+The ball search, about 22 ms a frame, is now nearly all the time. Decoding alone is about 5–6 ms of it.
+
+**The ball search, profiled** (clip O, 1,307 frames, 3 workers on a 4-core test machine):
+- Copying a frame out of the decoder takes 2.5 ms. The main thread then waits 52 ms per frame for a free worker, so the workers set the pace.
+- Per frame, in a worker:
+
+| Step | Before | After |
+|---|---|---|
+| Brightness to half size | 7.2 ms | 7.0 ms |
+| Colour to half size | 6.5 ms | 6.9 ms |
+| Even out flicker | 9.4 ms | 6.4 ms (no full corrected copy) |
+| Moving mask | 14.3 ms | 14.6 ms (one plain loop; the arithmetic itself is ~10 ms) |
+| Remove specks | 6.3 ms | 6.8 ms |
+| Group into blobs | 12.4 ms | 3.1 ms (work arrays reused, not 2 × 2 MB a frame) |
+| **Total** | **56 ms** | **45 ms** |
+
+- **Same arithmetic.** The mask loop includes the float32 rounding the old code had, so all labelled readings are identical.
+- **Totals for O:** about 45 s → 32.0 s (background) → 26.7 s (search).
+- **More workers.** Up to 7 now, one per core but one: phones have 8–9 cores, so the search should scale there. That isn't tested on a phone yet.
+
+**Automatic trimming: tried, not reliable yet.**
+- *Compressed frame sizes* (free to read): motion during the serve is only 1.0–1.1× the clip's usual level, and 4–12% of frames are busier.
+- *White ball-like spots in keyframes:* 18–33 during a serve, but just as many elsewhere (up to 46): the ball basket, shirts, hands.
+- **So the manual Start/End trim stays** the way to skip most of a long video.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

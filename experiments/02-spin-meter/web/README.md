@@ -282,6 +282,35 @@ Decoding every frame is most of the work. A 20–60 s video with one serve in it
 
 Times are from the test browser on a laptop; phones are slower, so the saving there is bigger in seconds.
 
+## Backspin vs topspin mirrors, and a faster first pass (2.8)
+
+**Clip S (20 Oct): what went wrong.** The serve was sidespin with topspin. The tool read it as sidespin with backspin off the paddle, and sidespin with topspin after the bounce, both marked clear.
+
+- **Sideways swing hides the direction.** Off the paddle, the black half mostly swung left↔right in the picture, about once every 4 frames (55 rps). A sideways swing looks the same whether the ball turns over the top or under the bottom.
+- **The toward/away clue was skewed.** The only thing that tells those apart is whether the black half faces toward or away from the camera on the way. In these frames the ball was smeared grey by its own spin, in front of a dark wall. The toward/away part reached only +0.26 toward the camera but −0.73 away; a true circle about this axis reaches about ±0.6 both ways.
+- **The data favoured the mirror.** Fitted about the after-bounce axis, the frames fit 0.25; fitted about its front-back mirror, 0.62. The fit followed the skewed data.
+- **No dot was seen** in S. A dot would have settled it.
+
+**The fix.** A bounce can weaken backspin but can't turn a strong backspin into a strong topspin, or topspin into backspin. So when the two stretches disagree (both with at least 40% back/top), one of them is mirrored:
+- if one stretch has colour dots, it decides, and the other is turned round to match;
+- otherwise neither is clear, and the app says so, keeping the sidespin (S: about 1,460 RPM, curving right), which holds either way.
+
+All labelled readings are unchanged (q5 off the paddle 52.70 → 53.00 rps).
+
+**Faster first pass.** Phone videos have a keyframe every 30 frames, and a keyframe decodes on its own. The background is now learned from up to 60 keyframes instead of decoding the whole video for it.
+
+| Clip | Frames | Background step | Total |
+|---|---|---|---|
+| S | 419 | 10.2 → 2.2 s | 23.6 → 12.9 s |
+| O | 1,307 | 14.9 → 7.3 s | 48.6 → 41.3 s |
+
+Times are from the test browser with phone-like keyframes.
+
+**Automatic trimming: tried, not reliable yet.**
+- *Compressed frame sizes* (free to read): motion during the serve is only 1.0–1.1× the clip's usual level, and 4–12% of frames are busier.
+- *White ball-like spots in keyframes:* 18–33 during a serve, but just as many elsewhere (up to 46): the ball basket, shirts, hands.
+- **So the manual Start/End trim stays** the way to skip most of a long video.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

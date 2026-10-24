@@ -28,6 +28,7 @@
   --good: #1d7f4a;
   --warn: #a8611a;
   --soft: #e3ebf5;
+  --court: #2f66c4;        /* table top in the setup drawing */
   --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
   --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -133,6 +134,11 @@ details.more[open] summary { margin-bottom: 10px; }
 .serves button[disabled] { cursor: default; opacity: 0.75; border-style: dashed; }
 .trust { border-left: 3px solid var(--table); padding: 6px 0 6px 12px; display: grid; gap: 4px; font-size: 0.95rem; }
 .trust b { font-weight: 600; }
+.coach-title { font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.15; margin: 0; }
+.coach-title.good { color: var(--good); }
+.coach-fix { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+.coach-goal { border-left: 3px solid var(--good); padding: 4px 0 4px 12px; margin: 0; }
+.coach-alt { border-left: 3px solid var(--warn); padding: 4px 0 4px 12px; margin: 0; }
 
 /* session */
 .tablewrap { overflow-x: auto; }
@@ -143,16 +149,33 @@ td.num { text-align: right; }
 .btn { font: inherit; font-weight: 600; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--table); background: var(--table); color: var(--table-ink); cursor: pointer; }
 .btn.ghost { background: transparent; color: var(--table); }
 .btn:focus-visible { outline: 3px solid var(--ball); outline-offset: 2px; }
-.btn:disabled { opacity: 0.5; cursor: default; }
-.trim { display: grid; gap: 10px; }
-.trim video { width: 100%; max-height: 55vh; background: #000; border-radius: 10px; display: block; }
-.trimbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.trimbar .step { min-width: 44px; }
-.trimbar.marks { display: grid; grid-template-columns: auto 1fr 1fr auto; }
-.trimbar.marks .btn { padding-inline: 10px; white-space: nowrap; }
 td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
 /* how-to */
+.setup { margin: 0; display: grid; gap: 6px; }
+.setup svg { width: 100%; max-width: 640px; height: auto; display: block; }
+.setup .s-table { fill: var(--court); }
+.setup .s-white { stroke: #f4f7fb; }
+.setup .s-nofill { fill: none; }
+.setup .s-net { stroke: var(--ink); stroke-width: 3; }
+.setup .s-body { fill: var(--muted); }
+.setup .s-head { fill: var(--ink); }
+.setup .s-paddle { fill: #c8202a; }
+.setup .s-measured { fill: none; stroke: var(--ball); stroke-width: 5; stroke-linecap: round; }
+.setup .s-after { fill: none; stroke: var(--ball); stroke-width: 2.5; stroke-dasharray: 6 6; opacity: 0.8; }
+.setup .s-ball-fill { fill: var(--ball); }
+.setup .s-bounce { fill: var(--surface); stroke: var(--ball); stroke-width: 3; }
+.setup .s-view { fill: var(--ball); opacity: 0.22; stroke: var(--ball); stroke-opacity: 0.5; stroke-dasharray: 4 4; }
+.setup .s-phone { fill: var(--ink); }
+.setup .s-lens { fill: var(--surface); }
+.setup .s-dim { stroke: var(--ink); stroke-width: 2; }
+.setup .s-ink-fill { fill: var(--ink); }
+.setup .s-label { font-family: var(--font-body); font-size: 22px; fill: var(--muted); }
+.setup .s-strong { fill: var(--ink); font-weight: 600; }
+.setup .s-ontable { fill: #f4f7fb; }
+.setup .s-halo { paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; }
+.setup figcaption { display: grid; gap: 6px; }
+.setup-list { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
 .howto { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 18px; align-items: start; }
 @media (max-width: 480px) { .howto { grid-template-columns: minmax(0, 1fr); } }
 .howto ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
@@ -171,7 +194,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 2.8 · build 27a2026</p>
+    <p class="note num">Version 3.0 · build 5879f26</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -209,20 +232,6 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       <span data-app-hint hidden>Or in Photos: open the video, tap Share, choose Spin Meter.</span>
       <span>240 fps, phone in landscape and held still. One serve per video (several: see Settings).</span>
     </label>
-    <div class="trim" id="trimbox" hidden>
-      <video id="tv" controls playsinline muted preload="auto"></video>
-      <div class="trimbar marks">
-        <button class="btn ghost step" id="tprev" type="button" aria-label="Back one frame">‹</button>
-        <button class="btn ghost" id="tstart" type="button">Start</button>
-        <button class="btn ghost" id="tend" type="button">End</button>
-        <button class="btn ghost step" id="tnext" type="button" aria-label="Forward one frame">›</button>
-      </div>
-      <p class="note" id="trimtext"></p>
-      <div class="trimbar">
-        <button class="btn" id="measure" type="button">Measure</button>
-        <button class="btn ghost" id="twhole" type="button" hidden>Use the whole video</button>
-      </div>
-    </div>
     <div class="progress" id="progress" hidden>
       <div class="bar"><i id="bar"></i></div>
       <p class="note" id="step">Starting…</p>
@@ -319,6 +328,22 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     </div>
   </section>
 
+  <section class="panel" aria-labelledby="coach-h" id="coachbox" hidden>
+    <div class="result-head">
+      <h2 id="coach-h">What to work on</h2>
+      <div class="chips" id="coach-chips"></div>
+    </div>
+    <p class="coach-title" id="coach-title"></p>
+    <p class="coach-alt" id="coach-alt" hidden></p>
+    <p id="coach-why"></p>
+    <ol class="coach-fix" id="coach-fix"></ol>
+    <p class="coach-goal" id="coach-goal"></p>
+    <div class="trust">
+      <p><b>How it works:</b> from the spin, the ball's speed off the paddle and the toss's speed into it. Physics of the contact says how thin it was and whether the ball gripped the rubber or slid.</p>
+      <p><b>How sure:</b> on 80 simulated serves run through this meter it answered 55 and was right on 53. On the real serves so far the weak one read as pushed and the strong ones as strong. Needs a side-on view and a backspin serve.</p>
+    </div>
+  </section>
+
   <section class="panel" aria-labelledby="session-h">
     <div class="result-head">
       <h2 id="session-h">This session</h2>
@@ -339,6 +364,51 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
 
   <section class="panel" aria-labelledby="howto-h">
     <h2 id="howto-h">How to record</h2>
+    <figure class="setup">
+      <svg viewBox="0 0 640 400" role="img" aria-labelledby="setup-t setup-d">
+        <title id="setup-t">Where to put the phone, seen from above</title>
+        <desc id="setup-d">The server stands at the left end of the table. The ball goes from the paddle to the first bounce on the server's half, then over the net. The phone stands beside the table, level with the server's half, 1 to 1.5 metres from the ball's path, and films it from the side.</desc>
+        <defs>
+          <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" class="s-ink-fill"></path></marker>
+          <marker id="arrball" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L8 4 L0 8 Z" class="s-ball-fill"></path></marker>
+        </defs>
+        <!-- table, 2.74 x 1.525 m -->
+        <rect class="s-table" x="170" y="40" width="440" height="245" rx="3"></rect>
+        <line class="s-white" x1="170" y1="162" x2="610" y2="162" stroke-width="1.5"></line>
+        <rect class="s-white s-nofill" x="170" y="40" width="440" height="245" rx="3" stroke-width="3"></rect>
+        <line class="s-net" x1="390" y1="26" x2="390" y2="299"></line>
+        <text class="s-label" x="400" y="24">net</text>
+        <!-- what the phone sees -->
+        <path class="s-view" d="M250 344 L118 104 L336 104 Z"></path>
+        <!-- the server, seen from above, paddle in hand -->
+        <ellipse class="s-body" cx="112" cy="168" rx="24" ry="40"></ellipse>
+        <circle class="s-head" cx="112" cy="168" r="15"></circle>
+        <circle class="s-paddle" cx="152" cy="128" r="12"></circle>
+        <text class="s-label" x="112" y="240" text-anchor="middle">server</text>
+        <!-- paddle to first bounce is what is measured; then over the net -->
+        <path class="s-measured" d="M156 126 Q 220 120 280 130"></path>
+        <path class="s-after" d="M280 130 Q 350 112 390 110 T 530 104" marker-end="url(#arrball)"></path>
+        <circle class="s-bounce" cx="280" cy="130" r="7"></circle>
+        <text class="s-label s-strong" x="176" y="100">measured</text>
+        <text class="s-label s-ontable" x="292" y="156">1st bounce</text>
+        <!-- distance from the ball's path to the phone -->
+        <line class="s-dim s-dim-on" x1="214" y1="334" x2="214" y2="132" marker-start="url(#arr)" marker-end="url(#arr)"></line>
+        <text class="s-label s-strong s-halo" x="120" y="322">1–1.5 m</text>
+        <!-- the phone, landscape -->
+        <rect class="s-phone" x="220" y="340" width="60" height="32" rx="6"></rect>
+        <circle class="s-lens" cx="250" cy="346" r="4.5"></circle>
+        <text class="s-label s-strong" x="294" y="364">phone</text>
+      </svg>
+      <figcaption>
+        <p class="note">Seen from above: the phone films the ball from the side, from the paddle to the first bounce, with the table behind it.</p>
+        <ul class="setup-list">
+          <li><b>Beside the table</b>, level with the server's half, 1–1.5 m from the ball's path.</li>
+          <li><b>On a tripod</b> 40–60 cm above the table, tilted down a little.</li>
+          <li><b>Landscape, 240 fps slow motion</b>, phone held still.</li>
+          <li><b>For coaching:</b> keep the toss in view as it drops onto the paddle; it tells whether the ball gripped the rubber or slid.</li>
+        </ul>
+      </figcaption>
+    </figure>
     <div class="howto">
       <div class="balls">
       <svg class="ballsvg" viewBox="0 0 120 120" role="img" aria-label="Side view: one half of the ball black, edge on the seam">
@@ -722,7 +792,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
     const presOfTs = new Map(), decOfPres = new Array(samples.length);
     order.forEach(([t, k], i) => { presOfTs.set(t, i); decOfPres[i] = k; });
-    const Wc = track.video.width, Hc = track.video.height, presT = order.map(([t]) => t);
+    const Wc = track.video.width, Hc = track.video.height;
     return {
       kind: "decoder", n: samples.length, W: Wc, H: Hc,
       // frames that decode on their own (keyframes), by frame number
@@ -755,11 +825,6 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
         while (pending > 0) await wait();
         try { dec.close(); } catch (e) { /* already closed after an error */ }
         if (failure) throw failure;
-      },
-      indexAt(sec) {                          // first frame shown at or after this time in the file
-        const t = sec * 1e6 - 1000; let lo = 0, hi = presT.length;
-        while (lo < hi) { const m = (lo + hi) >> 1; if (presT[m] < t) lo = m + 1; else hi = m; }
-        return Math.min(lo, presT.length);
       },
       async run(from, to, cb) {
         to = Math.min(to, samples.length);
@@ -800,13 +865,6 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     };
   }
 
-  // Only part of a video: frames a..b-1, numbered from 0 (decoding starts at the keyframe before a)
-  function trimReader(R, a, b) {
-    return Object.assign({}, R, { n: b - a, trimFrom: a,
-      run: (from, to, cb) => R.run(from + a, Math.min(to + a, b), (i, src) => cb(i - a, src)),
-      keys: R.keys && R.keys.filter((i) => i >= a && i < b).map((i) => i - a),
-      runKeys: R.runKeys && ((list, cb) => R.runKeys(list.map((i) => i + a), (i, src) => cb(i - a, src))) });
-  }
   async function seekReader(file, playbackFps, nFramesHint) {   // fallback: slow but universal
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -825,7 +883,6 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
-      indexAt: (sec) => clamp(Math.round(sec * playbackFps), 0, n),
       async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
@@ -1162,6 +1219,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     // instead let a long noise track push the real serve out and then yield nothing.
     const gap = opt.serveGap ?? 120, built = [];
     for (let tr of good) {
+      const whole = tr;
       // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
       for (let k = 1; k < tr.length; k++) {
@@ -1184,7 +1242,23 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
       const hitSeen = first.kind === "contact";
       const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
-      if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      // the toss as it reached the paddle: how hard it pressed into the rubber (a thin brush can
+      // only grip that hard), in picture px per frame and the ball's radius, both at search scale
+      const t0 = hitSeen && s0 > 0 ? pieces[s0 - 1].pts : tossBefore(whole, first.pts, tracks);
+      // not its last frames: the paddle reaching the ball merges with it there and carries the
+      // blob along the flight. A toss goes another way than the flight (more than 45 degrees off).
+      const vf0 = velocity(first.pts, 0, Math.min(first.pts.length, 6));
+      const offFlight = (q) => { const v = velocity(q, 0, q.length); return dot([...v, 0], [...vf0, 0]) < Math.SQRT1_2 * Math.hypot(...v) * Math.hypot(...vf0); };
+      let tossPts = [];
+      for (let cut = 2; t0 && cut <= 6 && t0.length - cut >= 3; cut++) {
+        const q = t0.slice(Math.max(0, t0.length - cut - 6), t0.length - cut);
+        if (offFlight(q)) { tossPts = q; break; }
+      }
+      if (t0 && !tossPts.length && t0.length < 5 && offFlight(t0)) tossPts = t0;
+      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])), t: tossPts.reduce((s, p) => s + p[0], 0) / tossPts.length } : null;
+      const hitAt = toss ? meetFrame(tossPts, toss.v, first.pts) : hitSeen ? first.pts[0][0] : null;
+      if (toss && hitAt != null) toss.dt = hitAt - toss.t;      // frames from the toss's mean frame to the hit
+      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitAt), { toss }));
       else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
         edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
           "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
@@ -1206,16 +1280,36 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     for (const sv of built.sort((a, b) => b.score - a.score))
       if (segs.every((f) => sv.start > f.end + gap || sv.end < f.start - gap)) segs.push(sv);
     DBG.search.serves = segs.map((sv) => `${sv.start}-${sv.end} score ${Math.round(sv.score)}`);
+    // The toss just before the flight began, when the kink wasn't seen in one track: a slow toss
+    // gets cut from the moving part, or the paddle covered the ball and the toss is a track of its
+    // own, ending next to where the flight starts. Its points, or null.
+    function tossBefore(whole, flight, all) {
+      const f0 = flight[0], v0 = velocity(flight, 0, Math.min(flight.length, 6)), win = (p) => p[0] < f0[0] && p[0] >= f0[0] - 12;
+      const slower = (q) => Math.hypot(...velocity(q, 0, q.length)) < 0.6 * Math.hypot(...v0);
+      let q = whole.filter(win);
+      if (q.length >= 3 && slower(q)) return q;
+      const near = all.map((o) => o.filter(win)).filter((o) => o.length >= 3 && slower(o) &&
+        Math.hypot(o[o.length - 1][1] - f0[1], o[o.length - 1][2] - f0[2]) < 8 * f0[3]);
+      return near.sort((a, b) => b[b.length - 1][0] - a[a.length - 1][0])[0] || null;
+    }
+    // where the toss's path and the flight's path meet: the hit, between the toss's last frame and the flight's first
+    function meetFrame(toss, vt, flight) {
+      const a = toss[toss.length - 1], b = flight[0], vf = velocity(flight, 0, Math.min(flight.length, 6));
+      // toss at t: a + vt (t - a0); flight at t: b + vf (t - b0); closest at the least-squares t
+      const dx = [a[1] - vt[0] * a[0] - b[1] + vf[0] * b[0], a[2] - vt[1] * a[0] - b[2] + vf[1] * b[0]], dv = [vt[0] - vf[0], vt[1] - vf[1]];
+      const t = -(dx[0] * dv[0] + dx[1] * dv[1]) / Math.max(1e-9, dv[0] * dv[0] + dv[1] * dv[1]);
+      return clamp(t, a[0], b[0]);
+    }
     function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
       const m = 3 * p[3] + 6;
       return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
     }
-    function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
+    function makePart(kind, pts, hit = null) {   // a stretch to measure: its frames, a crop around it, where the ball was, the hit's frame if seen
       const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
       const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
       const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0], hit,
         track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
     }
     segs.sort((a, b) => a.start - b.start);
@@ -1759,7 +1853,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return ax > 0 ? [[0, -1, 0], [1, 0, 0], [0, 0, 1]] : [[0, 1, 0], [-1, 0, 0], [0, 0, 1]];
   }
   // centre: where the crop's (0, 0) sits relative to the middle of the picture, in pixels
-  function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0]) {
+  function launchV(px, py, t, u, v, dlnr, fpx, dist, fps) {   // the ball's velocity at frame t of the stretch, m/s
+    return scale([(2 * px[0] * t + px[1]) / fpx - u * dlnr, (2 * py[0] * t + py[1]) / fpx - v * dlnr, dlnr], dist * fps / 1000);
+  }
+  function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0], launchAt = 0) {
     const { cx: px, cy: py, t, keep } = smoothFit(balls, 2.5, 3);
     const rr = balls.filter(Boolean).map((b) => b[2]);
     const tm = t.reduce((s, v) => s + v, 0) / t.length;
@@ -1772,7 +1869,13 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     // also drifts away from the picture's centre, so take that part out of the sideways motion.
     const u = (polyval(px, tm) + centre[0]) / fpx, v = (polyval(py, tm) + centre[1]) / fpx;
     let f = [vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr]; f = scale(f, 1 / norm(f));
-    const mmpx = 40.0 / (2 * median(rr)), toMs = mmpx / 1000 * fps;
+    // scale from the ball's width across its blur streak: motion blur makes it look longer, and
+    // its full size read as bigger made fast balls read up to 12% slow (synthetic test). Not the
+    // median: where the white half's shaded side matches the wall it drops out and the ball looks
+    // smaller, and in some clips most frames (up to 16% fast); the ball turns, so some frames show
+    // all of it.
+    const rNarrow = balls.filter(Boolean).map((b) => (b.length > 4 ? b[4] : b[2]));
+    const mmpx = 40.0 / (2 * percentile(rNarrow, 85)), toMs = mmpx / 1000 * fps;
     const dist = fpx * mmpx;                  // ball distance in mm (40 mm ball)
     // Which way is down: the ball's acceleration in space (gravity, plus a little lift), from its
     // 3D path (distance from its size). Side-on this is the same as the curve in the picture;
@@ -1786,8 +1889,15 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const acc = matvec(turn, [a3[0], a3[1], 0]);
     return {
       f, turn, rotatedDeg: ((Math.round(Math.atan2(turn[1][0], turn[0][0]) * 180 / Math.PI) % 360) + 360) % 360,
-      speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000, towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
+      speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000,
+      // at the hit (frame launchAt of this stretch): gravity slows a rising ball by 4 cm/s a frame,
+      // so the middle of the stretch reads up to 20% under what the paddle gave it
+      launchSpeed: norm(launchV(px, py, launchAt, u, v, dlnr, fpx, dist, fps)),
+      launchVel: matvec(turn, launchV(px, py, launchAt, u, v, dlnr, fpx, dist, fps)),   // m/s, upright camera axes
+      towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
       downAccel: acc[1] * fps * fps / 1000, mmPerPx: mmpx,
+      // downward in the picture at this scale, m/s^2 (not the sideways part: air drag)
+      fallAccel: (turn[1][0] * 2 * px[0] + turn[1][1] * 2 * py[0]) * toMs * fps,
     };
   }
   function spinComponents(rps, axis, f) {
@@ -1958,9 +2068,18 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
     if (!r) return fail("The ball was found in too few frames in a row.");
     if (r.error) return fail(r.error);
-    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
+    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2], seg.hit != null ? seg.hit - seg.start : 0);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
+    // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
+    // small (its shaded white side matched the wall) and so did every speed (synthetic test: up to
+    // +10%, all fixed by this). Topspin pulls down too, so only backspin is checked; and only side-on
+    // flights, as a ball coming toward the camera curves in the picture from perspective (real clips
+    // filmed that way 'fell' at up to 4 g). A bigger mismatch than 15% means something else.
+    const sideOn = Math.abs(geo.towardCameraDeg) < 15;
+    const fix = c.lift > 0 && sideOn && geo.fallAccel > 9.81 && geo.fallAccel < 9.81 / 0.85 ? 9.81 / geo.fallAccel : 1;
+    // the toss: the same ball at the same distance, so the flight's scale (its own blurred size read 5-15% fast)
+    const tossMs = seg.toss ? 2 * geo.mmPerPx * fix * fps / 1000 : 0;
     return {
       rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
       backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
@@ -1970,7 +2089,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
+      flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
+        // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)
+        tossVel: seg.toss ? matvec(geo.turn, scale([...seg.toss.v, 0], tossMs)).map((x, j) => x + (j === 1 ? 9.81 * (seg.toss.dt || 0) / fps : 0)) : null,
+        launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
@@ -1980,13 +2102,21 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   // serve should spin a little faster off the paddle than after the bounce: in our clips by
   // 1.35–1.6×. Off the paddle is the shorter stretch, so when the two disagree it is the one
   // doubted (a wrong rate there is usually half or double the true one).
-  const BOUNCE_RATIO = [0.9, 2.2];
+  // A slow serve that drops steeply onto the table loses more: the ball slides on the table, which
+  // takes 1.5 x friction x (1 + restitution) x the speed it comes down at off the spin's surface
+  // speed. With table friction up to 0.4 that is at most 1.14 x the down speed (plus 15%), still
+  // far short of what a doubled paddle reading would need.
+  const BOUNCE_RATIO = [0.9, 2.2], TABLE_LOSS = 1.5 * 0.4 * 1.9 * 1.15, TABLE_E = 0.9;
   function crossCheck(readings) {
     const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
     const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
     if (!pad || !bnc || pad.lift <= 0 || bnc.lift <= 0) return;
-    const ratio = pad.rps / bnc.rps, ok = ratio >= BOUNCE_RATIO[0] && ratio <= BOUNCE_RATIO[1];
-    pad.crossCheck = { ratio, ok };
+    const ratio = pad.rps / bnc.rps;
+    // the speed it came down at: it left the table at about restitution x that (upright: y down)
+    const up = bnc.flight && bnc.flight.launchVel ? -bnc.flight.launchVel[1] : 0;
+    const loss = 2 * Math.PI * 0.020 * (pad.lift - bnc.lift), lossMax = TABLE_LOSS * Math.max(0, up) / TABLE_E;
+    const ok = ratio >= BOUNCE_RATIO[0] && (ratio <= BOUNCE_RATIO[1] || loss <= lossMax);
+    pad.crossCheck = { ratio, ok, loss, lossMax };
     if (ok) return;
     pad.reliable = false;
     pad.issues = (pad.issues || []).concat({
@@ -2052,11 +2182,6 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
-    // the part of the video the user picked (times in the file, as the video player shows them)
-    if (opts.trim && R.indexAt) {
-      const a = R.indexAt(Math.max(0, opts.trim.start || 0)), b = opts.trim.end ? Math.max(a + 1, R.indexAt(opts.trim.end)) : R.n;
-      if (a > 0 || b < R.n) { DBG.trim = { from: a, to: b, of: R.n }; R = trimReader(R, a, b); }
-    }
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
@@ -2065,7 +2190,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       checks.push(flightCheck(segs)); emit();
       const tFound = performance.now();
       DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation, trimFrom: R.trimFrom || 0 };
+      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
@@ -2158,7 +2283,51 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  // ------------------------------------------------------------ what to work on (backspin serves)
+  // From the reading off the paddle: the spin, the ball's velocity as it left the paddle and the
+  // toss's velocity as it reached it. The paddle changes the ball's velocity by the contact impulse
+  // (per unit mass, launch - toss); its part along the face sets the spin, whose surface speed is
+  // 1.5x that part whatever the rubber (hollow ball, I = 2/3 m r^2). So:
+  //   spin / speed (surface speed / ball speed): how thin the contact was, 1.5 for a pure brush
+  //   grip used (impulse along the face / into it): at the rubber's friction (~1.2) the ball slid
+  // Kinds: thick (pushed), good, slip (thin, slid), slow (thin, gripped, too slow a brush). Checked
+  // on simulated serve videos run through this engine (experiments/03-serve-guidance): right on
+  // 53 of 55 answered. Near a line a reading could be either side; both are named.
+  const COACH = { target: 30, thick: 0.9, slip: 0.92 * 1.2, mu: 1.2, ratioBand: [0.85, 0.95], gripBand: [1.02, 1.18],
+    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020 };
+  function coach(serve) {
+    const readings = (serve && (serve.phases || [serve])) || [];
+    const r = readings.find((x) => !x.error && x.reliable && x.phase !== "bounce" && x.flight);
+    if (!r) return { kind: "none", reason: readings.some((x) => !x.error && x.reliable) ? "paddle" : "reading" };
+    if (r.lift < 0.6 * r.rps) return { kind: "other", rps: r.rps, spinType: r.spinType };
+    const f = r.flight, rps = r.rps, speed = f.launchSpeed, ratio = 2 * Math.PI * rps * COACH.r / speed;
+    const along = 2 * Math.PI * rps * COACH.r / 1.5;          // impulse along the face, m/s
+    const brush = [along / COACH.carry[1], along / COACH.carry[0]];   // paddle speed along the face it takes, if it gripped
+    const base = { rps, speed, ratio, brush, phase: r.phase, toss: null, grip: null };
+    if (Math.abs(f.towardCameraDeg) > COACH.sideOn || ratio > COACH.maxRatio)
+      return Object.assign(base, { kind: rps >= COACH.target ? "good" : "unknown", alt: null, limit: Math.abs(f.towardCameraDeg) > COACH.sideOn ? "view" : "speed" });
+    if (f.tossVel && f.launchVel) {
+      const toss = norm(f.tossVel), dv = f.launchVel.map((x, j) => x - f.tossVel[j]);
+      // a toss falls onto the paddle at 0.3-4 m/s, and the impulse is bigger than its along-face part
+      if (toss >= 0.3 && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
+        Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
+    }
+    const grip = base.grip;
+    const thin = () => {
+      if (rps >= COACH.target) return ["good", rps < COACH.rpsBand[1] ? (grip != null && grip >= COACH.slip ? "slip" : "slow") : null];
+      if (grip == null) return [ratio >= 1.25 ? "slip" : "slow", null];
+      const kind = grip >= COACH.slip ? "slip" : "slow";
+      let alt = grip >= COACH.gripBand[0] && grip < COACH.gripBand[1] ? (kind === "slip" ? "slow" : "slip") : null;
+      if (rps >= COACH.rpsBand[0]) alt = "good";
+      return [kind, alt];
+    };
+    let kind, alt;
+    if (ratio < COACH.thick) { kind = "thick"; alt = ratio >= COACH.ratioBand[0] ? thin()[0] : null; }
+    else { [kind, alt] = thin(); if (ratio < COACH.ratioBand[1]) alt = "thick"; }
+    return Object.assign(base, { kind, alt });
+  }
+
+  global.SpinMeter = { analyze, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);
 
 </script>
@@ -2314,11 +2483,88 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     $("phasebox").hidden = tiles.length < 2;
     $("phases").innerHTML = tiles.join("");
     renderChecks(current.checks, shown.checks, current.serves.length > 1 ? `Serve ${k + 1}` : "This serve");
+    renderCoach(sv);
   }
   $("phases").addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-p]");
     if (b && current) showServe(currentServe, +b.dataset.p);
   });
+
+  // ---------------------------------------------------------- what to work on
+  const COACH_TEXT = {
+    thick: {
+      title: "You pushed the ball instead of brushing it",
+      why: "The ball left fast for its spin: the paddle moved into the ball more than along under it, so the contact drove it forward instead of spinning it.",
+      fix: ["Open the face more and swing along it, under the ball, not toward the net.",
+        "Contact the bottom of the ball, a little behind it, and let it roll off the face.",
+        "Aim for a slower ball with the same swing."],
+      goal: () => "Next serve: spin ÷ speed 0.9 or more.",
+    },
+    good: {
+      title: "Strong backspin",
+      why: "Thin contact and a fast brush: the ball spins hard for its speed.",
+      fix: ["Keep this contact. Work on placement: short (two bounces on their side) and low over the net."],
+      goal: (c) => `Keep it above ${c.target} rev/s.`,
+    },
+    slip: {
+      title: "The ball slid on the rubber",
+      why: "The contact was thin, but the ball pressed into the rubber too lightly to be carried along: it used all the grip there was and slid. A faster swing won't add spin until it presses harder.",
+      fix: ["Let the ball drop lower before you hit it (toss a little higher), so it falls onto the paddle faster.",
+        "Brush slightly into the ball as well as along it, so it sinks into the rubber.",
+        "Clean the rubber: dust lowers its grip."],
+      goal: (c) => `Next serve: ${c.target} rev/s or more, with spin ÷ speed staying above 0.9.`,
+    },
+    slow: {
+      title: "The brush was too slow",
+      why: (c) => `The contact was thin and the rubber held the ball, so the spin is set by how fast the paddle moved along under it: about ${fmt(c.brush[0], 1)}–${fmt(c.brush[1], 1)} m/s. ${c.target} rev/s takes about ${fmt(c.brush[0] * c.target / c.rps, 1)}–${fmt(c.brush[1] * c.target / c.rps, 1)} m/s.`,
+      fix: ["Accelerate through the contact: a loose wrist that snaps at the ball, not a steady push.",
+        "Hit nearer the tip of the blade, which moves fastest.",
+        "Keep the face as open as now: only the speed changes."],
+      goal: (c) => `Next serve: ${c.target} rev/s or more.`,
+    },
+  };
+  function renderCoach(serve) {
+    const box = $("coachbox");
+    const c = serve ? Object.assign(window.SpinMeter.coach(serve), { target: window.SpinMeter.COACH.target }) : null;
+    box.hidden = !c;
+    if (!c) return;
+    const say = (v) => (typeof v === "function" ? v(c) : v);
+    const chips = [];
+    if (c.rps) chips.push(`<span class="chip">${fmt(c.rps, 1)} rev/s</span>`);
+    if (c.speed) chips.push(`<span class="chip">ball ${fmt(c.speed, 1)} m/s</span>`, `<span class="chip">spin ÷ speed ${fmt(c.ratio, 2)}</span>`);
+    if (c.grip != null) chips.push(`<span class="chip">grip used ${fmt(c.grip, 2)} of about ${fmt(window.SpinMeter.COACH.mu, 1)}</span>`);
+    if (c.toss != null) chips.push(`<span class="chip">toss ${fmt(c.toss, 1)} m/s</span>`);
+    $("coach-chips").innerHTML = chips.join("");
+    $("coach-alt").hidden = true;
+    const t = COACH_TEXT[c.kind];
+    if (!t) {
+      $("coach-title").className = "coach-title";
+      $("coach-title").textContent = { none: "No reading to coach from", other: "Coaching covers backspin serves", unknown: "Not enough to judge the contact" }[c.kind];
+      $("coach-why").textContent = c.kind === "none" ? (c.reason === "paddle" ?
+          "Only the spin after the bounce read clearly. The coaching needs the ball just after the hit, off the paddle." :
+          "No stretch of this serve read clearly.") :
+        c.kind === "other" ? `This serve is ${typeText(c.spinType).toLowerCase()}. Coaching for other serves comes later.` :
+        c.limit === "view" ? `${fmt(c.rps, 1)} rev/s is under ${c.target}, but the ball flew too much toward the camera to measure its speed well enough to say why.` :
+          `${fmt(c.rps, 1)} rev/s is under ${c.target}, but the ball's speed didn't read right, so the contact can't be judged.`;
+      $("coach-fix").innerHTML = `<li>${c.kind === "other" ? "Try a backspin serve to get coaching." :
+        "Film from the side, with the paddle and the first part of the flight in view (see How to record)."}</li>`;
+      $("coach-goal").hidden = true;
+      return;
+    }
+    $("coach-title").className = "coach-title" + (c.kind === "good" ? " good" : "");
+    $("coach-title").textContent = t.title;
+    $("coach-why").textContent = say(t.why);
+    $("coach-fix").innerHTML = t.fix.map((x) => `<li>${x}</li>`).join("");
+    $("coach-goal").hidden = false;
+    $("coach-goal").textContent = say(t.goal);
+    if (c.alt && COACH_TEXT[c.alt]) {
+      $("coach-alt").hidden = false;
+      const first = (k) => COACH_TEXT[k].fix[0].charAt(0).toLowerCase() + COACH_TEXT[k].fix[0].slice(1);
+      $("coach-alt").textContent = c.alt === "good" ? `Close to the strong-backspin line (${c.target} rev/s): a small step is enough.` :
+        c.kind === "good" ? `Only just over the line: it's close to “${COACH_TEXT[c.alt].title.toLowerCase()}”. To get more: ${first(c.alt)}` :
+        `Close to the line with “${COACH_TEXT[c.alt].title.toLowerCase()}”: this reading can't tell them apart. If the first fix doesn't help, try: ${first(c.alt)}`;
+    }
+  }
 
   // ---------------------------------------------------------- setup check
   const ICON = { ok: "✓", warn: "!", bad: "✕" };
@@ -2349,7 +2595,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "2.8 (27a2026)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "3.0 (5879f26)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -2358,7 +2604,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     if (!log.length) { tb.innerHTML = `<tr><td colspan="8" class="empty">Measured serves appear here, with the spin the server intended next to the reading.</td></tr>`; return; }
     tb.innerHTML = log.map((e, i) => `<tr>
       <td class="num">${i + 1}</td><td class="num">${e.serve ? e.serve + "/" + e.of : "–"}</td><td>${e.server}</td><td>${e.intended || "–"}</td>
-      <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type) + (e.phase === "bounce" ? " (after the bounce)" : "") + (e.bounceRpm ? `<br><span class="note">after the bounce: ${fmt(e.bounceRpm)} RPM</span>` : "")}</td>
+      <td class="num">${e.error ? "–" : fmt(e.rpm)}</td><td>${e.error ? e.error : typeText(e.type) + (e.phase === "bounce" ? " (after the bounce)" : "") + (e.bounceRpm ? `<br><span class="note">after the bounce: ${fmt(e.bounceRpm)} RPM</span>` : "") + (e.coach ? `<br><span class="note">${e.coach}</span>` : "")}</td>
       <td>${e.error ? "–" : e.reliable ? "clear" : "low"}</td><td class="num">${e.secs ? fmt(e.secs, 0) + " s" : "–"}</td></tr>`).join("");
   }
   function asText() {
@@ -2382,62 +2628,19 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   });
 
   // ---------------------------------------------------------- analysis
-  $("file").addEventListener("change", (ev) => {
+  $("file").addEventListener("change", async (ev) => {
     const file = ev.target.files && ev.target.files[0];
-    if (file) openTrim(file);
-    ev.target.value = "";
+    if (!file) return;
+    try { await analyseFile(file); } finally { ev.target.value = ""; }
   });
-  window.SpinPage = { analyseFile: openTrim };   // the app build hands shared videos in here
+  window.SpinPage = { analyseFile };       // the app build hands shared videos in here
 
-  // ---------------------------------------------------------- trim: measure only the part with the serve
-  // Decoding every frame is most of the work, so a few seconds around the serve instead of a whole
-  // minute is many times faster, and other ball movements in the video can't be mistaken for it.
-  const tv = $("tv"), STEP = 1 / 30;       // phone slow motion is stored as 30 frames per second of video
-  let pendingFile = null, trim = { start: null, end: null }, tvUrl = null, tvBroken = false;
-  const clock = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
-  function openTrim(file) {
-    pendingFile = file; trim = { start: null, end: null }; tvBroken = false;
-    if (tvUrl) URL.revokeObjectURL(tvUrl);
-    tvUrl = URL.createObjectURL(file); tv.src = tvUrl;
-    $("error").hidden = true; $("trimbox").hidden = false;
-    showTrim();
-    $("trimbox").scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-  tv.addEventListener("loadedmetadata", showTrim);
-  tv.addEventListener("error", () => { tvBroken = true; showTrim(); });
-  function showTrim() {
-    const dur = tv.duration, ok = !tvBroken && Number.isFinite(dur);
-    for (const id of ["tprev", "tstart", "tend", "tnext"]) $(id).disabled = !ok;
-    const a = trim.start != null ? trim.start : 0, b = trim.end != null ? trim.end : dur;
-    const set = trim.start != null || trim.end != null;
-    $("twhole").hidden = !set;
-    $("measure").textContent = set ? "Measure this part" : "Measure the whole video";
-    if (!ok) { $("trimtext").textContent = tvBroken ? "This browser can't show the video, so the whole video will be measured." : "Loading the video…"; return; }
-    $("trimtext").textContent = !set
-      ? `${clock(dur)} of video. To save time, play or drag to just before the serve and tap Start, then just after the bounce and tap End.`
-      : b > a ? `Measuring ${clock(a)} to ${clock(b)}: ${(b - a).toFixed(1)} s of the ${dur.toFixed(1)} s video, about ${Math.round((b - a) / STEP)} frames.`
-      : "The end is before the start: move one of them.";
-    $("measure").disabled = set && !(b > a);
-  }
-  $("tstart").addEventListener("click", () => { trim.start = tv.currentTime; showTrim(); });
-  $("tend").addEventListener("click", () => { trim.end = tv.currentTime; showTrim(); });
-  $("twhole").addEventListener("click", () => { trim = { start: null, end: null }; showTrim(); });
-  for (const [id, d] of [["tprev", -1], ["tnext", 1]])
-    $(id).addEventListener("click", () => { tv.pause(); tv.currentTime = Math.max(0, Math.min(tv.duration || 0, tv.currentTime + d * STEP)); });
-  $("measure").addEventListener("click", async () => {
-    if (!pendingFile) return;
-    tv.pause();
-    const range = trim.start != null || trim.end != null ? { start: trim.start || 0, end: trim.end != null ? trim.end : undefined } : null;
-    $("trimbox").hidden = true;
-    await analyseFile(pendingFile, range);
-  });
-
-  async function analyseFile(file, range = null) {
+  async function analyseFile(file) {
     $("error").hidden = true; $("progress").hidden = false; renderChecks([]); $("bar").style.width = "0%";
     const fpsSel = $("fps").value, hfov = parseFloat($("hfov").value) || 68;
     try {
       const res = await window.SpinMeter.analyze(file, {
-        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several", trim: range,
+        captureFps: fpsSel ? parseFloat(fpsSel) : undefined, hfov, serveDir: $("dir").value, single: $("per").value !== "several",
         onChecks: (list) => renderChecks(list),
         onProgress: (step, frac) => { $("step").textContent = step; $("bar").style.width = `${Math.round(frac * 100)}%`; },
       });
@@ -2447,7 +2650,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       if (!serves.length) {
         $("error").textContent = res.error || "No serve found."; $("error").hidden = false;
         renderChecks(res.checks);
-        current = null; $("skipnote").hidden = true;
+        current = null; $("skipnote").hidden = true; renderCoach(null);
         render({ error: res.error || "No serve found.", meta: res.meta, diag: setupDiag(res.checks).filter((d) => !/No clear flight|No ball found/.test(d.text))
           .concat((res.checks || []).filter((c) => c.key === "flight" && c.status !== "ok").map((c) => ({ text: c.title + ".", fix: c.text }))) });
         $("servesbox").hidden = true; $("phasebox").hidden = true;
@@ -2457,8 +2660,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
           const e = Object.assign({}, base, serves.length > 1 ? { serve: k + 1, of: serves.length } : {}, { secs: k === 0 ? secs : undefined });
           const ab = s.phase !== "bounce" && s.phases ? s.phases.find((r) => r.phase === "bounce" && !r.error && r.reliable) : null;
           const why = (s.issues && s.issues[0] ? s.issues[0].text : "") || (s.notes && s.notes[0] ? s.notes[0].text : "") || s.error || "";
+          const cc = window.SpinMeter.coach(s);
           log.push(Object.assign(e, s.error || !s.reliable ? { error: "no clear reading" + (why ? ": " + why : "") } : { rpm: s.rpm, type: s.spinType, lift: s.lift, curve: s.curve, gyro: s.gyro, reliable: s.reliable,
-            phase: s.phase, bounceRpm: ab ? ab.rpm : undefined, bounceType: ab ? ab.spinType : undefined }));
+            phase: s.phase, bounceRpm: ab ? ab.rpm : undefined, bounceType: ab ? ab.spinType : undefined,
+            coach: COACH_TEXT[cc.kind] ? COACH_TEXT[cc.kind].title : undefined, coachKind: cc.kind, coachAlt: cc.alt || undefined }));
         });
         current = res;
         const pick = Math.max(0, serves.findIndex((s) => !s.error));
@@ -2506,7 +2711,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="27a2026" hidden></span>
+<span id="app-build" data-build="5879f26" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

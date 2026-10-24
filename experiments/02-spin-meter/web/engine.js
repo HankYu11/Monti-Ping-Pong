@@ -799,7 +799,11 @@
       const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
       const hitSeen = first.kind === "contact";
       const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
-      if (off.length >= 8) parts.push(makePart(sawBounce ? "paddle" : "flight", off));
+      // the toss as it reached the paddle: how hard it pressed into the rubber (a thin brush can
+      // only grip that hard), in picture px per frame and the ball's radius, both at search scale
+      const tossPts = hitSeen && s0 > 0 ? pieces[s0 - 1].pts.slice(-6) : [];
+      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])) } : null;
+      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitSeen ? first.pts[0][0] : null), { toss }));
       else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
         edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
           "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
@@ -825,12 +829,12 @@
       const m = 3 * p[3] + 6;
       return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
     }
-    function makePart(kind, pts) {           // a stretch to measure: its frames, a crop around it, and where the ball was
+    function makePart(kind, pts, hit = null) {   // a stretch to measure: its frames, a crop around it, where the ball was, the hit's frame if seen
       const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
       const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
       const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
       const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0],
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0], hit,
         track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
     }
     segs.sort((a, b) => a.start - b.start);
@@ -1374,7 +1378,7 @@
     return ax > 0 ? [[0, -1, 0], [1, 0, 0], [0, 0, 1]] : [[0, 1, 0], [-1, 0, 0], [0, 0, 1]];
   }
   // centre: where the crop's (0, 0) sits relative to the middle of the picture, in pixels
-  function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0]) {
+  function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0], launchAt = 0) {
     const { cx: px, cy: py, t, keep } = smoothFit(balls, 2.5, 3);
     const rr = balls.filter(Boolean).map((b) => b[2]);
     const tm = t.reduce((s, v) => s + v, 0) / t.length;
@@ -1387,7 +1391,10 @@
     // also drifts away from the picture's centre, so take that part out of the sideways motion.
     const u = (polyval(px, tm) + centre[0]) / fpx, v = (polyval(py, tm) + centre[1]) / fpx;
     let f = [vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr]; f = scale(f, 1 / norm(f));
-    const mmpx = 40.0 / (2 * median(rr)), toMs = mmpx / 1000 * fps;
+    // scale from the ball's width across its blur streak: motion blur makes it look longer, and
+    // its full size read as bigger made fast balls read up to 12% slow (synthetic test)
+    const rNarrow = balls.filter(Boolean).map((b) => (b.length > 4 ? b[4] : b[2]));
+    const mmpx = 40.0 / (2 * median(rNarrow)), toMs = mmpx / 1000 * fps;
     const dist = fpx * mmpx;                  // ball distance in mm (40 mm ball)
     // Which way is down: the ball's acceleration in space (gravity, plus a little lift), from its
     // 3D path (distance from its size). Side-on this is the same as the curve in the picture;
@@ -1401,7 +1408,11 @@
     const acc = matvec(turn, [a3[0], a3[1], 0]);
     return {
       f, turn, rotatedDeg: ((Math.round(Math.atan2(turn[1][0], turn[0][0]) * 180 / Math.PI) % 360) + 360) % 360,
-      speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000, towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
+      speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000,
+      // at the hit (frame launchAt of this stretch): gravity slows a rising ball by 4 cm/s a frame,
+      // so the middle of the stretch reads up to 20% under what the paddle gave it
+      launchSpeed: dist * Math.hypot((2 * px[0] * launchAt + px[1]) / fpx - u * dlnr, (2 * py[0] * launchAt + py[1]) / fpx - v * dlnr, dlnr) * fps / 1000,
+      towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
       downAccel: acc[1] * fps * fps / 1000, mmPerPx: mmpx,
     };
   }
@@ -1573,7 +1584,7 @@
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
     if (!r) return fail("The ball was found in too few frames in a row.");
     if (r.error) return fail(r.error);
-    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2]);
+    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2], seg.hit != null ? seg.hit - seg.start : 0);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
     return {
@@ -1585,7 +1596,8 @@
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
+      flight: { speed: geo.speed, launchSpeed: geo.launchSpeed, hitFrame: seg.hit,
+        tossSpeed: seg.toss ? Math.hypot(...seg.toss.v) * 20 / seg.toss.r * fps / 1000 : null, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };

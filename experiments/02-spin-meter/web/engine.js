@@ -1866,8 +1866,10 @@
       return Object.assign(base, { kind: rps >= COACH.target ? "good" : "unknown", alt: null, limit: Math.abs(f.towardCameraDeg) > COACH.sideOn ? "view" : "speed" });
     if (f.tossVel && f.launchVel) {
       const toss = norm(f.tossVel), dv = f.launchVel.map((x, j) => x - f.tossVel[j]);
-      // a toss falls onto the paddle at 0.3-4 m/s, and the impulse is bigger than its along-face part
-      if (toss >= 0.3 && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
+      // a toss falls onto the paddle (mostly down, upright: y down) at 0.3-4 m/s, and the impulse is
+      // bigger than its along-face part. Real clip T2: a 'toss' moving up was the hand or paddle.
+      const falling = f.tossVel[1] >= 0.3 && f.tossVel[1] >= Math.abs(f.tossVel[0]);
+      if (falling && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
         Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
     }
     const grip = base.grip;

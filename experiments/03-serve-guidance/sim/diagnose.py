@@ -35,8 +35,10 @@ def diagnose(rps, flight):
         why = "view" if abs(flight.get("towardCameraDeg", 0)) > SIDE_ON else "speed"
         return dict(kind="good" if rps >= TARGET else "unknown", alt=None, ratio=ratio, grip=None, rps=rps, speed=speed, why=why)
     grip = None
-    toss = np.linalg.norm(flight["tossVel"]) if flight.get("tossVel") else 0
-    if 0.3 <= toss <= 4.0:                       # a toss falls at 0.3-4 m/s at the paddle; else it was something else
+    tv = flight.get("tossVel") or [0, 0, 0]
+    toss = np.linalg.norm(tv)
+    # a toss falls onto the paddle, mostly down (upright camera: y down), at 0.3-4 m/s; else it was something else
+    if tv[1] >= 0.3 and tv[1] >= abs(tv[0]) and toss <= 4.0:
         dv = np.asarray(flight["launchVel"]) - np.asarray(flight["tossVel"])
         along = 2 * np.pi * rps * R / 1.5
         if dv @ dv > 1.1 * along * along:        # the impulse must be bigger than its along-face part

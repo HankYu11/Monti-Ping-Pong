@@ -25,10 +25,22 @@ RATIO_BAND = (0.85, 0.95)
 GRIP_BAND = (1.02, 1.18)
 RPS_BAND = (28.5, 31.5)
 
+SIDE_ON = 35.0           # degrees: past this the ball's speed comes from its size change, too rough
+MAX_RATIO = 1.65         # spin/speed can't pass 1.5 (a pure brush); well past it, the speed read wrong
+
 def diagnose(rps, flight):
     speed = flight["launchSpeed"]
     ratio = 2 * np.pi * rps * R / speed
-    grip = grip_used(rps, flight["launchVel"], flight["tossVel"]) if flight.get("tossVel") else None
+    if abs(flight.get("towardCameraDeg", 0)) > SIDE_ON or ratio > MAX_RATIO:
+        why = "view" if abs(flight.get("towardCameraDeg", 0)) > SIDE_ON else "speed"
+        return dict(kind="good" if rps >= TARGET else "unknown", alt=None, ratio=ratio, grip=None, rps=rps, speed=speed, why=why)
+    grip = None
+    toss = np.linalg.norm(flight["tossVel"]) if flight.get("tossVel") else 0
+    if 0.3 <= toss <= 4.0:                       # a toss falls at 0.3-4 m/s at the paddle; else it was something else
+        dv = np.asarray(flight["launchVel"]) - np.asarray(flight["tossVel"])
+        along = 2 * np.pi * rps * R / 1.5
+        if dv @ dv > 1.1 * along * along:        # the impulse must be bigger than its along-face part
+            grip = grip_used(rps, flight["launchVel"], flight["tossVel"])
     def thin():                               # thin contact: enough spin, or which of slip / slow
         if rps >= TARGET: return "good", ("slip" if grip is not None and grip >= SLIP else "slow") if rps < RPS_BAND[1] else None
         if grip is None: return ("slip" if ratio >= 1.25 else "slow"), None

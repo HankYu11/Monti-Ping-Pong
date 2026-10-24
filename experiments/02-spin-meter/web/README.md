@@ -353,6 +353,48 @@ The ball search, about 22 ms a frame, is now nearly all the time. Decoding alone
 
 The drawing has short labels only, so it stays readable at phone width; the details are in three lines under it (tripod height and tilt, landscape, 240 fps). It is inline SVG coloured from the page's theme, so it works in light and dark mode.
 
+## What to work on (3.0)
+
+A backspin serve now gets coaching under the reading: one finding, why, what to change, and a
+goal for the next serve. It comes from the stretch off the paddle (`SpinMeter.coach(serve)`):
+
+| Finding | Seen as | Fix |
+|---|---|---|
+| Pushed (thick contact) | spin ÷ speed under 0.9 | brush along under the ball, open the face |
+| Strong backspin | 30 rev/s or more, thin | keep it; work on placement |
+| Slid on the rubber | thin, under 30 rev/s, grip used at the rubber's limit | let the ball drop, brush slightly into it |
+| Brush too slow | thin, under 30 rev/s, the rubber held | accelerate through contact |
+
+Spin ÷ speed is the spin's surface speed over the ball's speed: 1.5 at most (a pure brush).
+Grip used comes from the contact impulse, the ball's velocity off the paddle minus the toss's
+velocity into it: its part along the face sets the spin (surface speed = 1.5 × that part,
+whatever the rubber), the rest pressed the ball into the rubber, and their ratio reaches the
+rubber's friction (~1.2) when the ball slid. Near a line (spin ÷ speed 0.85–0.95, grip
+1.02–1.18, 28.5–31.5 rev/s) the reading can't tell the two sides apart, so both are named.
+No contact advice when the ball flew more than 35° toward the camera (its speed then comes
+from its size change) or when spin ÷ speed reads impossibly high.
+
+For this the engine now reports the speed at the hit (`launchSpeed`, `launchVel`, not the
+middle of the stretch, which gravity has slowed by up to 20%) and the toss's velocity into the
+paddle (`tossVel`), finding the toss also when the paddle cut it off the flight. Two scale
+fixes came out of the testing:
+- ball size from the 85th percentile of its width, not the median: where the shaded white side
+  matches the wall it drops out and the ball reads small, speeds up to 16% fast;
+- a side-on backspin ball can't fall faster than gravity; when it seems to (by up to 15%), the
+  scale is corrected to match.
+
+The bounce check also accepts the larger spin loss of a slow serve dropping steeply onto the
+table (up to what table friction can take, from the speed it came down at); a doubled reading
+off the paddle is still caught.
+
+How it was checked (`experiments/03-serve-guidance`): a contact model (impulse with restitution
+and the rubber's grip, after Nakashima / Gossard 2026) turns paddle speed, angle, face tilt, toss
+and rubber into a serve, rendered as a 240 fps side-on video with a marked ball and run through
+this engine. On 80 such serves (40 used to tune, 40 fresh) it answered 55 and was right on 53;
+the other 25 had no clear reading (mostly the black half's pole facing the camera, so the
+marking hardly changed). On the 30 real clips no spin reading changed; the weak real backspin
+serve reads as pushed and the strong ones as strong.
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

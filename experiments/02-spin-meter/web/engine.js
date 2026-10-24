@@ -1631,8 +1631,11 @@
     const c = spinComponents(r.rps, axis, geo.f);
     // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
     // small (its shaded white side matched the wall) and so did every speed (synthetic test: up to
-    // +10%, all fixed by this). Topspin pulls down too, so only backspin is checked.
-    const fix = c.lift > 0 && geo.fallAccel > 9.81 ? 9.81 / geo.fallAccel : 1;
+    // +10%, all fixed by this). Topspin pulls down too, so only backspin is checked; and only side-on
+    // flights, as a ball coming toward the camera curves in the picture from perspective (real clips
+    // filmed that way 'fell' at up to 4 g). A bigger mismatch than 15% means something else.
+    const sideOn = Math.abs(geo.towardCameraDeg) < 15;
+    const fix = c.lift > 0 && sideOn && geo.fallAccel > 9.81 && geo.fallAccel < 9.81 / 0.85 ? 9.81 / geo.fallAccel : 1;
     // the toss: the same ball at the same distance, so the flight's scale (its own blurred size read 5-15% fast)
     const tossMs = seg.toss ? 2 * geo.mmPerPx * fix * fps / 1000 : 0;
     return {
@@ -1838,5 +1841,49 @@
     return out;
   }
 
-  global.SpinMeter = { analyze, parseMp4, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  // ------------------------------------------------------------ what to work on (backspin serves)
+  // From the reading off the paddle: the spin, the ball's velocity as it left the paddle and the
+  // toss's velocity as it reached it. The paddle changes the ball's velocity by the contact impulse
+  // (per unit mass, launch - toss); its part along the face sets the spin, whose surface speed is
+  // 1.5x that part whatever the rubber (hollow ball, I = 2/3 m r^2). So:
+  //   spin / speed (surface speed / ball speed): how thin the contact was, 1.5 for a pure brush
+  //   grip used (impulse along the face / into it): at the rubber's friction (~1.2) the ball slid
+  // Kinds: thick (pushed), good, slip (thin, slid), slow (thin, gripped, too slow a brush). Checked
+  // on simulated serve videos run through this engine (experiments/03-serve-guidance): right on
+  // 53 of 55 answered. Near a line a reading could be either side; both are named.
+  const COACH = { target: 30, thick: 0.9, slip: 0.92 * 1.2, mu: 1.2, ratioBand: [0.85, 0.95], gripBand: [1.02, 1.18],
+    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020 };
+  function coach(serve) {
+    const readings = (serve && (serve.phases || [serve])) || [];
+    const r = readings.find((x) => !x.error && x.reliable && x.phase !== "bounce" && x.flight);
+    if (!r) return { kind: "none", reason: readings.some((x) => !x.error && x.reliable) ? "paddle" : "reading" };
+    if (r.lift < 0.6 * r.rps) return { kind: "other", rps: r.rps, spinType: r.spinType };
+    const f = r.flight, rps = r.rps, speed = f.launchSpeed, ratio = 2 * Math.PI * rps * COACH.r / speed;
+    const along = 2 * Math.PI * rps * COACH.r / 1.5;          // impulse along the face, m/s
+    const brush = [along / COACH.carry[1], along / COACH.carry[0]];   // paddle speed along the face it takes, if it gripped
+    const base = { rps, speed, ratio, brush, phase: r.phase, toss: null, grip: null };
+    if (Math.abs(f.towardCameraDeg) > COACH.sideOn || ratio > COACH.maxRatio)
+      return Object.assign(base, { kind: rps >= COACH.target ? "good" : "unknown", alt: null, limit: Math.abs(f.towardCameraDeg) > COACH.sideOn ? "view" : "speed" });
+    if (f.tossVel && f.launchVel) {
+      const toss = norm(f.tossVel), dv = f.launchVel.map((x, j) => x - f.tossVel[j]);
+      // a toss falls onto the paddle at 0.3-4 m/s, and the impulse is bigger than its along-face part
+      if (toss >= 0.3 && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
+        Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
+    }
+    const grip = base.grip;
+    const thin = () => {
+      if (rps >= COACH.target) return ["good", rps < COACH.rpsBand[1] ? (grip != null && grip >= COACH.slip ? "slip" : "slow") : null];
+      if (grip == null) return [ratio >= 1.25 ? "slip" : "slow", null];
+      const kind = grip >= COACH.slip ? "slip" : "slow";
+      let alt = grip >= COACH.gripBand[0] && grip < COACH.gripBand[1] ? (kind === "slip" ? "slow" : "slip") : null;
+      if (rps >= COACH.rpsBand[0]) alt = "good";
+      return [kind, alt];
+    };
+    let kind, alt;
+    if (ratio < COACH.thick) { kind = "thick"; alt = ratio >= COACH.ratioBand[0] ? thin()[0] : null; }
+    else { [kind, alt] = thin(); if (ratio < COACH.ratioBand[1]) alt = "thick"; }
+    return Object.assign(base, { kind, alt });
+  }
+
+  global.SpinMeter = { analyze, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

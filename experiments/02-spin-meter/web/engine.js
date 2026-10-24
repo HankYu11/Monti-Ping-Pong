@@ -350,7 +350,7 @@
     const order = ts.map((t, k) => [t, k]).sort((u, v) => u[0] - v[0]);
     const presOfTs = new Map(), decOfPres = new Array(samples.length);
     order.forEach(([t, k], i) => { presOfTs.set(t, i); decOfPres[i] = k; });
-    const Wc = track.video.width, Hc = track.video.height, presT = order.map(([t]) => t);
+    const Wc = track.video.width, Hc = track.video.height;
     return {
       kind: "decoder", n: samples.length, W: Wc, H: Hc,
       // frames that decode on their own (keyframes), by frame number
@@ -383,11 +383,6 @@
         while (pending > 0) await wait();
         try { dec.close(); } catch (e) { /* already closed after an error */ }
         if (failure) throw failure;
-      },
-      indexAt(sec) {                          // first frame shown at or after this time in the file
-        const t = sec * 1e6 - 1000; let lo = 0, hi = presT.length;
-        while (lo < hi) { const m = (lo + hi) >> 1; if (presT[m] < t) lo = m + 1; else hi = m; }
-        return Math.min(lo, presT.length);
       },
       async run(from, to, cb) {
         to = Math.min(to, samples.length);
@@ -428,13 +423,6 @@
     };
   }
 
-  // Only part of a video: frames a..b-1, numbered from 0 (decoding starts at the keyframe before a)
-  function trimReader(R, a, b) {
-    return Object.assign({}, R, { n: b - a, trimFrom: a,
-      run: (from, to, cb) => R.run(from + a, Math.min(to + a, b), (i, src) => cb(i - a, src)),
-      keys: R.keys && R.keys.filter((i) => i >= a && i < b).map((i) => i - a),
-      runKeys: R.runKeys && ((list, cb) => R.runKeys(list.map((i) => i + a), (i, src) => cb(i - a, src))) });
-  }
   async function seekReader(file, playbackFps, nFramesHint) {   // fallback: slow but universal
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
@@ -453,7 +441,6 @@
     });
     return {
       kind: "seek", n, W: video.videoWidth, H: video.videoHeight,
-      indexAt: (sec) => clamp(Math.round(sec * playbackFps), 0, n),
       async run(from, to, cb) { for (let i = from; i < Math.min(to, n); i++) { await seek((i + 0.5) / playbackFps); await cb(i, video); } },
       close() { URL.revokeObjectURL(url); },
     };
@@ -1680,11 +1667,6 @@
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
-    // the part of the video the user picked (times in the file, as the video player shows them)
-    if (opts.trim && R.indexAt) {
-      const a = R.indexAt(Math.max(0, opts.trim.start || 0)), b = opts.trim.end ? Math.max(a + 1, R.indexAt(opts.trim.end)) : R.n;
-      if (a > 0 || b < R.n) { DBG.trim = { from: a, to: b, of: R.n }; R = trimReader(R, a, b); }
-    }
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
@@ -1693,7 +1675,7 @@
       checks.push(flightCheck(segs)); emit();
       const tFound = performance.now();
       DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation, trimFrom: R.trimFrom || 0 };
+      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
       DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });

@@ -263,7 +263,10 @@ Home clips filmed face-on (19 Oct, I–L) showed a new way to get a wrong "clear
 - **The rule.** Below 0.10 there is no clear reading for the black-half method. The tool says the ball showed the same side all the way, and suggests filming from the side. Readings from colour dots are exempt.
 - **Result.** All labelled readings are unchanged.
 
-## Measure only part of the video (2.7)
+## Measure only part of the video (2.7, removed in 2.9)
+
+Removed again in 2.9 at the user's request: choosing a video measures it straight away, as before. The engine's faster passes (2.8) stay.
+
 
 Decoding every frame is most of the work. A 20–60 s video with one serve in it spent most of its time on frames that don't matter, and other ball movements in it could be mistaken for the serve.
 
@@ -341,6 +344,14 @@ The ball search, about 22 ms a frame, is now nearly all the time. Decoding alone
 - *Compressed frame sizes* (free to read): motion during the serve is only 1.0–1.1× the clip's usual level, and 4–12% of frames are busier.
 - *White ball-like spots in keyframes:* 18–33 during a serve, but just as many elsewhere (up to 46): the ball basket, shirts, hands.
 - **So the manual Start/End trim stays** the way to skip most of a long video.
+
+## Setup drawing (2.9)
+
+"How to record" now opens with a drawing of the setup seen from above:
+- the table and net, the server, and the ball's path, with the measured part from the paddle to the first bounce highlighted;
+- the phone beside the table, level with the server's half, 1–1.5 m from the path (drawn about to scale), with its field of view.
+
+The drawing has short labels only, so it stays readable at phone width; the details are in three lines under it (tripod height and tilt, landscape, 240 fps). It is inline SVG coloured from the page's theme, so it works in light and dark mode.
 
 ## Versions and updates
 

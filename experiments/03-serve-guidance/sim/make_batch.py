@@ -30,11 +30,11 @@ while any(want.values()):
     if want[k] and h["speed"] >= 1.6:
         want[k] -= 1
         jobs.append(dict(name=f"{k}{per - want[k]:02d}", paddle=V, angle=a, fall=fall, kp=kp, tilt=tilt,
-                         height=rng.uniform(120, 300), seed=len(jobs)))
+                         height=rng.uniform(120, 300), diam=rng.uniform(20, 34), noise=rng.uniform(2, 5), seed=len(jobs)))
 here = os.path.dirname(os.path.abspath(__file__))
 def go(j):
     subprocess.run([sys.executable, os.path.join(here, "render_serve.py"), "--out", f"{out}/{j['name']}.mp4"] +
-                   [x for k in ("paddle", "angle", "fall", "kp", "tilt", "height", "seed") for x in (f"--{k}", str(j[k]))],
+                   [x for k in ("paddle", "angle", "fall", "kp", "tilt", "height", "diam", "noise", "seed") for x in (f"--{k}", str(j[k]))],
                    check=True, capture_output=True)
 with ThreadPoolExecutor(4) as ex: list(ex.map(go, jobs))
 print(len(jobs), "clips in", out)

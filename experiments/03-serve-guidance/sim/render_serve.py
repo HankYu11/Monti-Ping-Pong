@@ -5,7 +5,7 @@ table and bounces (the bounce is a contact with a still table, same model). Writ
 and OUT.json (the truth).
 
 Camera: side-on at about the table's height, the server on the left, the ball flies right.
-Image x = forward, image y = down. Ball 30 px across (40 mm), so 1.333 mm per pixel.
+Image x = forward, image y = down. Ball 30 px across by default (40 mm: 1.333 mm per pixel).
 
   python render_serve.py --out s.mp4 --paddle 6 --angle 10 --fall 1.2 --tilt -20 --seed 3
 """
@@ -21,13 +21,14 @@ p.add_argument("--fall", type=float, default=1.0, help="toss falling speed at co
 p.add_argument("--kp", type=float, default=0.70)
 p.add_argument("--tilt", type=float, default=-20.0, help="face normal leaning from straight up, deg (negative: toward the net)")
 p.add_argument("--height", type=float, default=200.0, help="contact height above the table, mm")
+p.add_argument("--diam", type=float, default=30.0, help="ball size in the picture, px")
 p.add_argument("--exposure", type=float, default=0.5)
 p.add_argument("--noise", type=float, default=3.0)
 p.add_argument("--seed", type=int, default=0)
 a = p.parse_args()
 rng = np.random.default_rng(a.seed)
 W, H, FPS = 1280, 720, 240.0
-DIAM = 30.0
+DIAM = a.diam
 MMPX = 40.0 / DIAM
 rad = DIAM / 2
 TABLE_Y = 0.72 * H                     # the table's top edge in the picture

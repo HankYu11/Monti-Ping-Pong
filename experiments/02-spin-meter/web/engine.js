@@ -777,6 +777,7 @@
     // instead let a long noise track push the real serve out and then yield nothing.
     const gap = opt.serveGap ?? 120, built = [];
     for (let tr of good) {
+      const whole = tr;
       // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
       for (let k = 1; k < tr.length; k++) {
@@ -801,9 +802,21 @@
       const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
       // the toss as it reached the paddle: how hard it pressed into the rubber (a thin brush can
       // only grip that hard), in picture px per frame and the ball's radius, both at search scale
-      const tossPts = hitSeen && s0 > 0 ? pieces[s0 - 1].pts.slice(-6) : [];
-      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])) } : null;
-      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitSeen ? first.pts[0][0] : null), { toss }));
+      const t0 = hitSeen && s0 > 0 ? pieces[s0 - 1].pts : tossBefore(whole, first.pts, tracks);
+      // not its last frames: the paddle reaching the ball merges with it there and carries the
+      // blob along the flight. A toss goes another way than the flight (more than 45 degrees off).
+      const vf0 = velocity(first.pts, 0, Math.min(first.pts.length, 6));
+      const offFlight = (q) => { const v = velocity(q, 0, q.length); return dot([...v, 0], [...vf0, 0]) < Math.SQRT1_2 * Math.hypot(...v) * Math.hypot(...vf0); };
+      let tossPts = [];
+      for (let cut = 2; t0 && cut <= 6 && t0.length - cut >= 3; cut++) {
+        const q = t0.slice(Math.max(0, t0.length - cut - 6), t0.length - cut);
+        if (offFlight(q)) { tossPts = q; break; }
+      }
+      if (t0 && !tossPts.length && t0.length < 5 && offFlight(t0)) tossPts = t0;
+      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])), t: tossPts.reduce((s, p) => s + p[0], 0) / tossPts.length } : null;
+      const hitAt = toss ? meetFrame(tossPts, toss.v, first.pts) : hitSeen ? first.pts[0][0] : null;
+      if (toss && hitAt != null) toss.dt = hitAt - toss.t;      // frames from the toss's mean frame to the hit
+      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitAt), { toss }));
       else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
         edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
           "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
@@ -825,6 +838,26 @@
     for (const sv of built.sort((a, b) => b.score - a.score))
       if (segs.every((f) => sv.start > f.end + gap || sv.end < f.start - gap)) segs.push(sv);
     DBG.search.serves = segs.map((sv) => `${sv.start}-${sv.end} score ${Math.round(sv.score)}`);
+    // The toss just before the flight began, when the kink wasn't seen in one track: a slow toss
+    // gets cut from the moving part, or the paddle covered the ball and the toss is a track of its
+    // own, ending next to where the flight starts. Its points, or null.
+    function tossBefore(whole, flight, all) {
+      const f0 = flight[0], v0 = velocity(flight, 0, Math.min(flight.length, 6)), win = (p) => p[0] < f0[0] && p[0] >= f0[0] - 12;
+      const slower = (q) => Math.hypot(...velocity(q, 0, q.length)) < 0.6 * Math.hypot(...v0);
+      let q = whole.filter(win);
+      if (q.length >= 3 && slower(q)) return q;
+      const near = all.map((o) => o.filter(win)).filter((o) => o.length >= 3 && slower(o) &&
+        Math.hypot(o[o.length - 1][1] - f0[1], o[o.length - 1][2] - f0[2]) < 8 * f0[3]);
+      return near.sort((a, b) => b[b.length - 1][0] - a[a.length - 1][0])[0] || null;
+    }
+    // where the toss's path and the flight's path meet: the hit, between the toss's last frame and the flight's first
+    function meetFrame(toss, vt, flight) {
+      const a = toss[toss.length - 1], b = flight[0], vf = velocity(flight, 0, Math.min(flight.length, 6));
+      // toss at t: a + vt (t - a0); flight at t: b + vf (t - b0); closest at the least-squares t
+      const dx = [a[1] - vt[0] * a[0] - b[1] + vf[0] * b[0], a[2] - vt[1] * a[0] - b[2] + vf[1] * b[0]], dv = [vt[0] - vf[0], vt[1] - vf[1]];
+      const t = -(dx[0] * dv[0] + dx[1] * dv[1]) / Math.max(1e-9, dv[0] * dv[0] + dv[1] * dv[1]);
+      return clamp(t, a[0], b[0]);
+    }
     function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
       const m = 3 * p[3] + 6;
       return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
@@ -1378,6 +1411,9 @@
     return ax > 0 ? [[0, -1, 0], [1, 0, 0], [0, 0, 1]] : [[0, 1, 0], [-1, 0, 0], [0, 0, 1]];
   }
   // centre: where the crop's (0, 0) sits relative to the middle of the picture, in pixels
+  function launchV(px, py, t, u, v, dlnr, fpx, dist, fps) {   // the ball's velocity at frame t of the stretch, m/s
+    return scale([(2 * px[0] * t + px[1]) / fpx - u * dlnr, (2 * py[0] * t + py[1]) / fpx - v * dlnr, dlnr], dist * fps / 1000);
+  }
   function flightGeometry(balls, fps, frameWidth, hfov, centre = [0, 0], launchAt = 0) {
     const { cx: px, cy: py, t, keep } = smoothFit(balls, 2.5, 3);
     const rr = balls.filter(Boolean).map((b) => b[2]);
@@ -1392,9 +1428,12 @@
     const u = (polyval(px, tm) + centre[0]) / fpx, v = (polyval(py, tm) + centre[1]) / fpx;
     let f = [vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr]; f = scale(f, 1 / norm(f));
     // scale from the ball's width across its blur streak: motion blur makes it look longer, and
-    // its full size read as bigger made fast balls read up to 12% slow (synthetic test)
+    // its full size read as bigger made fast balls read up to 12% slow (synthetic test). Not the
+    // median: where the white half's shaded side matches the wall it drops out and the ball looks
+    // smaller, and in some clips most frames (up to 16% fast); the ball turns, so some frames show
+    // all of it.
     const rNarrow = balls.filter(Boolean).map((b) => (b.length > 4 ? b[4] : b[2]));
-    const mmpx = 40.0 / (2 * median(rNarrow)), toMs = mmpx / 1000 * fps;
+    const mmpx = 40.0 / (2 * percentile(rNarrow, 85)), toMs = mmpx / 1000 * fps;
     const dist = fpx * mmpx;                  // ball distance in mm (40 mm ball)
     // Which way is down: the ball's acceleration in space (gravity, plus a little lift), from its
     // 3D path (distance from its size). Side-on this is the same as the curve in the picture;
@@ -1411,9 +1450,12 @@
       speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000,
       // at the hit (frame launchAt of this stretch): gravity slows a rising ball by 4 cm/s a frame,
       // so the middle of the stretch reads up to 20% under what the paddle gave it
-      launchSpeed: dist * Math.hypot((2 * px[0] * launchAt + px[1]) / fpx - u * dlnr, (2 * py[0] * launchAt + py[1]) / fpx - v * dlnr, dlnr) * fps / 1000,
+      launchSpeed: norm(launchV(px, py, launchAt, u, v, dlnr, fpx, dist, fps)),
+      launchVel: matvec(turn, launchV(px, py, launchAt, u, v, dlnr, fpx, dist, fps)),   // m/s, upright camera axes
       towardCameraDeg: Math.asin(clamp(f[2], -1, 1)) * 180 / Math.PI,
       downAccel: acc[1] * fps * fps / 1000, mmPerPx: mmpx,
+      // downward in the picture at this scale, m/s^2 (not the sideways part: air drag)
+      fallAccel: (turn[1][0] * 2 * px[0] + turn[1][1] * 2 * py[0]) * toMs * fps,
     };
   }
   function spinComponents(rps, axis, f) {
@@ -1587,6 +1629,12 @@
     const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2], seg.hit != null ? seg.hit - seg.start : 0);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
+    // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
+    // small (its shaded white side matched the wall) and so did every speed (synthetic test: up to
+    // +10%, all fixed by this). Topspin pulls down too, so only backspin is checked.
+    const fix = c.lift > 0 && geo.fallAccel > 9.81 ? 9.81 / geo.fallAccel : 1;
+    // the toss: the same ball at the same distance, so the flight's scale (its own blurred size read 5-15% fast)
+    const tossMs = seg.toss ? 2 * geo.mmPerPx * fix * fps / 1000 : 0;
     return {
       rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
       backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
@@ -1596,8 +1644,10 @@
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed, launchSpeed: geo.launchSpeed, hitFrame: seg.hit,
-        tossSpeed: seg.toss ? Math.hypot(...seg.toss.v) * 20 / seg.toss.r * fps / 1000 : null, towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
+      flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
+        // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)
+        tossVel: seg.toss ? matvec(geo.turn, scale([...seg.toss.v, 0], tossMs)).map((x, j) => x + (j === 1 ? 9.81 * (seg.toss.dt || 0) / fps : 0)) : null,
+        launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };
@@ -1607,13 +1657,21 @@
   // serve should spin a little faster off the paddle than after the bounce: in our clips by
   // 1.35–1.6×. Off the paddle is the shorter stretch, so when the two disagree it is the one
   // doubted (a wrong rate there is usually half or double the true one).
-  const BOUNCE_RATIO = [0.9, 2.2];
+  // A slow serve that drops steeply onto the table loses more: the ball slides on the table, which
+  // takes 1.5 x friction x (1 + restitution) x the speed it comes down at off the spin's surface
+  // speed. With table friction up to 0.4 that is at most 1.14 x the down speed (plus 15%), still
+  // far short of what a doubled paddle reading would need.
+  const BOUNCE_RATIO = [0.9, 2.2], TABLE_LOSS = 1.5 * 0.4 * 1.9 * 1.15, TABLE_E = 0.9;
   function crossCheck(readings) {
     const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
     const bnc = readings.find((r) => r.phase === "bounce" && !r.error && r.reliable);
     if (!pad || !bnc || pad.lift <= 0 || bnc.lift <= 0) return;
-    const ratio = pad.rps / bnc.rps, ok = ratio >= BOUNCE_RATIO[0] && ratio <= BOUNCE_RATIO[1];
-    pad.crossCheck = { ratio, ok };
+    const ratio = pad.rps / bnc.rps;
+    // the speed it came down at: it left the table at about restitution x that (upright: y down)
+    const up = bnc.flight && bnc.flight.launchVel ? -bnc.flight.launchVel[1] : 0;
+    const loss = 2 * Math.PI * 0.020 * (pad.lift - bnc.lift), lossMax = TABLE_LOSS * Math.max(0, up) / TABLE_E;
+    const ok = ratio >= BOUNCE_RATIO[0] && (ratio <= BOUNCE_RATIO[1] || loss <= lossMax);
+    pad.crossCheck = { ratio, ok, loss, lossMax };
     if (ok) return;
     pad.reliable = false;
     pad.issues = (pad.issues || []).concat({

@@ -194,7 +194,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 3.0 · build 5879f26</p>
+    <p class="note num">Version 3.0.1 · build bb6d68a</p>
     <div class="install" id="install" hidden>
       <p id="install-text">Install Spin Meter on this phone: it opens like an app, works offline, and shows up in the Share menu, so you can send a video straight from Photos.</p>
       <button class="btn" id="install-btn" type="button" hidden>Install app</button>
@@ -2308,8 +2308,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
       return Object.assign(base, { kind: rps >= COACH.target ? "good" : "unknown", alt: null, limit: Math.abs(f.towardCameraDeg) > COACH.sideOn ? "view" : "speed" });
     if (f.tossVel && f.launchVel) {
       const toss = norm(f.tossVel), dv = f.launchVel.map((x, j) => x - f.tossVel[j]);
-      // a toss falls onto the paddle at 0.3-4 m/s, and the impulse is bigger than its along-face part
-      if (toss >= 0.3 && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
+      // a toss falls onto the paddle (mostly down, upright: y down) at 0.3-4 m/s, and the impulse is
+      // bigger than its along-face part. Real clip T2: a 'toss' moving up was the hand or paddle.
+      const falling = f.tossVel[1] >= 0.3 && f.tossVel[1] >= Math.abs(f.tossVel[0]);
+      if (falling && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
         Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
     }
     const grip = base.grip;
@@ -2595,7 +2597,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "3.0 (5879f26)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "3.0.1 (bb6d68a)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };
@@ -2711,7 +2713,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <button class="btn" id="update-reload" type="button">Reload</button>
   </div>
 </div>
-<span id="app-build" data-build="5879f26" hidden></span>
+<span id="app-build" data-build="bb6d68a" hidden></span>
 <script>
 // App build only: offline support, the install button, and videos shared from other apps.
 (function () {

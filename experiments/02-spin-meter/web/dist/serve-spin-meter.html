@@ -185,7 +185,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 3.0.1 · build bb6d68a</p>
+    <p class="note num">Version 3.0.2 · build 838587a</p>
     
   </header>
 
@@ -2437,6 +2437,11 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   function showDebug(res, file) {
     const serveInfo = (res.serves || []).map((s) => (s.phases || [s]).map((r) => ({ phase: r.phase, frames: r.nFrames,
       rps: r.rps && +r.rps.toFixed(2), fit: r.fit && +r.fit.toFixed(3), next: r.runnerUp && +(+r.runnerUp).toFixed(3), clear: !!r.reliable, error: r.error, marking: r.marking, dots: r.dots && r.dots.seen,
+      // how the spin was split, and what the split rests on: the axis, the flight's direction, which way is down
+      type: r.spinType, split: r.rps ? [r.lift, r.curve, r.gyro].map((v) => +(+v).toFixed(1)) : undefined,
+      axis: r.camAxis && r.camAxis.map((v) => +v.toFixed(2)), mirrored: r.mirrored || undefined,
+      flight: r.flight && { dir: r.flight.dir.map((v) => +v.toFixed(2)), toward: +r.flight.towardCameraDeg.toFixed(0), rotated: r.flight.rotatedDeg,
+        down: +r.flight.downAccel.toFixed(2), speed: +r.flight.launchSpeed.toFixed(2), hit: r.flight.hitFrame, toss: r.flight.tossVel && r.flight.tossVel.map((v) => +v.toFixed(2)) },
       issues: (r.issues || []).map((i) => i.text) })).concat((s.notes || []).map((n) => ({ note: n.text }))));
     const info = Object.assign({ version: VERSION, browser: navigator.userAgent, seconds: res.meta && +res.meta.seconds.toFixed(1) },
       res.meta && res.meta.debug, { checks: (res.checks || []).filter((c) => c.status !== "ok").map((c) => c.title), serves: serveInfo });
@@ -2585,7 +2590,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "3.0.1 (bb6d68a)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "3.0.2 (838587a)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };

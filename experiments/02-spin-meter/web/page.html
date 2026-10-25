@@ -326,8 +326,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <p id="coach-why"></p>
     <ol class="coach-fix" id="coach-fix"></ol>
     <p class="coach-goal" id="coach-goal"></p>
+    <p class="coach-alt" id="coach-len" hidden></p>
     <div class="trust">
       <p><b>How it works:</b> from the spin, the ball's speed off the paddle and the toss's speed into it. Physics of the contact says how thin it was and whether the ball gripped the rubber or slid.</p>
+      <p><b>Length:</b> from a flight model (air drag, the lift backspin gives, the table bounce), not yet checked on a table.</p>
       <p><b>How sure:</b> on 80 simulated serves run through this meter it answered 55 and was right on 53. On the real serves so far the weak one read as pushed and the strong ones as strong. Needs a side-on view and a backspin serve.</p>
     </div>
   </section>
@@ -640,6 +642,14 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     if (c.toss != null) chips.push(`<span class="chip">toss ${fmt(c.toss, 1)} m/s</span>`);
     $("coach-chips").innerHTML = chips.join("");
     $("coach-alt").hidden = true;
+    const len = c.length;
+    $("coach-len").hidden = !(len && len.long);
+    if (len && len.long) {
+      const lo = window.SpinMeter.COACH.shortSpeed;
+      $("coach-len").textContent = `Length: at ${fmt(c.speed, 1)} m/s the ball is likely too fast to stay short on a table (into the net or long); a short serve leaves at about ${fmt(lo[0], 1)}–${fmt(lo[1], 0)} m/s. ` +
+        (len.thinSpeed <= lo[1] ? `Keep the spin and brush thinner: at spin ÷ speed ${fmt(window.SpinMeter.COACH.thinRatio, 2)} this spin leaves at about ${fmt(len.thinSpeed, 1)} m/s. Slowing the swing would cost spin instead.` :
+          `This much spin can't leave under ${fmt(lo[1], 0)} m/s even with a pure brush (at least ${fmt(len.minSpeed, 1)} m/s): fine for a long serve; for a short one, take a little less spin.`);
+    }
     const t = COACH_TEXT[c.kind];
     if (!t) {
       $("coach-title").className = "coach-title";
@@ -658,7 +668,10 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     $("coach-title").className = "coach-title" + (c.kind === "good" ? " good" : "");
     $("coach-title").textContent = t.title;
     $("coach-why").textContent = say(t.why);
-    $("coach-fix").innerHTML = t.fix.map((x) => `<li>${x}</li>`).join("");
+    // strong but too fast to stay short: the contact isn't done yet
+    const fix = c.kind === "good" && len && len.long ? ["Keep the spin, and brush thinner (open the face more, graze the bottom of the ball) so it leaves slower: see Length below.",
+      "Then work on placement: short (two bounces on their side) and low over the net."] : t.fix;
+    $("coach-fix").innerHTML = fix.map((x) => `<li>${x}</li>`).join("");
     $("coach-goal").hidden = false;
     $("coach-goal").textContent = say(t.goal);
     if (c.alt && COACH_TEXT[c.alt]) {

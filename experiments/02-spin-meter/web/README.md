@@ -395,6 +395,18 @@ the other 25 had no clear reading (mostly the black half's pole facing the camer
 marking hardly changed). On the 30 real clips no spin reading changed; the weak real backspin
 serve reads as pushed and the strong ones as strong.
 
+## Length (3.1)
+
+A backspin serve that leaves faster than 4 m/s gets a length note: likely too fast to stay short
+on a table, with the speed this spin would leave at from a thinner brush (spin ÷ speed 1.45).
+From a flight model (`experiments/03-serve-guidance/sim/landing.py`: drag, lift from the spin,
+table bounce with friction): from 15–30 cm above the table a short serve leaves at about
+3.25–4 m/s, almost whatever the spin (30, 40 and 50 rev/s land nearly alike); slower bounces
+twice on the server's side, faster goes into the net or long. As the spin's surface speed is at
+most 1.5× the ball's, strong spin needs some speed: 44 rev/s can't leave under 3.7 m/s. Real
+serves against a wall (T3, T4, U1, U2): 36–44 rev/s at 3.9–4.7 m/s, spin ÷ speed 1.0–1.25. Not
+yet checked against serves on a table.
+
 ## Which way is down (3.0.3)
 
 The engine works out which way is down from the ball's own acceleration, so a phone held

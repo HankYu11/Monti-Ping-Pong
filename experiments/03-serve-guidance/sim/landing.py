@@ -15,6 +15,7 @@ K = 0.5 * RHO * A / M
 G = 9.81
 NET_X, NET_H, END = 1.37, 0.1525, 2.74
 E_T, MU_T = 0.9, 0.25
+CL_SCALE = 1.0          # for testing how much the lift matters
 
 def fly(x, y, vx, vy, w, until_bounces=3, dt=1e-4, net_check=True):
     """2D side view: x toward the receiver, y up from the table; w > 0 is backspin (rad/s).
@@ -23,7 +24,7 @@ def fly(x, y, vx, vy, w, until_bounces=3, dt=1e-4, net_check=True):
     while len(bounces) < until_bounces and x < END + 1.5 and x > -1.0:
         v = np.hypot(vx, vy)
         S = abs(w) * R / max(v, 1e-6)
-        cl = S / (2 * S + 1)
+        cl = CL_SCALE * S / (2 * S + 1)
         # drag along -v; lift perpendicular: backspin lifts (rotate v by +90 deg for w > 0)
         ax = -K * 0.45 * v * vx + np.sign(w) * K * cl * v * (-vy)
         ay = -G - K * 0.45 * v * vy + np.sign(w) * K * cl * v * vx

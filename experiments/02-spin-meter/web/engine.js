@@ -762,7 +762,12 @@
       if (disp < 0.6 * path) return no("zigzag");
       if (dy < 0 && -dy > Math.abs(dx)) return no("upward (toss)");
       const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
-      if (dy > 2 * Math.abs(dx) && grow < 1.3 && grow > 1 / 1.3) return no("straight drop");
+      // the size away from the ends too: at its ends a toss merges with the head or the paddle
+      // (real clip V1: a toss from above the head read as shrinking 11 -> 3 px and passed as a flight)
+      const n = tr.length, part = (a, b) => median(tr.slice(Math.floor(a * n), Math.max(Math.floor(a * n) + 1, Math.floor(b * n))).map((p) => p[3]));
+      const growMid = part(0.625, 0.875) / Math.max(1e-6, part(0.125, 0.375));
+      const steady = (g, lim) => g < lim && g > 1 / lim;
+      if (dy > 2 * Math.abs(dx) && (steady(grow, 1.3) || steady(growMid, 1.15))) return no("straight drop");
       return true;
     });
     const fmtTr = (tr) => `${tr[0][0]}-${tr[tr.length - 1][0]} (${tr.length}) ${tr[0].slice(1, 3).map(Math.round)}->${tr[tr.length - 1].slice(1, 3).map(Math.round)} r${tr[0][3].toFixed(1)}-${tr[tr.length - 1][3].toFixed(1)}`;
@@ -1858,8 +1863,7 @@
   // on simulated serve videos run through this engine (experiments/03-serve-guidance): right on
   // 53 of 55 answered. Near a line a reading could be either side; both are named.
   const COACH = { target: 30, thick: 0.9, slip: 0.92 * 1.2, mu: 1.2, ratioBand: [0.85, 0.95], gripBand: [1.02, 1.18],
-    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020,
-    shortSpeed: [3.25, 4.0], thinRatio: 1.45 };
+    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020 };
   function coach(serve) {
     const readings = (serve && (serve.phases || [serve])) || [];
     const r = readings.find((x) => !x.error && x.reliable && x.phase !== "bounce" && x.flight);
@@ -1879,13 +1883,6 @@
       if (falling && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
         Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
     }
-    // Length. From 15-30 cm above the table a short serve leaves at about 3.25-4 m/s whatever its
-    // spin; faster goes into the net or long (flight with drag and lift, table bounce:
-    // experiments/03-serve-guidance/sim/landing.py; not yet checked on a table). The spin needs
-    // speed, as its surface speed is at most 1.5x the ball's: a thinner brush keeps the spin and
-    // slows the ball.
-    const surface = 2 * Math.PI * rps * COACH.r;
-    base.length = { long: speed > COACH.shortSpeed[1], thinSpeed: surface / COACH.thinRatio, minSpeed: surface / 1.5 };
     const grip = base.grip;
     const thin = () => {
       if (rps >= COACH.target) return ["good", rps < COACH.rpsBand[1] ? (grip != null && grip >= COACH.slip ? "slip" : "slow") : null];

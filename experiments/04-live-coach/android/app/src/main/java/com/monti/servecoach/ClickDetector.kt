@@ -10,8 +10,8 @@ import kotlin.math.max
 /**
  * Hears the hit: the paddle striking the ball is a short, sharp click. Every 5 ms of sound is
  * compared with the room's recent background (high frequencies only, so voices and footsteps
- * count less); a jump well above it is a click. After a click, the next 1.5 s are ignored (the
- * bounces). Reports the click's time on the System.nanoTime() clock.
+ * count less); a jump well above it is a click. After a click, the next 2.5 s are ignored (the
+ * bounces, catching the ball; 0.1 took one 1.6 s after a hit). Reports the click's time on the System.nanoTime() clock.
  */
 class ClickDetector(private val onClick: (nanoTime: Long, level: Double) -> Unit) {
     private val rate = 48000
@@ -73,7 +73,7 @@ class ClickDetector(private val onClick: (nanoTime: Long, level: Double) -> Unit
                     if (r.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS)
                         t = ts.nanoTime + (sampleIndex - ts.framePosition) * 1_000_000_000L / rate
                     if (t > quietUntil) {
-                        quietUntil = t + 1_500_000_000L
+                        quietUntil = t + 2_500_000_000L
                         onClick(t, e / bg)
                     }
                 }

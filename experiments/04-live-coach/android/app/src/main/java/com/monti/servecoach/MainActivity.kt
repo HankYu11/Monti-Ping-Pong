@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -14,6 +15,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.SurfaceHolder
@@ -63,7 +65,8 @@ class MainActivity : Activity() {
     private var running = false
     private var engineReady = false
     private var engineBusy = false
-    private var pending: Pair<Int, File>? = null
+    private val queue = ArrayDeque<Pair<Int, File>>()   // clips waiting for the engine, oldest first
+    private val history = ArrayDeque<String>()           // the last few serves, for the screen
     private var clipNo = 0
 
     private val report = JSONObject()
@@ -148,7 +151,9 @@ class MainActivity : Activity() {
         if (c != null) sb.append("Camera ${c.size.width}×${c.size.height} @ ${c.fps} fps, ${c.mime.substringAfter('/')} (${c.encoder})\n")
         if (r != null && running) sb.append("Recording: ${r.recentFps().roundToInt()} frames in the last second\n")
         clicks?.let { sb.append("Ear: ${it.source}, level ${"%.1f".format(it.lastLevel)}× background, click at ${"%.0f".format(it.sensitivity)}×\n") }
-        sb.append("Engine: ${if (engineReady) (if (engineBusy) "measuring…" else "ready") else "loading"} · serves measured ${results.length()}\n")
+        sb.append("Engine: ${if (engineReady) (if (engineBusy) "measuring…" else "ready") else "loading"} · serves measured ${results.length()}" +
+            (if (queue.isNotEmpty()) " · ${queue.size} waiting" else "") + "\n")
+        if (history.isNotEmpty()) sb.append("\n").append(history.joinToString("\n"))
         statusText.text = sb.toString()
     }
 
@@ -231,7 +236,9 @@ class MainActivity : Activity() {
         val hitUs = (tNano + offset) / 1000
         log("hit", "$how level ${"%.1f".format(level)} at ${hitUs / 1000} ms (clock check ${(offsetExpected - offsetArrival) / 1_000_000} ms)")
         bigText.text = "Hit heard…"
-        cutWhenReady(hitUs - 600_000, hitUs + 1_200_000, SystemClock.uptimeMillis())
+        // the toss just before the hit, and the flight to the bounce: 0.3 s before to 0.8 s after
+        // (0.1: 0.6 s to 1.2 s, 440 frames, 9-16 s to measure on a Pixel 8)
+        cutWhenReady(hitUs - 300_000, hitUs + 800_000, SystemClock.uptimeMillis())
     }
 
     private fun manualServe() {
@@ -239,7 +246,7 @@ class MainActivity : Activity() {
         val newest = rec.newestPtsUs()
         if (newest < 0) return
         log("hit", "button")
-        cutWhenReady(newest - 2_000_000, newest, SystemClock.uptimeMillis())
+        cutWhenReady(newest - 1_200_000, newest, SystemClock.uptimeMillis())
     }
 
     private fun cutWhenReady(fromUs: Long, toUs: Long, askedAt: Long) {
@@ -284,7 +291,11 @@ class MainActivity : Activity() {
     }
 
     private fun analyse(n: Int, file: File) {
-        if (!engineReady || engineBusy) { pending = n to file; return }
+        if (!engineReady || engineBusy) {
+            queue.addLast(n to file)
+            while (queue.size > 3) queue.removeFirst().second.delete()   // fall behind no more than three serves
+            return
+        }
         engineBusy = true
         started = SystemClock.uptimeMillis()
         bigText.text = "Measuring…"
@@ -307,7 +318,8 @@ class MainActivity : Activity() {
             r.put("clip", id).put("wallMs", wall)
             results.put(r)
             show(r)
-            pending?.let { (pn, pf) -> pending = null; analyse(pn, pf) }
+            keepClip(id, r)
+            queue.removeFirstOrNull()?.let { (pn, pf) -> analyse(pn, pf) }
         }
     }
 
@@ -323,9 +335,12 @@ class MainActivity : Activity() {
         val sv = r.optJSONObject("serve")
         val coach = r.optJSONObject("coach")
         val secs = r.optLong("wallMs") / 1000.0
+        val ballPx = sv?.optDouble("ballPx", 0.0) ?: 0.0
+        val closer = if (ballPx in 1.0..24.0) "\nThe ball is only ${ballPx.roundToInt()} px across: move the phone closer (1–1.5 m from the ball's path)." else ""
         if (sv == null || !sv.optBoolean("clear")) {
             val why = r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
-            say("No clear reading", coach = "$why  (${"%.1f".format(secs)} s)")
+            say("No clear reading", coach = "$why  (${"%.1f".format(secs)} s)$closer")
+            addHistory(r.optInt("clip"), "no clear reading")
             return
         }
         val rps = sv.optDouble("rps")
@@ -344,8 +359,37 @@ class MainActivity : Activity() {
             append("measured in ${"%.1f".format(secs)} s")
         }
         bigText.text = "${rps.roundToInt()} rev/s · ${(rps * 60).roundToInt()} RPM"
-        coachText.text = "$type\n$tip\n$numbers"
+        coachText.text = "$type\n$tip\n$numbers$closer"
+        addHistory(r.optInt("clip"), "${rps.roundToInt()} rev/s $type" + (if (t != null) " · ${t.first}" else ""))
         tts?.speak("$spoken. ${t?.first ?: ""}", TextToSpeech.QUEUE_FLUSH, null, "r")
+    }
+
+    private fun addHistory(n: Int, line: String) {
+        history.addFirst("#$n  $line")
+        while (history.size > 6) history.removeLast()
+    }
+
+    /**
+     * Keeps each measured clip in the phone's videos (Movies/ServeCoach), named by time and
+     * number, so a wrong reading can be looked at (and sent back); the report names the file.
+     */
+    private fun keepClip(n: Int, r: JSONObject) {
+        val src = File(cacheDir, "serve_$n.mp4")
+        if (!src.exists()) return
+        val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_$n.mp4"
+        Thread {
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
+                }
+                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                main.post { r.put("savedAs", "Movies/ServeCoach/$name") }
+            } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }
+            src.delete()
+        }.start()
     }
 
     // ------------------------------------------------------------------ report
@@ -355,7 +399,7 @@ class MainActivity : Activity() {
     }
 
     private fun copyReport() {
-        report.put("events", events).put("results", results).put("app", "0.1")
+        report.put("events", events).put("results", results).put("app", "0.2")
         clicks?.let { report.put("ear", JSONObject().put("source", it.source).put("sensitivity", it.sensitivity)) }
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

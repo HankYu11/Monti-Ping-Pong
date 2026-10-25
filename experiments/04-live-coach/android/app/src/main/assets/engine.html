@@ -9,7 +9,7 @@
   const pick = (r) => r && {
     phase: r.phase, rps: r.rps, rpm: r.rpm, type: r.spinType, clear: !!r.reliable, error: r.error || null,
     lift: r.lift, fit: r.fit, speed: r.flight && r.flight.launchSpeed, toward: r.flight && r.flight.towardCameraDeg,
-    frames: r.nFrames, issues: (r.issues || []).map((i) => i.text),
+    frames: r.nFrames, issues: (r.issues || []).map((i) => i.text), ballPx: r.ballRadiusPx ? 2 * r.ballRadiusPx : undefined,
   };
   async function analyse(url, id) {
     const t0 = performance.now();

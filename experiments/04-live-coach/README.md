@@ -35,6 +35,25 @@ Checked here: the APK builds; `engine.html` runs the engine on a real clip (V2: 
 backspin, "strong backspin", 7 s on a 4-core machine). Not checkable here: the camera, the
 encoder at 240 fps, the ear in a real room, the engine's time on the phone.
 
+## What 0.1 showed (Pixel 8, Android 17)
+
+- 1920×1080 at a fixed 240 fps is open to apps; H.264 keeps up: 240 frames a second arrived.
+- The ear heard the hits (5 of them, 7–10,000× the background); clips were cut 0.1–0.9 s later.
+- The frames' timestamps are not on the boot clock the camera reports but on the uptime
+  clock; the arrival-time check caught it and the clips were cut in the right place.
+- The engine ran in the WebView (WebCodecs, 7 workers) but took 9–16 s for a 1.8 s clip (about
+  30 frames a second, as in the web app on this phone), and only 1 of 4 clips read clearly
+  (31.6 rev/s backspin); one read a 16 px ball at 15.7 m/s toward the camera.
+
+## 0.2
+
+- clips from 0.3 s before the hit to 0.8 s after (about 260 frames, was 440): faster;
+- every measured clip saved to the phone's videos (Movies/ServeCoach), named in the report, so a
+  wrong reading can be looked at;
+- a queue (up to three serves waiting), 2.5 s of deafness after a hit (0.1 took a second click
+  1.6 s after one), the last six serves listed on screen;
+- a ball under 24 px across: "move the phone closer".
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

@@ -6,9 +6,11 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -34,21 +36,20 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.monti.servecoach.core.Capture
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.FileInputStream
+import java.io.RandomAccessFile
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Serve Coach Live. Set the phone up beside the table (landscape, side-on, as in the spin meter's
- * "How to record"), press Start and serve: the phone records slow motion all the time, hears each
- * hit, cuts out the serve, measures it with the spin meter's own engine and says how it went.
- *
- * This first version is also the feasibility check: Report collects what the phone offers and
- * how fast each step was, to copy and send back.
+ * Serve Coach Live. Put the phone beside the table (landscape, side-on, 1-1.5 m from the ball's
+ * path) and press Start: it records slow motion all the time, spots each serve in the picture,
+ * measures it with the spin meter's own engine and says how it went. Nothing to press between
+ * serves. "Test with a video" runs a saved slow-motion clip through the same steps.
  */
 class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
@@ -60,45 +61,51 @@ class MainActivity : Activity() {
     private lateinit var camera: HighSpeedCamera
     private var cfg: HighSpeedCamera.Config? = null
     private var recorder: ClipRecorder? = null
-    private var clicks: ClickDetector? = null
+    private var pipeline: LivePipeline? = null
     private var tts: TextToSpeech? = null
-    private var running = false
+    private var mode = Mode.IDLE
+    private enum class Mode { IDLE, LIVE, REPLAY }
+
     private var engineReady = false
     private var engineBusy = false
-    private val queue = ArrayDeque<Pair<Int, File>>()   // clips waiting for the engine, oldest first
-    private val history = ArrayDeque<String>()           // the last few serves, for the screen
-    private var clipNo = 0
+    private val waiting = ArrayDeque<Capture.Info>()       // serves spotted, waiting for the engine
+    private val history = ArrayDeque<String>()
+    private var unclear = 0
+    private var measuring: Capture.Info? = null
+    private var started = 0L
 
     private val report = JSONObject()
     private val events = JSONArray()
     private val results = JSONArray()
+    private lateinit var capDir: File
 
     private lateinit var preview: SurfaceView
     private lateinit var web: WebView
+    private lateinit var stateText: TextView
     private lateinit var bigText: TextView
     private lateinit var coachText: TextView
-    private lateinit var statusText: TextView
+    private lateinit var historyText: TextView
+    private lateinit var statsText: TextView
     private lateinit var startBtn: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        capDir = File(cacheDir, "captures").apply { deleteRecursively(); mkdirs() }
         camera = HighSpeedCamera(this)
         buildUi()
         setupEngine()
         tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.US }
         report.put("device", JSONObject().put("maker", Build.MANUFACTURER).put("model", Build.MODEL)
-            .put("android", Build.VERSION.RELEASE).put("sdk", Build.VERSION.SDK_INT))
-        if (!hasPermissions()) requestPermissions(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO), 1)
+            .put("android", Build.VERSION.RELEASE).put("sdk", Build.VERSION.SDK_INT)).put("app", BuildConfig.VERSION_NAME)
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
         else checkCamera()
-        main.post(object : Runnable { override fun run() { updateStatus(); main.postDelayed(this, 300) } })
+        main.post(object : Runnable { override fun run() { updateStats(); main.postDelayed(this, 400) } })
     }
 
-    private fun hasPermissions() = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
-        checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        if (hasPermissions()) checkCamera() else say("The coach needs the camera and the microphone.", speak = false)
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) checkCamera()
+        else state("The coach needs the camera")
     }
 
     // ------------------------------------------------------------------ screen
@@ -108,53 +115,59 @@ class MainActivity : Activity() {
         root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(200, 12, 18, 28)); setPadding(24, 20, 24, 20)
+            setBackgroundColor(Color.argb(215, 12, 18, 28)); setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         fun tv(size: Float, bold: Boolean = false, color: Int = Color.WHITE) = TextView(this).apply {
             textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
         }
-        panel.addView(tv(13f, true, Color.rgb(140, 170, 210)).apply { text = "SERVE COACH LIVE" })
-        bigText = tv(30f, true).apply { text = "–" }
-        coachText = tv(15f).apply { text = "Set the phone beside the table, side-on, landscape. Press Start, then serve." }
-        statusText = tv(12f, color = Color.rgb(160, 175, 195))
-        panel.addView(bigText); panel.addView(coachText)
-        val scroll = ScrollView(this).apply { addView(statusText) }
-        panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        stateText = tv(14f, true, Color.rgb(140, 200, 255)).apply { text = "Starting…" }
+        bigText = tv(30f, true).apply { text = "" }
+        coachText = tv(15f).apply { text = "Put the phone beside the table: landscape, side-on, 1–1.5 m from the ball's path. Then press Start and serve." }
+        historyText = tv(13f, color = Color.rgb(200, 210, 225))
+        statsText = tv(11f, color = Color.rgb(130, 145, 165))
+        panel.addView(stateText); panel.addView(bigText); panel.addView(coachText)
+        val scroll = ScrollView(this).apply {
+            addView(LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; addView(historyText); addView(statsText) })
+        }
+        panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(8) })
+        startBtn = Button(this).apply {
+            text = "Start"; isAllCaps = false; textSize = 20f; setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(Color.rgb(30, 120, 70)); cornerRadius = dp(10).toFloat() }
+            setOnClickListener { if (mode == Mode.IDLE) startLive() else stopAll() }
+        }
+        panel.addView(startBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(8) })
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun btn(label: String, onTap: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; setOnClickListener { onTap() } }
-        startBtn = btn("Start") { if (running) stopPractice() else startPractice() }
-        row.addView(startBtn)
-        row.addView(btn("Serve now") { manualServe() })
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row2.addView(btn("Ear −") { clicks?.let { it.sensitivity = (it.sensitivity * 1.4).coerceAtMost(60.0) } })
-        row2.addView(btn("Ear +") { clicks?.let { it.sensitivity = (it.sensitivity / 1.4).coerceAtLeast(3.0) } })
-        row2.addView(btn("Report") { copyReport() })
-        panel.addView(row); panel.addView(row2)
-        root.addView(panel, FrameLayout.LayoutParams(dp(330), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        fun small(label: String, onTap: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; textSize = 13f; setOnClickListener { onTap() } }
+        row.addView(small("Test with a video") { pickVideo() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(small("Report") { copyReport() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        panel.addView(row)
+        root.addView(panel, FrameLayout.LayoutParams(dp(340), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
         web = WebView(this)
         root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
         setContentView(root)
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
+    private fun state(s: String) { stateText.text = s }
 
-    private fun say(text: String, speak: Boolean = true, coach: String? = null) {
-        bigText.text = text
-        if (coach != null) coachText.text = coach
-        if (speak) tts?.speak(text + (if (coach != null) ". $coach" else ""), TextToSpeech.QUEUE_FLUSH, null, "r")
+    private fun setStartButton(running: Boolean) {
+        startBtn.text = if (running) "Stop" else "Start"
+        (startBtn.background as GradientDrawable).setColor(if (running) Color.rgb(160, 50, 40) else Color.rgb(30, 120, 70))
     }
 
-    private fun updateStatus() {
-        val c = cfg
-        val r = recorder
+    private fun updateStats() {
+        val p = pipeline
         val sb = StringBuilder()
-        if (c != null) sb.append("Camera ${c.size.width}×${c.size.height} @ ${c.fps} fps, ${c.mime.substringAfter('/')} (${c.encoder})\n")
-        if (r != null && running) sb.append("Recording: ${r.recentFps().roundToInt()} frames in the last second\n")
-        clicks?.let { sb.append("Ear: ${it.source}, level ${"%.1f".format(it.lastLevel)}× background, click at ${"%.0f".format(it.sensitivity)}×\n") }
-        sb.append("Engine: ${if (engineReady) (if (engineBusy) "measuring…" else "ready") else "loading"} · serves measured ${results.length()}" +
-            (if (queue.isNotEmpty()) " · ${queue.size} waiting" else "") + "\n")
-        if (history.isNotEmpty()) sb.append("\n").append(history.joinToString("\n"))
-        statusText.text = sb.toString()
+        cfg?.let { sb.append("Camera ${it.size.width}×${it.size.height} @ ${it.fps} fps\n") }
+        if (p != null) {
+            recorder?.let { sb.append("Recording ${it.recentFps().roundToInt()} frames/s\n") }
+            sb.append("Watching: ${"%.1f".format(p.trackMsAvg)} ms a frame, ${p.lagMs} ms behind" + (if (p.dropped > 0) ", ${p.dropped} frames dropped" else "") + "\n")
+        }
+        sb.append("Engine ${if (engineReady) "ready" else "loading"}" + (if (waiting.isNotEmpty()) " · ${waiting.size} waiting" else "") +
+            (if (unclear > 0) " · $unclear movements weren't readable serves" else ""))
+        statsText.text = sb.toString()
+        if (mode != Mode.IDLE && measuring == null && waiting.isEmpty() && !stateText.text.startsWith("Watching") && !stateText.text.startsWith("Replaying"))
+            state(if (mode == Mode.LIVE) "Watching for a serve…" else "Replaying…")
     }
 
     // ------------------------------------------------------------------ camera
@@ -164,24 +177,24 @@ class MainActivity : Activity() {
         cfg = camera.choose()
         val c = cfg
         report.put("chosen", if (c == null) JSONObject.NULL else JSONObject().put("camera", c.cameraId).put("size", "${c.size.width}x${c.size.height}")
-            .put("fps", c.fps).put("codec", c.mime).put("encoder", c.encoder).put("timestamps", if (c.timestampRealtime) "realtime" else "unknown"))
-        if (c == null) say("This phone doesn't offer slow motion to apps", speak = false,
-            coach = "No high-speed (120/240 fps) camera mode is open to apps. Press Report and send it.")
-        else say("Ready: ${c.fps} fps", speak = false)
+            .put("fps", c.fps).put("codec", c.mime).put("encoder", c.encoder))
+        state(if (c == null) "This phone doesn't offer slow motion to apps" else "Ready")
     }
 
-    private fun startPractice() {
+    private fun startLive() {
         val c = cfg ?: return
-        if (!hasPermissions()) return
         val rec = ClipRecorder(c)
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
+        val p = newPipeline(rec, blocking = false)
+        rec.onFrame = { p.offer(it) }
+        p.start()
         val holder = preview.holder
         holder.setFixedSize(c.size.width, c.size.height)
-        fitPreview(c)
+        fitPreview(c.size.width, c.size.height)
         val go = Runnable {
             camera.start(c, listOf(holder.surface, rec.inputSurface), camHandler,
-                onError = { msg -> main.post { log("error", msg); say("Camera problem", coach = msg, speak = false); stopPractice() } },
+                onError = { msg -> main.post { log("error", msg); state("Camera problem: $msg"); stopAll() } },
                 onRunning = { main.post { log("camera", "running") } })
         }
         if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
@@ -192,95 +205,127 @@ class MainActivity : Activity() {
             }
             override fun surfaceDestroyed(h: SurfaceHolder) {}
         })
-        clicks = ClickDetector { t, level -> main.post { onHit(t, level, "sound") } }.also {
-            it.start { msg -> main.post { log("error", msg) } }
-        }
-        running = true
-        startBtn.text = "Stop"
-        say("Recording. Serve when ready.", speak = true)
-        // the frame rate the phone really delivers, for the report
-        main.postDelayed({ recorder?.let { report.put("measuredFps", it.recentFps()); log("fps", "${it.recentFps()}") } }, 4000)
+        mode = Mode.LIVE
+        setStartButton(true)
+        state("Watching for a serve…")
+        say("Ready. Serve when you like.")
     }
 
-    private fun fitPreview(c: HighSpeedCamera.Config) {
+    private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240): LivePipeline =
+        LivePipeline(store, capDir, fps, blocking,
+            onCapture = { info -> main.post { onCaptured(info) } },
+            onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
+
+    private fun fitPreview(w: Int, h: Int) {
         preview.post {
             val parent = preview.parent as View
-            val h = parent.height
-            val w = (h * c.size.width / c.size.height.toFloat()).roundToInt()
-            preview.layoutParams = FrameLayout.LayoutParams(w, h, Gravity.START or Gravity.CENTER_VERTICAL)
+            val ph = parent.height
+            preview.layoutParams = FrameLayout.LayoutParams((ph * w / h.toFloat()).roundToInt(), ph, Gravity.START or Gravity.CENTER_VERTICAL)
         }
     }
 
-    private fun stopPractice() {
-        running = false
-        startBtn.text = "Start"
-        clicks?.stop(); clicks = null
+    private fun stopAll() {
+        pipeline?.let { p -> report.put("watching", JSONObject().put("decoded", p.decoded).put("dropped", p.dropped)
+            .put("msPerFrame", p.trackMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
+            .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
+        recorder?.onFrame = null
+        pipeline?.stop(); pipeline = null
         recorder?.stop(); recorder = null
+        mode = Mode.IDLE
+        setStartButton(false)
+        state("Stopped")
     }
 
-    override fun onPause() { super.onPause(); if (running) stopPractice() }
-    override fun onDestroy() { super.onDestroy(); stopPractice(); tts?.shutdown(); camThread.quitSafely(); encThread.quitSafely() }
+    override fun onPause() { super.onPause(); if (mode == Mode.LIVE) stopAll() }
+    override fun onDestroy() { super.onDestroy(); stopAll(); tts?.shutdown(); camThread.quitSafely(); encThread.quitSafely() }
 
-    // ------------------------------------------------------------------ a serve
-    /**
-     * A hit heard at t (System.nanoTime). The frames carry the camera's clock: boot time when the
-     * camera says so, else assumed the same as nanoTime; checked against when frames arrive.
-     */
-    private fun onHit(tNano: Long, level: Double, how: String) {
-        val rec = recorder ?: return
-        val c = cfg ?: return
-        val offsetExpected = if (c.timestampRealtime) SystemClock.elapsedRealtimeNanos() - System.nanoTime() else 0L
-        val offsetArrival = -rec.arrivalMinusPtsNs                  // frame time minus nanoTime, plus the encoder's delay
-        val offset = if (abs(offsetExpected - offsetArrival) < 400_000_000L) offsetExpected else offsetArrival - 40_000_000L
-        val hitUs = (tNano + offset) / 1000
-        log("hit", "$how level ${"%.1f".format(level)} at ${hitUs / 1000} ms (clock check ${(offsetExpected - offsetArrival) / 1_000_000} ms)")
-        bigText.text = "Hit heard…"
-        // the toss just before the hit, and the flight to the bounce: 0.3 s before to 0.8 s after
-        // (0.1: 0.6 s to 1.2 s, 440 frames, 9-16 s to measure on a Pixel 8)
-        cutWhenReady(hitUs - 300_000, hitUs + 800_000, SystemClock.uptimeMillis())
+    // ------------------------------------------------------------------ replay a video (testing without a table)
+    private fun pickVideo() {
+        if (mode != Mode.IDLE) return
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "video/*" }, 7)
     }
 
-    private fun manualServe() {
-        val rec = recorder ?: return
-        val newest = rec.newestPtsUs()
-        if (newest < 0) return
-        log("hit", "button")
-        cutWhenReady(newest - 1_200_000, newest, SystemClock.uptimeMillis())
-    }
-
-    private fun cutWhenReady(fromUs: Long, toUs: Long, askedAt: Long) {
-        val rec = recorder ?: return
-        if (rec.newestPtsUs() < toUs && SystemClock.uptimeMillis() - askedAt < 3000) {
-            main.postDelayed({ cutWhenReady(fromUs, toUs, askedAt) }, 80); return
-        }
-        val n = ++clipNo
-        val file = File(cacheDir, "serve_$n.mp4")
+    @Deprecated("plain Activity result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val uri = data?.data
+        if (requestCode != 7 || resultCode != RESULT_OK || uri == null) return
+        mode = Mode.REPLAY
+        setStartButton(true)
+        state("Replaying…")
         Thread {
-            val t0 = SystemClock.uptimeMillis()
-            val frames = try { rec.cut(fromUs, toUs, file) } catch (e: Exception) { main.post { log("error", "cut: ${e.message}") }; 0 }
-            main.post {
-                log("clip", "#$n $frames frames, cut in ${SystemClock.uptimeMillis() - t0} ms")
-                if (frames > 0) analyse(n, file) else say("Missed that one", speak = false, coach = "No frames around the hit were kept.")
-            }
+            try {
+                val ff = FileFrames(this, uri)
+                main.post { log("replay", "${ff.frames.size} frames") }
+                val p = newPipeline(ff, blocking = true, fps = ff.captureFps)
+                p.prime(ff.frames)
+                p.start()
+                for (fr in ff.frames) { if (mode != Mode.REPLAY) break; p.offer(fr) }
+                if (mode == Mode.REPLAY) p.finish()
+                main.post {
+                    if (mode == Mode.REPLAY) {
+                        log("replay", "done: ${p.servesFound} serve(s) spotted, tracker ${"%.1f".format(p.trackMsAvg)} ms a frame")
+                        stopAll()
+                        state(if (p.servesFound == 0) "Replay done: no serve spotted" else "Replay done: ${p.servesFound} serve(s) spotted")
+                    }
+                }
+            } catch (e: Exception) { main.post { log("error", "replay: ${e.message}"); stopAll() } }
+        }.start()
+    }
+
+    // ------------------------------------------------------------------ a serve was spotted
+    private fun onCaptured(info: Capture.Info) {
+        log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
+        waiting.addLast(info)
+        while (waiting.size > (if (mode == Mode.LIVE) 3 else 30)) waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete() }
+        if (mode == Mode.LIVE) saveClip(info)
+        next()
+    }
+
+    private fun next() {
+        if (!engineReady || engineBusy) return
+        val info = waiting.removeFirstOrNull() ?: return
+        engineBusy = true
+        measuring = info
+        started = SystemClock.uptimeMillis()
+        state("Measuring serve #${info.id}…")
+        web.evaluateJavascript("analyseCapture('https://$host/capture/${info.id}', ${info.id})", null)
+    }
+
+    /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
+    private fun saveClip(info: Capture.Info) {
+        val rec = recorder ?: return
+        Thread {
+            try {
+                val tmp = File(cacheDir, "clip_${info.id}.mp4")
+                if (rec.cut(info.fromUs, info.toUs, tmp) == 0) return@Thread
+                val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_${info.id}.mp4"
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, name); put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
+                }
+                contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)?.let { uri ->
+                    contentResolver.openOutputStream(uri)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                }
+                tmp.delete()
+                main.post { log("saved", "#${info.id} Movies/ServeCoach/$name") }
+            } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }
         }.start()
     }
 
     // ------------------------------------------------------------------ the engine
     private val host = "appassets.androidplatform.net"
-    private var started = 0L
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupEngine() {
         web.settings.javaScriptEnabled = true
-        web.settings.mediaPlaybackRequiresUserGesture = false
         web.addJavascriptInterface(Bridge(), "Android")
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 if (req.url.host != host) return null
                 val path = req.url.path ?: return null
                 return try {
-                    if (path.startsWith("/clip/")) WebResourceResponse("video/mp4", null, FileInputStream(File(cacheDir, path.removePrefix("/clip/"))))
+                    if (path.startsWith("/capture/")) captureResponse(path.removePrefix("/capture/"))
                     else WebResourceResponse(when {
                         path.endsWith(".html") -> "text/html"; path.endsWith(".js") -> "application/javascript"; else -> "application/octet-stream"
                     }, "utf-8", assets.open(path.removePrefix("/")))
@@ -290,36 +335,37 @@ class MainActivity : Activity() {
         web.loadUrl("https://$host/engine.html")
     }
 
-    private fun analyse(n: Int, file: File) {
-        if (!engineReady || engineBusy) {
-            queue.addLast(n to file)
-            while (queue.size > 3) queue.removeFirst().second.delete()   // fall behind no more than three serves
-            return
-        }
-        engineBusy = true
-        started = SystemClock.uptimeMillis()
-        bigText.text = "Measuring…"
-        web.evaluateJavascript("analyse('https://$host/clip/${file.name}', $n)", null)
+    /** /capture/<id>/head: the header; /capture/<id>/<k>: frame k's bytes */
+    private fun captureResponse(rest: String): WebResourceResponse {
+        val (id, what) = rest.split("/", limit = 2)
+        if (what == "head") return WebResourceResponse("application/json", "utf-8", File(capDir, "cap_$id.json").inputStream())
+        val head = JSONObject(File(capDir, "cap_$id.json").readText())
+        val rect = head.getJSONArray("rect")
+        val per = rect.getInt(2) * rect.getInt(3) + 2 * (rect.getInt(2) / 2) * (rect.getInt(3) / 2)
+        val bytes = ByteArray(per)
+        RandomAccessFile(File(capDir, "cap_$id.bin"), "r").use { it.seek(what.toLong() * per); it.readFully(bytes) }
+        return WebResourceResponse("application/octet-stream", null, ByteArrayInputStream(bytes))
     }
 
     inner class Bridge {
         @JavascriptInterface fun onReady(webCodecs: Boolean, mp4box: Boolean, engine: Boolean) = main.post {
-            engineReady = webCodecs && mp4box && engine
+            engineReady = engine
             report.put("engine", JSONObject().put("webCodecs", webCodecs).put("mp4box", mp4box).put("engine", engine))
-            if (!engineReady) log("error", "engine can't run here (WebCodecs $webCodecs, mp4box $mp4box, engine $engine)")
+            if (!engine) log("error", "the engine didn't load") else next()
         }
         @JavascriptInterface fun onProgress(id: Int, step: String, frac: Double) = main.post {
-            bigText.text = "Measuring… ${(frac * 100).roundToInt()}%"
+            state("Measuring serve #$id… ${(frac * 100).roundToInt()}%")
         }
         @JavascriptInterface fun onResult(id: Int, json: String) = main.post {
             engineBusy = false
-            val wall = SystemClock.uptimeMillis() - started
+            val info = measuring; measuring = null
             val r = try { JSONObject(json) } catch (e: Exception) { JSONObject().put("error", "bad result") }
-            r.put("clip", id).put("wallMs", wall)
+            r.put("capture", id).put("wallMs", SystemClock.uptimeMillis() - started)
+            info?.let { r.put("captureFrames", it.n).put("writeMs", it.writeMs) }
             results.put(r)
+            File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)
-            keepClip(id, r)
-            queue.removeFirstOrNull()?.let { (pn, pf) -> analyse(pn, pf) }
+            next()
         }
     }
 
@@ -328,69 +374,44 @@ class MainActivity : Activity() {
         "thick" to ("You pushed the ball instead of brushing it" to "Open the face and brush along under the ball."),
         "good" to ("Strong backspin" to "Keep this contact."),
         "slip" to ("The ball slid on the rubber" to "Let the ball drop lower and brush slightly into it."),
-        "slow" to ("The brush was too slow" to "Accelerate through the contact, snap the wrist."),
+        "slow" to ("The brush was too slow" to "Accelerate through the contact: snap the wrist."),
     )
 
     private fun show(r: JSONObject) {
         val sv = r.optJSONObject("serve")
-        val coach = r.optJSONObject("coach")
         val secs = r.optLong("wallMs") / 1000.0
-        val ballPx = sv?.optDouble("ballPx", 0.0) ?: 0.0
-        val closer = if (ballPx in 1.0..24.0) "\nThe ball is only ${ballPx.roundToInt()} px across: move the phone closer (1–1.5 m from the ball's path)." else ""
         if (sv == null || !sv.optBoolean("clear")) {
-            val why = r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
-            say("No clear reading", coach = "$why  (${"%.1f".format(secs)} s)$closer")
-            addHistory(r.optInt("clip"), "no clear reading")
+            // a movement that wasn't a readable serve (a toss, a catch, someone walking by): not announced
+            unclear++
+            log("unclear", "#${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}")
             return
         }
         val rps = sv.optDouble("rps")
         val type = sv.optString("type")
+        val coach = r.optJSONObject("coach")
         val kind = coach?.optString("kind") ?: ""
         val t = titles[kind]
-        val spoken = "${rps.roundToInt()} revs per second, $type"
         val tip = if (t != null) "${t.first}. ${t.second}" else when (kind) {
             "other" -> "Coaching covers backspin serves."
             "unknown" -> "Film side-on to judge the contact."
             else -> ""
         }
+        val ballPx = sv.optDouble("ballPx", 0.0)
+        val closer = if (ballPx in 1.0..24.0) "\nThe ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
         val numbers = buildString {
-            if (coach != null && coach.has("ratio")) append("spin÷speed ${"%.2f".format(coach.optDouble("ratio"))} · ")
+            if (coach != null && coach.has("ratio")) append("spin ÷ speed ${"%.2f".format(coach.optDouble("ratio"))} · ")
             if (sv.has("speed")) append("ball ${"%.1f".format(sv.optDouble("speed"))} m/s · ")
-            append("measured in ${"%.1f".format(secs)} s")
+            append("answer in ${"%.1f".format(secs)} s")
         }
         bigText.text = "${rps.roundToInt()} rev/s · ${(rps * 60).roundToInt()} RPM"
         coachText.text = "$type\n$tip\n$numbers$closer"
-        addHistory(r.optInt("clip"), "${rps.roundToInt()} rev/s $type" + (if (t != null) " · ${t.first}" else ""))
-        tts?.speak("$spoken. ${t?.first ?: ""}", TextToSpeech.QUEUE_FLUSH, null, "r")
+        history.addFirst("#${r.optInt("capture")}  ${rps.roundToInt()} rev/s $type" + (if (t != null) " · ${t.first}" else ""))
+        while (history.size > 8) history.removeLast()
+        historyText.text = history.joinToString("\n")
+        say("${rps.roundToInt()} revs per second, $type. ${t?.first ?: ""}")
     }
 
-    private fun addHistory(n: Int, line: String) {
-        history.addFirst("#$n  $line")
-        while (history.size > 6) history.removeLast()
-    }
-
-    /**
-     * Keeps each measured clip in the phone's videos (Movies/ServeCoach), named by time and
-     * number, so a wrong reading can be looked at (and sent back); the report names the file.
-     */
-    private fun keepClip(n: Int, r: JSONObject) {
-        val src = File(cacheDir, "serve_$n.mp4")
-        if (!src.exists()) return
-        val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_$n.mp4"
-        Thread {
-            try {
-                val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
-                }
-                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                if (uri != null) contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
-                main.post { r.put("savedAs", "Movies/ServeCoach/$name") }
-            } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }
-            src.delete()
-        }.start()
-    }
+    private fun say(text: String) { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "r") }
 
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
@@ -399,8 +420,9 @@ class MainActivity : Activity() {
     }
 
     private fun copyReport() {
-        report.put("events", events).put("results", results).put("app", "0.2")
-        clicks?.let { report.put("ear", JSONObject().put("source", it.source).put("sensitivity", it.sensitivity)) }
+        pipeline?.let { p -> report.put("watching", JSONObject().put("decoded", p.decoded).put("dropped", p.dropped)
+            .put("msPerFrame", p.trackMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
+        report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))
         Toast.makeText(this, "Report copied: paste it into the chat", Toast.LENGTH_LONG).show()

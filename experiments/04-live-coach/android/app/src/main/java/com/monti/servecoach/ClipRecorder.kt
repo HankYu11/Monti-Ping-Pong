@@ -14,13 +14,15 @@ import java.nio.ByteBuffer
  * a serve can be cut out after it happened. Keyframes every 0.1 s, so a cut can start close to
  * where it should.
  */
-class ClipRecorder(private val cfg: HighSpeedCamera.Config, private val keepSeconds: Double = 5.0) {
-    private class Frame(val ptsUs: Long, val key: Boolean, val data: ByteArray)
+class ClipRecorder(private val cfg: HighSpeedCamera.Config, private val keepSeconds: Double = 5.0) : FrameStore {
+    /** every encoded frame as it is written, for the live decoder */
+    @Volatile var onFrame: ((EncodedFrame) -> Unit)? = null
 
-    private val frames = ArrayDeque<Frame>()
+    private val frames = ArrayDeque<EncodedFrame>()
     private val lock = Object()
     private var codec: MediaCodec? = null
     private var format: MediaFormat? = null
+    override val outputFormat: MediaFormat? get() = format
     lateinit var inputSurface: Surface
         private set
 
@@ -51,12 +53,13 @@ class ClipRecorder(private val cfg: HighSpeedCamera.Config, private val keepSeco
                         val buf = codec.getOutputBuffer(index)!!
                         val bytes = ByteArray(info.size)
                         buf.position(info.offset); buf.get(bytes, 0, info.size)
-                        val fr = Frame(info.presentationTimeUs, info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0, bytes)
+                        val fr = EncodedFrame(info.presentationTimeUs, info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0, bytes)
                         synchronized(lock) {
                             frames.addLast(fr)
                             val keepUs = (keepSeconds * 1e6).toLong()
                             while (frames.size > 2 && fr.ptsUs - frames.first().ptsUs > keepUs) frames.removeFirst()
                         }
+                        onFrame?.invoke(fr)
                         framesTotal++
                         if (firstPtsUs < 0) firstPtsUs = info.presentationTimeUs
                         lastPtsUs = info.presentationTimeUs
@@ -91,13 +94,15 @@ class ClipRecorder(private val cfg: HighSpeedCamera.Config, private val keepSeco
 
     fun newestPtsUs(): Long = synchronized(lock) { if (frames.isEmpty()) -1 else frames.last().ptsUs }
 
+    override fun between(fromUs: Long, toUs: Long): List<EncodedFrame> = synchronized(lock) { framesBetween(frames.toList(), fromUs, toUs) }
+
     /**
      * Writes the frames from fromUs to toUs (frame time, microseconds) to an MP4, starting at the
      * keyframe before fromUs. Returns the number of frames written, or 0.
      */
     fun cut(fromUs: Long, toUs: Long, out: File): Int {
         val fmt = format ?: return 0
-        val pick: List<Frame> = synchronized(lock) {
+        val pick: List<EncodedFrame> = synchronized(lock) {
             val list = frames.toList()
             var start = list.indexOfLast { it.key && it.ptsUs <= fromUs }
             if (start < 0) start = list.indexOfFirst { it.key }

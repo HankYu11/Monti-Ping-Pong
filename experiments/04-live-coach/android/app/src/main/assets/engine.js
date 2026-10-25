@@ -459,6 +459,8 @@
   const PLANE_FORMATS = new Set(["I420", "I420A", "I422", "I444", "NV12"]);
   let planesBroken = false;
   async function framePlanes(frame, W, H) {  // -> { buf, offset, stride, lut, full, u, v }, or null when this frame can't be read this way
+    // frames handed in by the app: a copy, as the search's workers take the buffer they're given
+    if (frame && frame.capturePlanes) return Object.assign({}, frame.capturePlanes, { buf: frame.capturePlanes.buf.slice() });
     if (planesBroken || typeof VideoFrame === "undefined" || !(frame instanceof VideoFrame)) return null;
     if (!PLANE_FORMATS.has(frame.format) || frame.visibleRect.width !== W || frame.visibleRect.height !== H) return null;
     try {
@@ -646,6 +648,103 @@
     return splitAtKinks(tr.slice(0, b), kind, depth + 1).concat(splitAtKinks(tr.slice(b), kinkKind(tr, b), depth + 1));
   }
 
+  // A ball's track (search scale: [frame, x, y, radius] at half size) -> the serve to measure:
+  // where the hit was, the stretch off the paddle and the one after the bounce, the toss, and
+  // notes on what couldn't be measured; or null. sw, sh: the search frame's size. Used by the
+  // flight search and by measureCapture (a track found by the live app).
+  function serveBuilder(sw, sh, skipAfter, maxFrames) {
+    return function build(tr, all) {
+      const whole = tr;
+      // the moving part: split where the ball stops (held, caught, picked up)
+      const runs = []; let cur = [tr[0]];
+      for (let k = 1; k < tr.length; k++) {
+        const a = tr[k - 1], b = tr[k], step = Math.hypot(b[1] - a[1], b[2] - a[2]) / Math.max(1, b[0] - a[0]);
+        if (step > 1.0) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
+      }
+      runs.push(cur);
+      tr = runs.reduce((a, b) => (b.length > a.length ? b : a));
+      // Cut the flight at its kinks. The serve starts at the hit: a toss falling into view before
+      // it is dropped. Then measure two stretches, since the bounce changes the spin:
+      //   off the paddle - from just after the hit to the first bounce (the serve's own spin)
+      //   after the bounce - up to the next kink (what the receiver faces)
+      const pieces = splitAtKinks(tr);
+      let s0 = 0;
+      for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
+      const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
+      const parts = [], notes = [];
+      const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
+      // the first frames after the hit still have the paddle next to the ball
+      const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
+      const hitSeen = first.kind === "contact";
+      const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
+      // the toss as it reached the paddle: how hard it pressed into the rubber (a thin brush can
+      // only grip that hard), in picture px per frame and the ball's radius, both at search scale
+      const t0 = hitSeen && s0 > 0 ? pieces[s0 - 1].pts : tossBefore(whole, first.pts, all);
+      // not its last frames: the paddle reaching the ball merges with it there and carries the
+      // blob along the flight. A toss goes another way than the flight (more than 45 degrees off).
+      const vf0 = velocity(first.pts, 0, Math.min(first.pts.length, 6));
+      const offFlight = (q) => { const v = velocity(q, 0, q.length); return dot([...v, 0], [...vf0, 0]) < Math.SQRT1_2 * Math.hypot(...v) * Math.hypot(...vf0); };
+      let tossPts = [];
+      for (let cut = 2; t0 && cut <= 6 && t0.length - cut >= 3; cut++) {
+        const q = t0.slice(Math.max(0, t0.length - cut - 6), t0.length - cut);
+        if (offFlight(q)) { tossPts = q; break; }
+      }
+      if (t0 && !tossPts.length && t0.length < 5 && offFlight(t0)) tossPts = t0;
+      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])), t: tossPts.reduce((s, p) => s + p[0], 0) / tossPts.length } : null;
+      const hitAt = toss ? meetFrame(tossPts, toss.v, first.pts) : hitSeen ? first.pts[0][0] : null;
+      if (toss && hitAt != null) toss.dt = hitAt - toss.t;      // frames from the toss's mean frame to the hit
+      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitAt), { toss }));
+      else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
+        edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
+          "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
+      if (sawBounce) {
+        const after = next.pts.slice(2, 2 + maxFrames), last = next.pts[next.pts.length - 1];
+        if (after.length >= 8) parts.push(makePart("bounce", after));
+        else note("bounce", `After the bounce: not measured. Only ${next.pts.length} frames after the bounce (needs 10), then the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"}.`,
+          edgeOf(last) ? "Widen the view past the bounce point: move the camera back a little or turn it toward the bounce." : "Keep the background behind the bounce even, and add light.", next.pts.length);
+      } else {
+        const last = first.pts[first.pts.length - 1];
+        note("flight", `No bounce seen: the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"} before bouncing, so this can't be placed before or after the bounce.`,
+          edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
+      }
+      if (!parts.length) return null;
+      const frames = parts.reduce((n, q) => n + q.track.length, 0), size = median(parts[0].track.map((p) => p[3]));
+      return { start: parts[0].start, end: parts[parts.length - 1].end, parts, notes, score: frames * size };
+        };
+    // The toss just before the flight began, when the kink wasn't seen in one track: a slow toss
+    // gets cut from the moving part, or the paddle covered the ball and the toss is a track of its
+    // own, ending next to where the flight starts. Its points, or null.
+    function tossBefore(whole, flight, all) {
+      const f0 = flight[0], v0 = velocity(flight, 0, Math.min(flight.length, 6)), win = (p) => p[0] < f0[0] && p[0] >= f0[0] - 12;
+      const slower = (q) => Math.hypot(...velocity(q, 0, q.length)) < 0.6 * Math.hypot(...v0);
+      let q = whole.filter(win);
+      if (q.length >= 3 && slower(q)) return q;
+      const near = all.map((o) => o.filter(win)).filter((o) => o.length >= 3 && slower(o) &&
+        Math.hypot(o[o.length - 1][1] - f0[1], o[o.length - 1][2] - f0[2]) < 8 * f0[3]);
+      return near.sort((a, b) => b[b.length - 1][0] - a[a.length - 1][0])[0] || null;
+    }
+    // where the toss's path and the flight's path meet: the hit, between the toss's last frame and the flight's first
+    function meetFrame(toss, vt, flight) {
+      const a = toss[toss.length - 1], b = flight[0], vf = velocity(flight, 0, Math.min(flight.length, 6));
+      // toss at t: a + vt (t - a0); flight at t: b + vf (t - b0); closest at the least-squares t
+      const dx = [a[1] - vt[0] * a[0] - b[1] + vf[0] * b[0], a[2] - vt[1] * a[0] - b[2] + vf[1] * b[0]], dv = [vt[0] - vf[0], vt[1] - vf[1]];
+      const t = -(dx[0] * dv[0] + dx[1] * dv[1]) / Math.max(1e-9, dv[0] * dv[0] + dv[1] * dv[1]);
+      return clamp(t, a[0], b[0]);
+    }
+    function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
+      const m = 3 * p[3] + 6;
+      return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
+    }
+    function makePart(kind, pts, hit = null) {   // a stretch to measure: its frames, a crop around it, where the ball was, the hit's frame if seen
+      const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
+      const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
+      const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
+      const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
+      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0], hit,
+        track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
+    }
+  }
+
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
@@ -780,101 +879,13 @@
     // Turn every candidate into a serve (stretches to measure), then keep one per time window:
     // the one with the most measurable frames of the biggest ball. Picking the longest track
     // instead let a long noise track push the real serve out and then yield nothing.
-    const gap = opt.serveGap ?? 120, built = [];
-    for (let tr of good) {
-      const whole = tr;
-      // the moving part: split where the ball stops (held, caught, picked up)
-      const runs = []; let cur = [tr[0]];
-      for (let k = 1; k < tr.length; k++) {
-        const a = tr[k - 1], b = tr[k], step = Math.hypot(b[1] - a[1], b[2] - a[2]) / Math.max(1, b[0] - a[0]);
-        if (step > 1.0) cur.push(b); else { if (cur.length > 1) runs.push(cur); cur = [b]; }
-      }
-      runs.push(cur);
-      tr = runs.reduce((a, b) => (b.length > a.length ? b : a));
-      // Cut the flight at its kinks. The serve starts at the hit: a toss falling into view before
-      // it is dropped. Then measure two stretches, since the bounce changes the spin:
-      //   off the paddle - from just after the hit to the first bounce (the serve's own spin)
-      //   after the bounce - up to the next kink (what the receiver faces)
-      const pieces = splitAtKinks(tr);
-      let s0 = 0;
-      for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
-      const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
-      const parts = [], notes = [];
-      const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
-      // the first frames after the hit still have the paddle next to the ball
-      const off = first.pts.slice(skipAfter, skipAfter + maxFrames);
-      const hitSeen = first.kind === "contact";
-      const from = hitSeen ? "the hit" : edgeOf(first.pts[0]) ? `the ball came into the picture (${edgeOf(first.pts[0])} edge)` : "the ball was first seen";
-      // the toss as it reached the paddle: how hard it pressed into the rubber (a thin brush can
-      // only grip that hard), in picture px per frame and the ball's radius, both at search scale
-      const t0 = hitSeen && s0 > 0 ? pieces[s0 - 1].pts : tossBefore(whole, first.pts, tracks);
-      // not its last frames: the paddle reaching the ball merges with it there and carries the
-      // blob along the flight. A toss goes another way than the flight (more than 45 degrees off).
-      const vf0 = velocity(first.pts, 0, Math.min(first.pts.length, 6));
-      const offFlight = (q) => { const v = velocity(q, 0, q.length); return dot([...v, 0], [...vf0, 0]) < Math.SQRT1_2 * Math.hypot(...v) * Math.hypot(...vf0); };
-      let tossPts = [];
-      for (let cut = 2; t0 && cut <= 6 && t0.length - cut >= 3; cut++) {
-        const q = t0.slice(Math.max(0, t0.length - cut - 6), t0.length - cut);
-        if (offFlight(q)) { tossPts = q; break; }
-      }
-      if (t0 && !tossPts.length && t0.length < 5 && offFlight(t0)) tossPts = t0;
-      const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])), t: tossPts.reduce((s, p) => s + p[0], 0) / tossPts.length } : null;
-      const hitAt = toss ? meetFrame(tossPts, toss.v, first.pts) : hitSeen ? first.pts[0][0] : null;
-      if (toss && hitAt != null) toss.dt = hitAt - toss.t;      // frames from the toss's mean frame to the hit
-      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitAt), { toss }));
-      else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
-        edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
-          "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
-      if (sawBounce) {
-        const after = next.pts.slice(2, 2 + maxFrames), last = next.pts[next.pts.length - 1];
-        if (after.length >= 8) parts.push(makePart("bounce", after));
-        else note("bounce", `After the bounce: not measured. Only ${next.pts.length} frames after the bounce (needs 10), then the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"}.`,
-          edgeOf(last) ? "Widen the view past the bounce point: move the camera back a little or turn it toward the bounce." : "Keep the background behind the bounce even, and add light.", next.pts.length);
-      } else {
-        const last = first.pts[first.pts.length - 1];
-        note("flight", `No bounce seen: the ball ${edgeOf(last) ? `left the picture (${edgeOf(last)} edge)` : "was lost"} before bouncing, so this can't be placed before or after the bounce.`,
-          edgeOf(last) ? "Get the first bounce in the picture: turn the camera toward it or move back a little." : "Keep the background around the bounce even, and add light.");
-      }
-      if (!parts.length) continue;
-      const frames = parts.reduce((n, q) => n + q.track.length, 0), size = median(parts[0].track.map((p) => p[3]));
-      built.push({ start: parts[0].start, end: parts[parts.length - 1].end, parts, notes, score: frames * size });
-    }
+    const gap = opt.serveGap ?? 120;
+    const build = serveBuilder(sw, sh, skipAfter, maxFrames);
+    const built = good.map((tr) => build(tr, tracks)).filter(Boolean);
     const segs = [];
     for (const sv of built.sort((a, b) => b.score - a.score))
       if (segs.every((f) => sv.start > f.end + gap || sv.end < f.start - gap)) segs.push(sv);
     DBG.search.serves = segs.map((sv) => `${sv.start}-${sv.end} score ${Math.round(sv.score)}`);
-    // The toss just before the flight began, when the kink wasn't seen in one track: a slow toss
-    // gets cut from the moving part, or the paddle covered the ball and the toss is a track of its
-    // own, ending next to where the flight starts. Its points, or null.
-    function tossBefore(whole, flight, all) {
-      const f0 = flight[0], v0 = velocity(flight, 0, Math.min(flight.length, 6)), win = (p) => p[0] < f0[0] && p[0] >= f0[0] - 12;
-      const slower = (q) => Math.hypot(...velocity(q, 0, q.length)) < 0.6 * Math.hypot(...v0);
-      let q = whole.filter(win);
-      if (q.length >= 3 && slower(q)) return q;
-      const near = all.map((o) => o.filter(win)).filter((o) => o.length >= 3 && slower(o) &&
-        Math.hypot(o[o.length - 1][1] - f0[1], o[o.length - 1][2] - f0[2]) < 8 * f0[3]);
-      return near.sort((a, b) => b[b.length - 1][0] - a[a.length - 1][0])[0] || null;
-    }
-    // where the toss's path and the flight's path meet: the hit, between the toss's last frame and the flight's first
-    function meetFrame(toss, vt, flight) {
-      const a = toss[toss.length - 1], b = flight[0], vf = velocity(flight, 0, Math.min(flight.length, 6));
-      // toss at t: a + vt (t - a0); flight at t: b + vf (t - b0); closest at the least-squares t
-      const dx = [a[1] - vt[0] * a[0] - b[1] + vf[0] * b[0], a[2] - vt[1] * a[0] - b[2] + vf[1] * b[0]], dv = [vt[0] - vf[0], vt[1] - vf[1]];
-      const t = -(dx[0] * dv[0] + dx[1] * dv[1]) / Math.max(1e-9, dv[0] * dv[0] + dv[1] * dv[1]);
-      return clamp(t, a[0], b[0]);
-    }
-    function edgeOf(p) {                     // which edge of the picture a track point touches, or ""
-      const m = 3 * p[3] + 6;
-      return p[1] < m ? "left" : p[1] > sw - m ? "right" : p[2] < m ? "top" : p[2] > sh - m ? "bottom" : "";
-    }
-    function makePart(kind, pts, hit = null) {   // a stretch to measure: its frames, a crop around it, where the ball was, the hit's frame if seen
-      const xs = pts.map((p) => p[1] / 0.5), ys = pts.map((p) => p[2] / 0.5);
-      const r = Math.max(...pts.map((p) => p[3])) / 0.5, pad = Math.max(3 * r, 4 * median(pts.map((p) => p[3])) / 0.5);
-      const x0 = Math.trunc(Math.max(0, Math.min(...xs) - pad)), y0 = Math.trunc(Math.max(0, Math.min(...ys) - pad));
-      const x1 = Math.trunc(Math.min(sw / 0.5, Math.max(...xs) + pad)), y1 = Math.trunc(Math.min(sh / 0.5, Math.max(...ys) + pad));
-      return { kind, start: pts[0][0], end: pts[pts.length - 1][0] + 1, roi: [x0, y0, x1 - x0, y1 - y0], hit,
-        track: pts.map((p) => [p[0], p[1] / 0.5, p[2] / 0.5, p[3] / 0.5]) };
-    }
     segs.sort((a, b) => a.start - b.start);
     segs.ballFrames = cands.filter((c) => c.length).length;   // for the "no serve found" diagnosis
     return segs;
@@ -884,6 +895,22 @@
   // The ball in one frame: pixels that differ from the background in brightness or colour.
   // With a predicted position (from the flight search), take the blob nearest to it.
   function findBall(g, bg, W, H, minR, col = null, pred = null) {
+    // With a predicted spot, only a window around it: the ball is taken no farther than 2r + 15
+    // from it, and the clean-up below reaches only a few pixels. Over a whole crop this was most
+    // of the measuring time for a ball crossing the picture (1.1 of 3.4 s).
+    if (pred) {
+      const m = Math.ceil(4 * pred[2] + 30), px = Math.floor(pred[0]), py = Math.floor(pred[1]);
+      const x0 = Math.max(0, px - m), y0 = Math.max(0, py - m), x1 = Math.min(W, px + m + 1), y1 = Math.min(H, py + m + 1);
+      if (x1 <= x0 || y1 <= y0) return null;
+      if (x1 - x0 < W || y1 - y0 < H) {
+        const w = x1 - x0, h = y1 - y0;
+        const sub = (a) => { const o = new Float32Array(w * h); for (let y = 0; y < h; y++) for (let x = 0, r = (y0 + y) * W + x0; x < w; x++) o[y * w + x] = a[r + x]; return o; };
+        const c2 = col ? { u: sub(col.u), v: sub(col.v), bgU: sub(col.bgU), bgV: sub(col.bgV) } : null;
+        const r = findBall(sub(g), sub(bg), w, h, minR, c2, [pred[0] - x0, pred[1] - y0, pred[2]]);
+        if (r) { r[0] += x0; r[1] += y0; }
+        return r;
+      }
+    }
     const mask = new Uint8Array(W * H);
     for (let p = 0; p < mask.length; p++) mask[p] = colourDiff(g[p], bg[p], col, p) > 25 ? 1 : 0;
     const m = opening(closing(mask, W, H, 5), W, H, 3);
@@ -1637,7 +1664,9 @@
     const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
     if (!r) return fail("The ball was found in too few frames in a row.");
     if (r.error) return fail(r.error);
-    const geo = flightGeometry(balls, fps, R.W, hfov, [rx - R.W / 2, ry - R.H / 2], seg.hit != null ? seg.hit - seg.start : 0);
+    // where the crop sits in the whole picture (perspective); a capture's frames are themselves a crop of it
+    const FW = R.fullW || R.W, FH = R.fullH || R.H, ox = R.offX || 0, oy = R.offY || 0;
+    const geo = flightGeometry(balls, fps, FW, hfov, [rx + ox - FW / 2, ry + oy - FH / 2], seg.hit != null ? seg.hit - seg.start : 0);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
     // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
@@ -1735,32 +1764,42 @@
   // ------------------------------------------------------------ main entry
   // Returns { serves: [...], meta, ... } where each serve is a reading or { error }. The fields of
   // the first good reading are also copied to the top level, so a one-serve video reads as before.
-  async function analyze(file, opts = {}) {
+  function setUp(opts) {
     WHITE_REF = opts.whiteRef || "auto";
     ROBUST = opts.robust !== false;
     DBG = {};
     planesBroken = !!opts.forceCanvas;        // tests: read frames through a canvas, as some phones must
-    const progress = opts.onProgress || (() => {});
-    const hfov = opts.hfov || 68, tStart = performance.now();
     readStats.direct = readStats.canvas = 0;
+  }
+  async function analyze(file, opts = {}) {
+    const tStart = performance.now();
+    setUp(opts);
+    const progress = opts.onProgress || (() => {});
     progress("Reading the video file", 0.01);
     const buf = await file.arrayBuffer();
     const meta = parseMp4(buf);
-    const captureFps = opts.captureFps || meta.captureFps || null;
-    const fps = captureFps || 240;
     let R = null;
     if (!opts.forceSeek) { try { R = await webCodecsReader(buf); } catch (e) { R = null; } }
     if (!R) R = await seekReader(file, opts.playbackFps || meta.playbackFps || 30, meta.sampleCount);
+    return analyzeReader(R, meta, opts, { name: file.name, size: file.size }, tStart);
+  }
+  // Everything after reading the file: the flight search (or opts.segments, given), the
+  // measurement of each serve, the checks between its stretches, and which serve to show.
+  async function analyzeReader(R, meta, opts, fileInfo, tStart) {
+    const progress = opts.onProgress || (() => {});
+    const hfov = opts.hfov || 68;
+    const captureFps = opts.captureFps || meta.captureFps || null;
+    const fps = captureFps || 240;
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
-      const segs = await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
+      const segs = opts.segments ? opts.segments(R) : await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
       checks.push(flightCheck(segs)); emit();
       const tFound = performance.now();
       DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
       const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
-      DBG.file = { name: file.name, size: file.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
+      DBG.file = { name: fileInfo.name, size: fileInfo.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
       const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
         frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
       if (!segs.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
@@ -1898,5 +1937,45 @@
     return Object.assign(base, { kind, alt });
   }
 
-  global.SpinMeter = { analyze, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  // ------------------------------------------------------------ frames found by the live app
+  // The app spots each serve as the frames arrive and hands over only that: the frames around it,
+  // cropped to the part of the picture the ball crossed, in the decoder's own layout. They are
+  // searched and measured exactly as a video would be, only smaller and shorter.
+  //   cap.W, cap.H        the whole picture's size
+  //   cap.rect            [x, y, w, h] of the crop in the whole picture (all even)
+  //   cap.frames          per frame: Uint8Array of the crop's Y (w*h), then U and V ((w/2)*(h/2) each);
+  //   or cap.n and cap.frame(i): an async getter, so a long capture needn't be held in memory
+  //   cap.full            true when the Y values span 0-255 (else video range 16-235)
+  //   cap.fps             frames per second (240)
+  //   cap.track           optional, with opts.useTrack: [[frame, x, y, radius], ...] in whole-picture
+  //                       pixels, used instead of the search (the app's own track)
+  function captureReader(cap) {
+    const [cx, cy, cw, ch] = cap.rect, cw2 = cw >> 1, ch2 = ch >> 1, ySize = cw * ch, cSize = cw2 * ch2;
+    const plane = (buf) => ({
+      buf, stride: cw, offset: 0, lut: cap.full ? LUT_FULL : LUT_VIDEO, full: !!cap.full,
+      u: { offset: ySize, stride: cw2, step: 1 }, v: { offset: ySize + cSize, stride: cw2, step: 1 },
+    });
+    const n = cap.frames ? cap.frames.length : cap.n;
+    const get = cap.frames ? async (i) => cap.frames[i] : cap.frame;
+    return {
+      kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy,
+      async run(a, b, cb) { for (let i = Math.max(0, a); i < Math.min(b, n); i++) await cb(i, { capturePlanes: plane(await get(i)) }); },
+      close() {},
+    };
+  }
+  async function measureCapture(cap, opts = {}) {
+    const tStart = performance.now();
+    setUp(opts);
+    const R = captureReader(cap);
+    const o = Object.assign({}, opts, { captureFps: cap.fps || 240 });
+    if (opts.useTrack && cap.track) {
+      const [cx, cy] = cap.rect;
+      const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60);
+      const half = cap.track.map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]);
+      o.segments = () => { const sv = build(half, [half]); return Object.assign(sv ? [sv] : [], { ballFrames: half.length }); };
+    }
+    return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
+  }
+
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

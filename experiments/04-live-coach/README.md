@@ -1,7 +1,8 @@
 # Serve Coach Live (Android)
 
-Practise serves with the phone on a stand: it records slow motion all the time, hears each hit,
-measures the serve with the spin meter's engine and says how it went.
+Practise serves with the phone on a stand: it records slow motion all the time, sees each serve
+fly, measures it with the spin meter's engine and says how it went. (0.1–0.2 listened for the
+hit instead; see 0.3 for why that changed and how it works now.)
 
 Why an app: browsers give pages the camera at 30–60 fps; the spin meter needs 120–240 fps, which
 Android offers apps through a "constrained high-speed" camera session (the one the camera app
@@ -54,8 +55,33 @@ encoder at 240 fps, the ear in a real room, the engine's time on the phone.
   1.6 s after one), the last six serves listed on screen;
 - a ball under 24 px across: "move the phone closer".
 
+## 0.3: watching instead of listening
+
+- **One Start / Stop button.** No microphone (a court is noisy and other tables click too).
+- **Seeing the serve**: the encoded stream is decoded again as it is recorded (the phone's
+  hardware decoder); every 2nd frame (120 a second), at a quarter of its size, goes to a serve
+  tracker (`core/ServeTracker.kt`): a background learned over the last seconds, what moved,
+  ball-sized round blobs, linked into tracks; a track that flies far enough, steadily enough,
+  and isn't a toss or a drop is a serve. About 6–9 ms a frame on a busy 4-core machine.
+- **Measuring only what matters**: the serve's frames are decoded again, all of them (240 a
+  second), cropped to where the ball flew (a "capture"), and the engine measures the crop
+  (`SpinMeter.measureCapture`): no MP4 to cut and parse again, and fewer pixels to search.
+- **Test with a video**: plays a saved slow-motion video through exactly the same pipeline as the
+  camera (decoder, tracker, capture, engine), so the app can be tried without a table.
+- Readings the engine isn't sure of are listed but not spoken.
+
+Checked here, without a phone (no emulator can run here, and none has a 240 fps camera): the
+tracker and capture code (`core/`) run on a PC in `desktop/` over the test clips. On all 10
+wall clips the serve is found and the crop measures the same as the whole clip did (T1 28.3,
+T2 32.8, T3 44.4, T4 38.6, U1 35.5, U2 43.8, V1 45.7, V2 42.0, V3 45.4 rev/s); captures of
+other movement are rejected by the engine ("found in too few frames") and not spoken.
+Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `watching`
+`msPerFrame`, `lagMs`, `dropped`) and the engine's time on a crop (`results` `wallMs`).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and
 writes `release/serve-coach-live-<version>.apk`, signed with a debug key (sideloading only).
+`gradle :desktop:installDist`, then `desktop/build/install/desktop/bin/desktop clip.mp4 outDir`
+(needs ffmpeg) runs the serve tracker on a clip and writes its captures (`.cap`).
 mp4box.js (BSD-3-Clause, gpac) is bundled in `assets/`.

@@ -4,4 +4,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "ServeCoachLive"
-include(":app")
+include(":app", ":core", ":desktop")

@@ -4,14 +4,15 @@ plugins {
 }
 
 android {
+    buildFeatures { buildConfig = true }
     namespace = "com.monti.servecoach"
     compileSdk = 35
     defaultConfig {
         applicationId = "com.monti.servecoach"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
     buildTypes {
         release {
@@ -25,3 +26,5 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 }
+
+dependencies { implementation(project(":core")) }

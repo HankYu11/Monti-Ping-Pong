@@ -762,7 +762,12 @@
       if (disp < 0.6 * path) return no("zigzag");
       if (dy < 0 && -dy > Math.abs(dx)) return no("upward (toss)");
       const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
-      if (dy > 2 * Math.abs(dx) && grow < 1.3 && grow > 1 / 1.3) return no("straight drop");
+      // the size away from the ends too: at its ends a toss merges with the head or the paddle
+      // (real clip V1: a toss from above the head read as shrinking 11 -> 3 px and passed as a flight)
+      const n = tr.length, part = (a, b) => median(tr.slice(Math.floor(a * n), Math.max(Math.floor(a * n) + 1, Math.floor(b * n))).map((p) => p[3]));
+      const growMid = part(0.625, 0.875) / Math.max(1e-6, part(0.125, 0.375));
+      const steady = (g, lim) => g < lim && g > 1 / lim;
+      if (dy > 2 * Math.abs(dx) && (steady(grow, 1.3) || steady(growMid, 1.15))) return no("straight drop");
       return true;
     });
     const fmtTr = (tr) => `${tr[0][0]}-${tr[tr.length - 1][0]} (${tr.length}) ${tr[0].slice(1, 3).map(Math.round)}->${tr[tr.length - 1].slice(1, 3).map(Math.round)} r${tr[0][3].toFixed(1)}-${tr[tr.length - 1][3].toFixed(1)}`;

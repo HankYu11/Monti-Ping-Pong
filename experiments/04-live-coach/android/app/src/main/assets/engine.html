@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>engine</title>
+<!-- The spin meter's own engine (experiments/02-spin-meter/web/engine.js, copied in by the build)
+     and mp4box.js, run headless in the app's WebView: one clip in, the reading and coaching out. -->
+<script src="mp4box.all.min.js"></script>
+<script src="engine.js"></script>
+<script>
+  const pick = (r) => r && {
+    phase: r.phase, rps: r.rps, rpm: r.rpm, type: r.spinType, clear: !!r.reliable, error: r.error || null,
+    lift: r.lift, fit: r.fit, speed: r.flight && r.flight.launchSpeed, toward: r.flight && r.flight.towardCameraDeg,
+    frames: r.nFrames, issues: (r.issues || []).map((i) => i.text),
+  };
+  async function analyse(url, id) {
+    const t0 = performance.now();
+    try {
+      const blob = await (await fetch(url)).blob();
+      const res = await window.SpinMeter.analyze(new File([blob], "serve.mp4"), {
+        captureFps: 240, serveDir: "any", single: true, robust: true,
+        onProgress: (step, frac) => Android.onProgress(id, String(step), +frac || 0),
+      });
+      const sv = (res.serves || [])[0];
+      const coach = sv ? window.SpinMeter.coach(sv) : { kind: "none", reason: "reading" };
+      const dbg = (res.meta && res.meta.debug) || {};
+      Android.onResult(id, JSON.stringify({
+        ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
+        serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
+        coach, frames: res.meta && res.meta.nFrames, engineSeconds: res.meta && res.meta.seconds,
+        time: dbg.time, read: dbg.read, decoder: dbg.decoder, workers: dbg.workers,
+      }));
+    } catch (e) {
+      Android.onResult(id, JSON.stringify({ ms: performance.now() - t0, error: "engine: " + (e && e.message ? e.message : e) }));
+    }
+  }
+  Android.onReady(typeof VideoDecoder !== "undefined", typeof MP4Box !== "undefined", !!window.SpinMeter);
+</script>

@@ -1858,7 +1858,8 @@
   // on simulated serve videos run through this engine (experiments/03-serve-guidance): right on
   // 53 of 55 answered. Near a line a reading could be either side; both are named.
   const COACH = { target: 30, thick: 0.9, slip: 0.92 * 1.2, mu: 1.2, ratioBand: [0.85, 0.95], gripBand: [1.02, 1.18],
-    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020 };
+    rpsBand: [28.5, 31.5], sideOn: 35, maxRatio: 1.65, carry: [0.45, 0.80], r: 0.020,
+    shortSpeed: [3.25, 4.0], thinRatio: 1.45 };
   function coach(serve) {
     const readings = (serve && (serve.phases || [serve])) || [];
     const r = readings.find((x) => !x.error && x.reliable && x.phase !== "bounce" && x.flight);
@@ -1878,6 +1879,13 @@
       if (falling && toss <= 4 && dot(dv, dv) > 1.1 * along * along)
         Object.assign(base, { toss, grip: along / Math.sqrt(dot(dv, dv) - along * along) });
     }
+    // Length. From 15-30 cm above the table a short serve leaves at about 3.25-4 m/s whatever its
+    // spin; faster goes into the net or long (flight with drag and lift, table bounce:
+    // experiments/03-serve-guidance/sim/landing.py; not yet checked on a table). The spin needs
+    // speed, as its surface speed is at most 1.5x the ball's: a thinner brush keeps the spin and
+    // slows the ball.
+    const surface = 2 * Math.PI * rps * COACH.r;
+    base.length = { long: speed > COACH.shortSpeed[1], thinSpeed: surface / COACH.thinRatio, minSpeed: surface / 1.5 };
     const grip = base.grip;
     const thin = () => {
       if (rps >= COACH.target) return ["good", rps < COACH.rpsBand[1] ? (grip != null && grip >= COACH.slip ? "slip" : "slow") : null];

@@ -395,6 +395,17 @@ the other 25 had no clear reading (mostly the black half's pole facing the camer
 marking hardly changed). On the 30 real clips no spin reading changed; the weak real backspin
 serve reads as pushed and the strong ones as strong.
 
+## Which way is down (3.0.3)
+
+The engine works out which way is down from the ball's own acceleration, so a phone held
+sideways still reads right. It used to pick whichever picture axis the acceleration was larger
+along, and a ball coming toward the camera seems to accelerate sideways from perspective and
+size noise about as much as it falls (real clips: up to 2.4x). A clip then read as turned a
+quarter and its backspin as sidespin: real clip T4 on a phone, and strong serves A and B when
+frames are read through a canvas. A quarter turn now needs the sideways part 3x the fall, both
+in space and in the plain picture; upside down is still caught. Copy details shows the
+acceleration (`accel`) and the turn (`rotated`).
+
 ## Versions and updates
 
 The header shows `Version <VERSION> · build <id>`. `VERSION` is bumped by hand for a release;

@@ -1442,11 +1442,17 @@
     balls.forEach((b, i) => { if (b) { const k = 20 / rAt(i); T3.push(i); X3.push((b[0] + centre[0]) * k); Y3.push((b[1] + centre[1]) * k); } });
     const tk3 = T3.filter((_, k) => keep[k]);
     const a3 = [2 * polyfit(tk3, X3.filter((_, k) => keep[k]), 2)[0], 2 * polyfit(tk3, Y3.filter((_, k) => keep[k]), 2)[0]];   // mm per frame^2
-    const turn = uprightRotation(a3[0], a3[1]);
+    // Turned a quarter only on clear evidence, in space and in the picture alike: perspective and
+    // size noise make a ball coming toward the camera seem to accelerate sideways as much as it
+    // falls (real clips: up to 2.4x; T4 at 0.97 read as sidespin on a phone), and phones store
+    // their videos upright. Upside down (the fall reversed) is still caught.
+    const quarter = Math.abs(a3[0]) >= 3 * Math.abs(a3[1]) && Math.abs(px[0]) >= 3 * Math.abs(py[0]);
+    const turn = quarter ? uprightRotation(a3[0], a3[1]) : uprightRotation(0, a3[1] >= 0 ? 1 : -1);
     f = matvec(turn, f);
     const acc = matvec(turn, [a3[0], a3[1], 0]);
     return {
       f, turn, rotatedDeg: ((Math.round(Math.atan2(turn[1][0], turn[0][0]) * 180 / Math.PI) % 360) + 360) % 360,
+      accel3: [a3[0], a3[1]].map((v) => v * fps * fps / 1000),   // the ball's acceleration in space, picture axes, m/s^2
       speed: dist * Math.hypot(vx / fpx - u * dlnr, vy / fpx - v * dlnr, dlnr) * fps / 1000,
       // at the hit (frame launchAt of this stretch): gravity slows a rising ball by 4 cm/s a frame,
       // so the middle of the stretch reads up to 20% under what the paddle gave it
@@ -1650,7 +1656,7 @@
       flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
         // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)
         tossVel: seg.toss ? matvec(geo.turn, scale([...seg.toss.v, 0], tossMs)).map((x, j) => x + (j === 1 ? 9.81 * (seg.toss.dt || 0) / fps : 0)) : null,
-        launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, dir: geo.f },
+        launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, accel3: geo.accel3, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
       segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
     };

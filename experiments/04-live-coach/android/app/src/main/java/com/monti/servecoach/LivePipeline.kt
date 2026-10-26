@@ -285,6 +285,15 @@ class LivePipeline(
         return best
     }
 
+    /** The check kept failing: watch anyway, the picture taken as it comes and the clocks' estimate (0.5.1 watched nothing). */
+    fun assumeDefault() {
+        if (calibrated) return
+        flip = 0
+        flipCheck = "not checked, assumed as it comes: $flipCheck"
+        calibrated = true
+        synchronized(recentTaps) { recentTaps.clear() }
+    }
+
     /** the tracker's own thread: blobs linked into tracks, frame by frame in order */
     private fun link() {
         var n = 0L

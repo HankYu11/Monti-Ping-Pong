@@ -166,6 +166,13 @@ copied into one of 3 buffers while the chip goes on and taken out two pictures l
 recording's don't (762,430 s apart): the offset is estimated from the two clocks and set exactly
 from the matched frame (`pictureCheck` says by how much the estimate was off).
 
+## 0.5.3
+
+A session on 0.5.1 (8 serves) watched nothing: its picture check never matched a frame (the
+clocks, fixed in 0.5.2), and the tracker waits for the check. Now after 5 s of failed checks it
+watches anyway (as the picture comes, the clocks' estimate) and says so; the screen shows the
+app's version and whether the check is done.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

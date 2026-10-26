@@ -159,7 +159,9 @@ class MainActivity : Activity() {
     private fun updateStats() {
         val p = pipeline
         val sb = StringBuilder()
+        sb.append("App ${BuildConfig.VERSION_NAME}\n")
         cfg?.let { sb.append("Camera ${it.size.width}×${it.size.height} @ ${it.fps} fps\n") }
+        if (p != null && p.tapped) sb.append(if (p.calibrated) "Picture check: done\n" else "Picture check: waiting (not watching yet)\n")
         if (p != null) {
             recorder?.let { sb.append("Recording ${it.recentFps().roundToInt()} frames/s\n") }
             sb.append("Watching: ${"%.1f".format(p.trackMsAvg)} ms a frame, ${p.lagMs} ms behind" + (if (p.dropped + p.skipped > 0) ", ${p.dropped + p.skipped} frames missed" else "") + "\n")
@@ -238,7 +240,11 @@ class MainActivity : Activity() {
                 main.post {
                     if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}") }
                     else if (tries < 10) calibrateSoon(p, tries + 1)
-                    else log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}")
+                    else {
+                        log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}; watching anyway")
+                        p.assumeDefault()
+                        say("Picture check failed. Watching anyway; send the report.")
+                    }
                 }
             }.start()
         }, 500)

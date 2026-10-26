@@ -19,7 +19,20 @@ import kotlin.math.sqrt
  */
 class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     /** A finished serve: frames [first, last] (as pushed) and the box [x0, y0, x1, y1] in quarter-size pixels. */
-    data class Serve(val first: Long, val last: Long, val box: FloatArray, val ballRadius: Float, val tracks: Int, val why: String)
+    data class Serve(val first: Long, val last: Long, val box: FloatArray, val ballRadius: Float, val tracks: Int, val why: String,
+                     /** the flight's track, [frame, x, y, r] at the tracker's rate and size, and the tracks near it (the bounce, the toss) */
+                     val track: List<FloatArray> = emptyList(), val near: List<List<FloatArray>> = emptyList()) {
+        /**
+         * The tracks for the engine (the header's "track" and "near"): frames counted from the
+         * capture's first ([f0], a whole frame; [step] whole frames per tracker frame), points in whole-picture pixels.
+         */
+        fun tracksJson(step: Int, scale: Float, f0: Long): String {
+            fun one(t: List<FloatArray>) = t.joinToString(",", "[", "]") { p ->
+                "[${(p[0] * step - f0).toLong()},${"%.1f".format(java.util.Locale.US, p[1] * scale)},${"%.1f".format(java.util.Locale.US, p[2] * scale)},${"%.2f".format(java.util.Locale.US, p[3] * scale)}]"
+            }
+            return ""","track":${one(track)},"near":${near.joinToString(",", "[", "]") { one(it) }}"""
+        }
+    }
 
     // the engine's numbers, at quarter size (it searches at half size)
     private val sampleEvery = 24                       // a background sample every 24 frames (0.1 s)
@@ -48,6 +61,10 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     private var groupDeadline = -1L
     private var bestScore = 0f
 
+    /** time spent (ns) in: background, mask, opening, blobs, (mask+opening+blobs), linking */
+    val nanos = LongArray(6)
+    private fun lap(k: Int, t: Long): Long { val n = System.nanoTime(); nanos[k] += n - t; return n }
+
     // counters for the report
     var framesSeen = 0L; private set
     var candidatesSeen = 0L; private set
@@ -65,11 +82,16 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val i = index
         frameNo = index + 1
         framesSeen++
+        var t = System.nanoTime()
         if (i % sampleEvery == 0L) addSample(q)
+        t = lap(0, t)
         val cands = if (bgY != null && samples.size >= 3) candidates(q) else emptyList()
         candidatesSeen += cands.size
+        t = System.nanoTime()
         link(i, cands)
-        return maybeServe(i)
+        val s = maybeServe(i)
+        lap(5, t)
+        return s
     }
 
     // ------------------------------------------------------------ background
@@ -78,6 +100,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         while (samples.size > samplesKept) samples.removeFirst()
         val ys = samples.map { it.y }; val us = samples.map { it.u }; val vs = samples.map { it.v }
         bgY = medianOf(ys); bgU = medianOf(us); bgV = medianOf(vs)
+        if (samples.size >= 3) bgNow = Background(bgY!!, bgU!!, bgV!!)
     }
 
     private fun medianOf(frames: List<FloatArray>): FloatArray {
@@ -109,106 +132,35 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     fun prime(spread: List<Quarter>) { spread.takeLast(samplesKept).forEach { addSample(it) } }
 
     // ------------------------------------------------------------ candidates in one frame
-    /**
-     * As the engine's scanFrame: brightness evened out for light flicker (a ratio per row against
-     * the background), then a pixel moves when its brightness or colour differs by more than 30;
-     * ball-like blobs: 12-625 px, not long (1.8), filling half their box.
-     */
+    private val detector = Detector(w, h)
+
+    /** The background as it is now, for finding candidates on other threads ([Detector.find]). */
+    fun background(): Background? = bgNow
+    @Volatile private var bgNow: Background? = null
+
     private fun candidates(q: Quarter): List<FloatArray> {
-        val bg = bgY!!; val bu = bgU!!; val bv = bgV!!
-        val rows = rowRatios(q.y, bg)
-        val mask = ByteArray(w * h)
-        for (y in 0 until h) {
-            val r = rows[y]
-            var p = y * w
-            for (x in 0 until w) {
-                var gv = (q.y[p] / r).toInt().toFloat()
-                if (gv < 0f) gv = 0f else if (gv > 255f) gv = 255f
-                var d = abs(gv - bg[p])
-                val du = chromaGain * abs(q.u[p] - bu[p]); if (du > d) d = du
-                val dv = chromaGain * abs(q.v[p] - bv[p]); if (dv > d) d = dv
-                if (d > 30f) mask[p] = 1
-                p++
-            }
-        }
-        open2(mask)
-        val out = ArrayList<FloatArray>()
-        components(mask) { area, bw, bh, cx, cy ->
-            // a ball the meter can read is 20 px across or more: 12 px of area here and up
-            // (the engine's search takes 3 and up, then its rules drop the small ones)
-            if (area < 12 || area > 625) return@components
-            if (max(bw, bh).toFloat() / max(1, min(bw, bh)) > 1.8f || area.toFloat() / (bw * bh) < 0.5f) return@components
-            out.add(floatArrayOf(cx, cy, sqrt(area / Math.PI).toFloat()))
-        }
+        val t = System.nanoTime()
+        val out = detector.find(q, background()!!)
+        nanos[1] += detector.nanos[0]; nanos[2] += detector.nanos[1]; nanos[3] += detector.nanos[2]
+        detector.nanos.fill(0)
+        lap(4, t)
         return out
     }
 
-    private var tmpMask = ByteArray(w * h)
     /**
-     * Opening with a 2x2 square, as the engine does at half size: single pixels and one-pixel lines
-     * (compression noise, edges shimmering) go, the ball stays.
+     * For finding candidates on other threads: call with every frame, in order, before taking its
+     * [background] (it learns the background from every 24th), then [pushFound] its candidates.
      */
-    private fun open2(m: ByteArray) {
-        val e = tmpMask
-        // erode: a pixel stays when its 2x2 block (it and right, down, down-right) is all set
-        for (y in 0 until h - 1) { var p = y * w; for (x in 0 until w - 1) { e[p] = (m[p].toInt() and m[p + 1].toInt() and m[p + w].toInt() and m[p + w + 1].toInt()).toByte(); p++ }; e[y * w + w - 1] = 0 }
-        java.util.Arrays.fill(e, (h - 1) * w, h * w, 0)
-        // dilate back: set where any of it, left, up, up-left was kept
-        for (y in 0 until h) { var p = y * w; for (x in 0 until w) {
-            var v = e[p].toInt()
-            if (x > 0) v = v or e[p - 1].toInt()
-            if (y > 0) { v = v or e[p - w].toInt(); if (x > 0) v = v or e[p - w - 1].toInt() }
-            m[p] = v.toByte(); p++ } }
-    }
+    fun sample(q: Quarter, index: Long) { if (index % sampleEvery == 0L) addSample(q) }
 
-    /** per-row brightness ratio to the background (every 4th pixel, over a lit background), smoothed over 5 rows */
-    private fun rowRatios(g: FloatArray, bg: FloatArray): FloatArray {
-        val raw = FloatArray(h)
-        for (y in 0 until h) {
-            var sg = 0f; var sb = 0f
-            var p = y * w
-            val end = p + w
-            while (p < end) { val b = bg[p]; if (b > 20f) { sg += g[p]; sb += b }; p += 4 }
-            raw[y] = if (sb > 0f) sg / sb else 1f
-        }
-        val out = FloatArray(h)
-        for (y in 0 until h) {
-            var s = 0f; var c = 0
-            for (k in max(0, y - 2)..min(h - 1, y + 2)) { s += raw[k]; c++ }
-            out[y] = (s / c).coerceIn(0.5f, 2f)
-        }
-        return out
-    }
-
-    private var labels = IntArray(w * h)
-    private var stack = IntArray(w * h)
-
-    /** 8-connected blobs of the mask: area, box size, centre */
-    private inline fun components(mask: ByteArray, onBlob: (Int, Int, Int, Float, Float) -> Unit) {
-        java.util.Arrays.fill(labels, 0)
-        var next = 1
-        for (start in 0 until w * h) {
-            if (mask[start].toInt() == 0 || labels[start] != 0) continue
-            var sp = 0
-            stack[sp++] = start; labels[start] = next
-            var area = 0; var sx = 0L; var sy = 0L
-            var x0 = w; var y0 = h; var x1 = -1; var y1 = -1
-            while (sp > 0) {
-                val p = stack[--sp]
-                val x = p % w; val y = p / w
-                area++; sx += x; sy += y
-                if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y
-                for (dy in -1..1) for (dx in -1..1) {
-                    val nx = x + dx; val ny = y + dy
-                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue
-                    val np = ny * w + nx
-                    if (mask[np].toInt() != 0 && labels[np] == 0) { labels[np] = next; stack[sp++] = np }
-                }
-                if (area > 4000) break                       // a person or the paddle: not a ball, stop counting
-            }
-            next++
-            onBlob(area, x1 - x0 + 1, y1 - y0 + 1, sx.toFloat() / area, sy.toFloat() / area)
-        }
+    /** The next frame, its candidates found elsewhere (see [sample]). */
+    fun pushFound(index: Long, cands: List<FloatArray>): Serve? {
+        val i = index
+        frameNo = index + 1
+        framesSeen++
+        candidatesSeen += cands.size
+        link(i, cands)
+        return maybeServe(i)
     }
 
     // ------------------------------------------------------------ tracks
@@ -300,6 +252,9 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
      */
     private fun maybeServe(i: Long): Serve? {
         if (done.isEmpty() || i < groupDeadline) return null
+        // a flight still going on (V1: the toss ended and its wait ran out while the serve itself
+        // was in the air, so the toss came out as a serve of its own): wait for it, up to 1.5 s
+        if (i - done.minOf { it.first()[0] } < 1.5 * fps && active.any { it.pts.size >= minLen && judge(it) == null }) return null
         // the best track is the serve; with it the tracks of nearly its quality close in time (the
         // flight after the bounce), and a toss track that ended just before it, near its start
         val best = done.maxByOrNull { it.score }!!
@@ -313,10 +268,13 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         fun grow(tr: Track) { for (p in tr.pts) { box[0] = min(box[0], p[1]); box[1] = min(box[1], p[2]); box[2] = max(box[2], p[1]); box[3] = max(box[3], p[2]); rMax = max(rMax, p[3]) } }
         keep.forEach { grow(it) }
         val f = best.first()
+        val near = ArrayList<List<FloatArray>>()
+        for (tr in keep) if (tr !== best) near.add(tr.pts)
         for (tr in recent) if (tr !in keep && tr.last()[0] >= b0 - 0.3f * fps && tr.last()[0] <= b0 + 3 &&
-            hypot(tr.last()[1] - f[1], tr.last()[2] - f[2]) < 12 * f[3]) grow(tr)
+            hypot(tr.last()[1] - f[1], tr.last()[2] - f[2]) < 12 * f[3]) { grow(tr); near.add(tr.pts) }
         val why = "best of ${done.size}: ${best.pts.size} frames, score ${best.score.toInt()}"
-        val s = Serve(max(0, first - (0.25 * fps).toLong()), min(last + (0.05 * fps).toLong(), first + (1.5 * fps).toLong()), box, rMax, keep.size, why)
+        val s = Serve(max(0, first - (0.25 * fps).toLong()), min(last + (0.05 * fps).toLong(), first + (1.5 * fps).toLong()), box, rMax, keep.size, why,
+            best.pts.toList(), near)
         done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
         return s
     }

@@ -37,8 +37,17 @@
     const t0 = performance.now();
     try {
       const head = await (await fetch(`${base}/head`)).json();
-      const frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
-      const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: head.n, frame, full: head.full, fps: head.fps }, {
+      // the whole capture in one go when it fits easily in memory (a request per frame costs ms each), else frame by frame
+      const [, , cw, ch] = head.rect, per = cw * ch + 2 * (cw >> 1) * (ch >> 1);
+      let frames = null, frame = null;
+      if (per * head.n <= 160e6) {
+        const all = await (await fetch(`${base}/all`)).arrayBuffer();
+        frames = [];
+        for (let k = 0; k < head.n && (k + 1) * per <= all.byteLength; k++) frames.push(new Uint8Array(all, k * per, per));
+      } else frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
+      const tFetch = performance.now() - t0;
+      const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
+        useTrack: !!(head.track && head.track.length),     // the live tracker's tracks: no search of its own (2-4x faster)
         single: true, serveDir: "any", robust: true, onProgress: (step, frac) => Android.onProgress(id, String(step), +frac || 0),
       });
       const sv = (res.serves || [])[0];
@@ -47,7 +56,7 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: head.n, crop: head.rect, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
+        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), usedTrack: !!(head.track && head.track.length), engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
       }));
     } catch (e) {
       Android.onResult(id, JSON.stringify({ ms: performance.now() - t0, error: "engine: " + (e && e.message ? e.message : e) }));

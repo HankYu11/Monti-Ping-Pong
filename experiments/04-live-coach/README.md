@@ -78,6 +78,31 @@ other movement are rejected by the engine ("found in too few frames") and not sp
 Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `watching`
 `msPerFrame`, `lagMs`, `dropped`) and the engine's time on a crop (`results` `wallMs`).
 
+## What 0.3 showed (Pixel 8)
+
+- The serve tracker couldn't keep up: 10.7 ms a frame at 120 frames a second is 1.3 s of work
+  each second, so 22% of the frames were dropped, and more were skipped waiting for the next
+  keyframe. Tracks broke, crops missed part of the flight (#1: the ball in 3 of 37 frames).
+- 8 captures, 2 clear readings (32.7 rev/s backspin, 44.6 topspin); the engine took 2–13 s a
+  capture, most of it its own search for the flight (2–11 s), and 1–4 s to write a capture.
+
+## 0.4
+
+- **Keeping up**: finding blobs on 3 threads at once (each frame on its own), linking in order on
+  another; the decoder only shrinks the frames, reading rows in bulk. The blob finding itself is
+  about twice as fast (tighter loops, no per-frame clearing). On the PC the parallel version
+  finds exactly the serves the one-thread version does.
+- **No second search**: the capture carries the tracker's tracks; the engine fills them in for
+  every frame and measures along them (`measureCapture` with `useTrack`), picking among them by
+  its own flight rules (`flightRule`, shared with its search) and scoring. On the 13 test
+  captures: the same readings as with its search (within 0.7 rev/s), 1.3–4× faster; captures
+  of other movement are turned down in 1 ms.
+- The tracker waits for a flight still in the air before reporting (V1: the toss came out as a
+  serve of its own, the real one in a second capture).
+- A capture reaches the engine in one request, not one per frame.
+- Report: `encoded` (frames the camera gave), `skipped` (frames the tracker let go to keep up),
+  `shrinkMs` / `findMs` / `linkMs`, and per result `fetchMs`, `usedTrack`.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

@@ -185,7 +185,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     <span class="label">Table tennis · marked ball · 240 fps</span>
     <h1>Serve Spin Meter</h1>
     <p class="lede">Film serves in slow motion, pick the video, and read the spin: revolutions per minute and whether it is backspin, topspin or sidespin. The video is analysed on this device and never uploaded.</p>
-    <p class="note num">Version 3.1.2 · build 3c81185</p>
+    <p class="note num">Version 3.1.2 · build b3b713d</p>
     
   </header>
 
@@ -1175,6 +1175,32 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     }
   }
 
+  // Whether a track flies like a serve: null, or why not ("" for a track too short to count).
+  // A flight may go across the picture, toward the camera or away from it. Not a flight: a
+  // toss (mostly upward), a ball dropping straight down without coming closer, slow movers.
+  function flightRule(tr, minLen = 12) {
+    if (tr.length < minLen) return tr.length >= 6 ? "short" : "";
+    const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
+    const disp = Math.hypot(dx, dy);
+    if (disp < 30) return "barely moves";
+    // specks from flickering lights and compression: smaller than any ball the meter could read
+    if (median(tr.map((p) => p[3])) < 2.5) return "tiny";
+    // a flight moves steadily: not a flickering light or a jittery spot that drifts
+    if (disp / Math.max(1, b[0] - a[0]) < 1.0) return "too slow";
+    let path = 0;
+    for (let k = 1; k < tr.length; k++) path += Math.hypot(tr[k][1] - tr[k - 1][1], tr[k][2] - tr[k - 1][2]);
+    if (disp < 0.6 * path) return "zigzag";
+    if (dy < 0 && -dy > Math.abs(dx)) return "upward (toss)";
+    const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
+    // the size away from the ends too: at its ends a toss merges with the head or the paddle
+    // (real clip V1: a toss from above the head read as shrinking 11 -> 3 px and passed as a flight)
+    const n = tr.length, part = (a, b) => median(tr.slice(Math.floor(a * n), Math.max(Math.floor(a * n) + 1, Math.floor(b * n))).map((p) => p[3]));
+    const growMid = part(0.625, 0.875) / Math.max(1e-6, part(0.125, 0.375));
+    const steady = (g, lim) => g < lim && g > 1 / lim;
+    if (dy > 2 * Math.abs(dx) && (steady(grow, 1.3) || steady(growMid, 1.15))) return "straight drop";
+    return null;
+  }
+
   // ------------------------------------------------------------ 1. find the flights (one per serve)
   async function findFlights(R, progress, opt) {
     const skipAfter = opt.skipAfterContact ?? 4, maxFrames = opt.maxFrames ?? 60, minLen = 12;
@@ -1273,31 +1299,12 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     tracks = tracks.concat(active);
     if (opt.onTracks) opt.onTracks(   // for tests: every track of 8+ frames, and the per-frame candidates
       tracks.filter((tr) => tr.length >= 8).map((tr) => tr.map((q) => q.map((v) => Math.round(v * 10) / 10))), cands);
-    // A flight may go across the picture, toward the camera or away from it. Not a flight: a
-    // toss (mostly upward), a ball dropping straight down without coming closer, slow movers.
+    // the tracks that fly like a serve (flightRule), and why the others don't
     const why = {};
-    const no = (reason) => { why[reason] = (why[reason] || 0) + 1; return false; };
     const good = tracks.filter((tr) => {
-      if (tr.length < minLen) return tr.length >= 6 ? no("short") : false;
-      const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
-      const disp = Math.hypot(dx, dy);
-      if (disp < 30) return no("barely moves");
-      // specks from flickering lights and compression: smaller than any ball the meter could read
-      if (median(tr.map((p) => p[3])) < 2.5) return no("tiny");
-      // a flight moves steadily: not a flickering light or a jittery spot that drifts
-      if (disp / Math.max(1, b[0] - a[0]) < 1.0) return no("too slow");
-      let path = 0;
-      for (let k = 1; k < tr.length; k++) path += Math.hypot(tr[k][1] - tr[k - 1][1], tr[k][2] - tr[k - 1][2]);
-      if (disp < 0.6 * path) return no("zigzag");
-      if (dy < 0 && -dy > Math.abs(dx)) return no("upward (toss)");
-      const grow = median(tr.slice(-4).map((p) => p[3])) / Math.max(1e-6, median(tr.slice(0, 4).map((p) => p[3])));
-      // the size away from the ends too: at its ends a toss merges with the head or the paddle
-      // (real clip V1: a toss from above the head read as shrinking 11 -> 3 px and passed as a flight)
-      const n = tr.length, part = (a, b) => median(tr.slice(Math.floor(a * n), Math.max(Math.floor(a * n) + 1, Math.floor(b * n))).map((p) => p[3]));
-      const growMid = part(0.625, 0.875) / Math.max(1e-6, part(0.125, 0.375));
-      const steady = (g, lim) => g < lim && g > 1 / lim;
-      if (dy > 2 * Math.abs(dx) && (steady(grow, 1.3) || steady(growMid, 1.15))) return no("straight drop");
-      return true;
+      const r = flightRule(tr, minLen);
+      if (r) why[r] = (why[r] || 0) + 1;
+      return r === null;
     });
     const fmtTr = (tr) => `${tr[0][0]}-${tr[tr.length - 1][0]} (${tr.length}) ${tr[0].slice(1, 3).map(Math.round)}->${tr[tr.length - 1].slice(1, 3).map(Math.round)} r${tr[0][3].toFixed(1)}-${tr[tr.length - 1][3].toFixed(1)}`;
     DBG.search = { framesWithCandidates: cands.filter((c) => c.length).length, candidatesPerFrame: +(cands.reduce((s, c) => s + c.length, 0) / Math.max(1, nFrames)).toFixed(1),
@@ -2373,20 +2380,23 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   // searched and measured exactly as a video would be, only smaller and shorter.
   //   cap.W, cap.H        the whole picture's size
   //   cap.rect            [x, y, w, h] of the crop in the whole picture (all even)
-  //   cap.frames          per frame: Uint8Array of the crop's Y (w*h), then U and V ((w/2)*(h/2) each)
+  //   cap.frames          per frame: Uint8Array of the crop's Y (w*h), then U and V ((w/2)*(h/2) each);
+  //   or cap.n and cap.frame(i): an async getter, so a long capture needn't be held in memory
   //   cap.full            true when the Y values span 0-255 (else video range 16-235)
   //   cap.fps             frames per second (240)
   //   cap.track           optional, with opts.useTrack: [[frame, x, y, radius], ...] in whole-picture
   //                       pixels, used instead of the search (the app's own track)
   function captureReader(cap) {
     const [cx, cy, cw, ch] = cap.rect, cw2 = cw >> 1, ch2 = ch >> 1, ySize = cw * ch, cSize = cw2 * ch2;
-    const planes = cap.frames.map((buf) => ({
+    const plane = (buf) => ({
       buf, stride: cw, offset: 0, lut: cap.full ? LUT_FULL : LUT_VIDEO, full: !!cap.full,
       u: { offset: ySize, stride: cw2, step: 1 }, v: { offset: ySize + cSize, stride: cw2, step: 1 },
-    }));
+    });
+    const n = cap.frames ? cap.frames.length : cap.n;
+    const get = cap.frames ? async (i) => cap.frames[i] : cap.frame;
     return {
-      kind: "capture", n: planes.length, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy,
-      async run(a, b, cb) { for (let i = Math.max(0, a); i < Math.min(b, planes.length); i++) await cb(i, { capturePlanes: planes[i] }); },
+      kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy,
+      async run(a, b, cb) { for (let i = Math.max(0, a); i < Math.min(b, n); i++) await cb(i, { capturePlanes: plane(await get(i)) }); },
       close() {},
     };
   }
@@ -2395,11 +2405,27 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     setUp(opts);
     const R = captureReader(cap);
     const o = Object.assign({}, opts, { captureFps: cap.fps || 240 });
-    if (opts.useTrack && cap.track) {
+    // The live tracker's own track of the flight (whole-picture pixels, every few frames), so the
+    // search can be skipped: in the crop at the search's half size, filled in for every frame.
+    if (opts.useTrack && cap.track && cap.track.length >= 6) {
       const [cx, cy] = cap.rect;
       const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60);
-      const half = cap.track.map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]);
-      o.segments = () => { const sv = build(half, [half]); return Object.assign(sv ? [sv] : [], { ballFrames: half.length }); };
+      const half = (t) => {
+        const q = t.map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]), out = [];
+        for (let k = 0; k < q.length; k++) {
+          out.push(q[k]);
+          const a = q[k], b = q[k + 1];
+          if (b) for (let f = a[0] + 1; f < b[0]; f++) { const u = (f - a[0]) / (b[0] - a[0]); out.push([f, a[1] + u * (b[1] - a[1]), a[2] + u * (b[2] - a[2]), a[3] + u * (b[3] - a[3])]); }
+        }
+        return out.filter((p) => p[0] >= 0 && p[0] < R.n);
+      };
+      // the tracker's pick and the tracks near it (the bounce, a toss, or the flight itself when
+      // something bigger was picked): the serve as the search would choose it, by its own rules
+      const all = [cap.track, ...(cap.near || [])].map(half);
+      o.segments = () => {
+        const built = all.filter((tr) => flightRule(tr) === null).map((tr) => build(tr, all)).filter(Boolean).sort((a, b) => b.score - a.score);
+        return Object.assign(built.slice(0, 1), { ballFrames: Math.max(...all.map((t) => t.length)) });
+      };
     }
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
@@ -2677,7 +2703,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
   }
 
   // ---------------------------------------------------------- session log (this browser only)
-  const KEY = "serve-spin-meter.session.v1", VERSION = "3.1.2 (3c81185)";
+  const KEY = "serve-spin-meter.session.v1", VERSION = "3.1.2 (b3b713d)";
   let log = [];
   try { log = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { log = []; }
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(log)); } catch (e) {} };

@@ -2,19 +2,25 @@ package com.monti.servecoach
 
 import android.os.SystemClock
 import com.monti.servecoach.core.Capture
+import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
+import com.monti.servecoach.core.Quarter
 import com.monti.servecoach.core.ServeTracker
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
  * Watches the stream for serves. Encoded frames come in (from the camera's encoder, or a video
- * being replayed); a decoder turns them back into pictures; every 2nd one (120 a second) goes to
- * the serve tracker at a quarter of its size. When the tracker reports a serve, its frames are
- * decoded again from the store, all of them, cropped to where the ball flew, and written to a
- * capture for the engine.
+ * being replayed); a decoder turns them back into pictures; every 2nd one (120 a second) is
+ * shrunk to a quarter of its size, its ball-like blobs are found on a few threads at once, and
+ * one thread links them into tracks in order (the serve tracker). When the tracker reports a
+ * serve, its frames are decoded again from the store, all of them, cropped to where the ball
+ * flew, and written to a capture for the engine.
  */
 class LivePipeline(
     private val store: FrameStore,
@@ -26,23 +32,39 @@ class LivePipeline(
 ) {
     private val queue = LinkedBlockingQueue<EncodedFrame>(if (blocking) 64 else 720)
     @Volatile private var running = true
-    private val thread = Thread({ run() }, "serve-tracker")
+    private val thread = Thread({ run() }, "decoder")
+    private val linker = Thread({ link() }, "serve-tracker")
     private val step = 2                                   // the tracker sees every 2nd frame
+
+    // finding blobs, on a few threads; their results are linked in order
+    private val finders = Executors.newFixedThreadPool(3) { r -> Thread(r, "finder").apply { priority = Thread.NORM_PRIORITY + 1 } }
+    private val detectors = ThreadLocal<Detector>()
+    private class Job(val index: Long, val found: Future<List<FloatArray>>?, val end: Boolean = false)
+    private val jobs = LinkedBlockingQueue<Job>(if (blocking) 16 else 24)   // 0.2 s of frames waiting (1.5 MB each)
 
     // for the screen and the report
     @Volatile var decoded = 0L; private set
-    @Volatile var dropped = 0L; private set
-    @Volatile var trackMsAvg = 0.0; private set
+    @Volatile var dropped = 0L; private set              // encoded frames dropped (the decoder fell behind)
+    @Volatile var skipped = 0L; private set              // frames the tracker skipped (finding blobs fell behind)
+    @Volatile var trackMsAvg = 0.0; private set         // per tracker frame: shrinking + finding + linking (on several threads)
+    @Volatile var shrinkMsAvg = 0.0; private set
+    @Volatile var findMsAvg = 0.0; private set
+    @Volatile var linkMsAvg = 0.0; private set
     @Volatile var lagMs = 0L; private set
     @Volatile var servesFound = 0; private set
-    var tracker: ServeTracker? = null; private set
+    @Volatile var tracker: ServeTracker? = null; private set
     private var captures = 0
 
-    fun start() = thread.start()
-    fun stop() { running = false; thread.interrupt(); thread.join(1000) }
+    fun start() { thread.start(); linker.start() }
+    fun stop() {
+        running = false
+        thread.interrupt(); linker.interrupt()
+        thread.join(1000); linker.join(1000)
+        finders.shutdownNow()
+    }
 
     /** replay: the video ended; decode what's left and let a serve still being watched out. Blocks until done. */
-    fun finish() { queue.put(END); thread.join() }
+    fun finish() { queue.put(END); thread.join(); linker.join(); finders.shutdown() }
 
     /**
      * Replay: learn the background from keyframes spread over the video before it plays (live, the
@@ -53,7 +75,7 @@ class LivePipeline(
         val keys = frames.filter { it.key }
         if (keys.isEmpty()) return
         val pick = (0 until count).map { keys[it * (keys.size - 1) / maxOf(1, count - 1)] }.distinct()
-        val qs = ArrayList<com.monti.servecoach.core.Quarter>()
+        val qs = ArrayList<Quarter>()
         for (k in pick) {
             val dec = FrameDecoder(fmt)
             try {
@@ -104,14 +126,13 @@ class LivePipeline(
                 lagMs = (newest - lastPts) / 1000
             }
         } catch (_: InterruptedException) {
-        } catch (e: Exception) { onError("tracker: ${e.message}") }
+        } catch (e: Exception) { onError("decoder: ${e.message}") }
         dec?.release()
     }
 
-    private var lastPts = 0L
-    private var avgN = 0
-    private var frameW = 0
-    private var frameH = 0
+    @Volatile private var lastPts = 0L
+    @Volatile private var frameW = 0
+    @Volatile private var frameH = 0
 
     /** the end of a replayed video: the decoder's last pictures, then quiet frames so a serve still being watched is let out */
     private fun flush(dec: FrameDecoder?) {
@@ -121,38 +142,77 @@ class LivePipeline(
             tries = 0
             while (!dec.ended && tries++ < 500) dec.drain(10_000) { pts, yuv -> onPicture(pts, yuv) }
         }
-        val tr = tracker ?: return
-        val quiet = com.monti.servecoach.core.Quarter(tr.w, tr.h, FloatArray(tr.w * tr.h), FloatArray(tr.w * tr.h), FloatArray(tr.w * tr.h))
-        repeat(120) { tr.push(quiet)?.let { onServe(tr, it) } }
+        jobs.put(Job(decoded / step, null, end = true))
     }
 
     private fun drainOnce(dec: FrameDecoder) { dec.drain(0) { pts, yuv -> onPicture(pts, yuv) } }
 
+    private fun avg(old: Double, x: Double, n: Long) = old + (x - old) / minOf(n, 240L).coerceAtLeast(1L)
+    private var shrinkN = 0L
+
+    /** on the decoder's thread: note the frame's time; every 2nd frame shrunk and sent to the finders */
     private fun onPicture(pts: Long, yuv: com.monti.servecoach.core.Yuv) {
-        val n = decoded++
+        val n = decoded
         ptsRing[(n % ptsRing.size).toInt()] = pts
+        decoded = n + 1
         lastPts = pts
         if (n % step != 0L) return
+        val index = n / step
+        if (!blocking && jobs.remainingCapacity() == 0) { skipped++; return }      // the finders are behind: skip it
         frameW = yuv.width; frameH = yuv.height
-        val t0 = SystemClock.elapsedRealtimeNanos()
-        val tr = tracker ?: ServeTracker(yuv.width / 4, yuv.height / 4, captureFps / step).also { tracker = it }
-        val serve = tr.push(Downsample.quarter(yuv), n / step)
-        val ms = (SystemClock.elapsedRealtimeNanos() - t0) / 1e6
-        avgN++; trackMsAvg += (ms - trackMsAvg) / minOf(avgN, 240)
-        if (serve != null) onServe(tr, serve)
+        val t0 = System.nanoTime()
+        val q = Downsample.quarter(yuv)
+        shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
+        val tr = tracker ?: ServeTracker(q.w, q.h, captureFps / step).also { tracker = it }
+        tr.sample(q, index)                                    // the background, from every 24th frame
+        val bg = tr.background()
+        val found = if (bg == null) null else finders.submit(Callable {
+            val d = detectors.get() ?: Detector(q.w, q.h).also { detectors.set(it) }
+            val t = System.nanoTime()
+            val c = d.find(q, bg)
+            findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
+            c
+        })
+        jobs.put(Job(index, found))
+    }
+
+    /** the tracker's own thread: blobs linked into tracks, frame by frame in order */
+    private fun link() {
+        var n = 0L
+        try {
+            while (true) {
+                val job = jobs.poll(50, TimeUnit.MILLISECONDS) ?: if (running) continue else break
+                val tr = tracker ?: continue
+                if (job.end) {
+                    var i = job.index
+                    repeat(120) { tr.pushFound(i++, emptyList())?.let { onServe(tr, it) } }
+                    break
+                }
+                val cands = job.found?.get() ?: emptyList()
+                val t = System.nanoTime()
+                val serve = tr.pushFound(job.index, cands)
+                val ms = (System.nanoTime() - t) / 1e6
+                n++
+                linkMsAvg = avg(linkMsAvg, ms, n)
+                trackMsAvg = shrinkMsAvg + findMsAvg + linkMsAvg
+                if (serve != null) onServe(tr, serve)
+            }
+        } catch (_: InterruptedException) {
+        } catch (e: Exception) { onError("tracker: ${e.message}") }
     }
 
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
         servesFound++
         val first = serve.first * step; val last = serve.last * step + step - 1
-        if (decoded - first > ptsRing.size || first >= decoded) return          // too long ago to find again
+        val dec = decoded
+        if (dec - first > ptsRing.size || first >= dec) return          // too long ago to find again
         val fromUs = ptsRing[(first % ptsRing.size).toInt()] - 1
-        val toUs = ptsRing[(minOf(last, decoded - 1) % ptsRing.size).toInt()] + 1
+        val toUs = ptsRing[(minOf(last, dec - 1) % ptsRing.size).toInt()] + 1
         val w = frameW; val h = frameH
         val rect = tr.cropFor(serve, w, h)
         val id = ++captures
         // the capture is written on its own thread, so the tracker keeps up
-        Thread({ writeCapture(id, serve, fromUs, toUs, rect, w, h) }, "capture-$id").start()
+        Thread({ writeCapture(id, serve, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
     /** the serve's frames, all of them, decoded again and cropped: a header (JSON) and the frames (one file) */
@@ -179,7 +239,7 @@ class LivePipeline(
             }
             dec.release()
             val c = cap ?: return
-            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""", n)
+            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), serve.first * step), n)
             File(captureDir, "cap_$id.json").writeText(head)
             onCapture(Capture.Info(id, n, c.frameBytes, head, SystemClock.elapsedRealtime() - t0, fromUs, toUs))
         } catch (e: Exception) { onError("capture: ${e.message}") }

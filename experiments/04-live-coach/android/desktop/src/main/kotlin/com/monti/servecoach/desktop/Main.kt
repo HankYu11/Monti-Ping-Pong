@@ -34,13 +34,21 @@ fun main(args: Array<String>) {
     val serves = ArrayList<ServeTracker.Serve>()
     var n = 0L
     val t0 = System.nanoTime()
+    var dsNs = 0L; var pushNs = 0L; var pushed = 0
+    // PAR=1: as the phone does it: blobs found on 3 threads with the background of the moment, linked in order up to 24 frames later
+    val par = if (System.getenv("PAR") != null) Parallel(tracker) else null
     frames(clip, W, H) { f ->
         if (n % step == 0L) {
-            val s = tracker.push(Downsample.quarter(f), n / step)
+            val a = System.nanoTime()
+            val q = Downsample.quarter(f)
+            val b = System.nanoTime()
+            val s = if (par == null) tracker.push(q, n / step) else par.push(q, n / step)
+            dsNs += b - a; pushNs += System.nanoTime() - b; pushed++
             if (s != null) serves.add(s.copy(first = s.first * step, last = s.last * step + step - 1))
         }
         n++
     }
+    par?.drain()?.let { serves.addAll(it.map { s -> s.copy(first = s.first * step, last = s.last * step + step - 1) }) }
     // the clip ended: let a waiting serve out (live, the frames keep coming)
     val quiet = com.monti.servecoach.core.Quarter(W / 4, H / 4, FloatArray(W / 4 * H / 4), FloatArray(W / 4 * H / 4), FloatArray(W / 4 * H / 4))
     repeat(120) { tracker.push(quiet)?.let { serves.add(it.copy(first = it.first * step, last = it.last * step + step - 1)) } }
@@ -55,10 +63,10 @@ fun main(args: Array<String>) {
     for ((k, sc) in caps.withIndex()) {
         val (s, c) = sc
         val file = File(outDir, "${clip.nameWithoutExtension}_${k + 1}.cap")
-        c.write(file, ""","first":${s.first},"last":${s.last}""")
+        c.write(file, ""","first":${s.first},"last":${s.last}""" + s.tracksJson(step, W.toFloat() / (W / 4), s.first))
         println("""{"clip":"${clip.name}","serve":${k + 1},"frames":"${s.first}-${s.last}","rect":[${c.rect.joinToString(",")}],"ballR":${"%.1f".format(s.ballRadius * 4)},"tracks":${s.tracks},"why":"${s.why}","file":"${file.path}"}""")
     }
-    println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}"}""")
+    println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}"}""")
 }
 
 fun probe(clip: File): Pair<Int, Int> {
@@ -85,4 +93,33 @@ fun frames(clip: File, W: Int, H: Int, each: (Yuv) -> Unit) {
         }
     } catch (_: EOFException) {}
     p.destroy()
+}
+
+class Parallel(private val tracker: ServeTracker) {
+    private val pool = java.util.concurrent.Executors.newFixedThreadPool(3)
+    private val detectors = ThreadLocal<com.monti.servecoach.core.Detector>()
+    private val waiting = ArrayDeque<Pair<Long, java.util.concurrent.Future<List<FloatArray>>?>>()
+
+    fun push(q: com.monti.servecoach.core.Quarter, index: Long): ServeTracker.Serve? {
+        tracker.sample(q, index)
+        val bg = tracker.background()
+        val f = if (bg == null) null else pool.submit(java.util.concurrent.Callable {
+            val d = detectors.get() ?: com.monti.servecoach.core.Detector(q.w, q.h).also { detectors.set(it) }
+            d.find(q, bg)
+        })
+        waiting.addLast(index to f)
+        return if (waiting.size > 24) one() else null
+    }
+
+    private fun one(): ServeTracker.Serve? {
+        val (i, f) = waiting.removeFirst()
+        return tracker.pushFound(i, f?.get() ?: emptyList())
+    }
+
+    fun drain(): List<ServeTracker.Serve> {
+        val out = ArrayList<ServeTracker.Serve>()
+        while (waiting.isNotEmpty()) one()?.let { out.add(it) }
+        pool.shutdown()
+        return out
+    }
 }

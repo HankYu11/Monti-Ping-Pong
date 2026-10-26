@@ -161,7 +161,7 @@ class MainActivity : Activity() {
         cfg?.let { sb.append("Camera ${it.size.width}×${it.size.height} @ ${it.fps} fps\n") }
         if (p != null) {
             recorder?.let { sb.append("Recording ${it.recentFps().roundToInt()} frames/s\n") }
-            sb.append("Watching: ${"%.1f".format(p.trackMsAvg)} ms a frame, ${p.lagMs} ms behind" + (if (p.dropped > 0) ", ${p.dropped} frames dropped" else "") + "\n")
+            sb.append("Watching: ${"%.1f".format(p.trackMsAvg)} ms a frame, ${p.lagMs} ms behind" + (if (p.dropped + p.skipped > 0) ", ${p.dropped + p.skipped} frames missed" else "") + "\n")
         }
         sb.append("Engine ${if (engineReady) "ready" else "loading"}" + (if (waiting.isNotEmpty()) " · ${waiting.size} waiting" else "") +
             (if (unclear > 0) " · $unclear movements weren't readable serves" else ""))
@@ -225,8 +225,8 @@ class MainActivity : Activity() {
     }
 
     private fun stopAll() {
-        pipeline?.let { p -> report.put("watching", JSONObject().put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("msPerFrame", p.trackMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
+        pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
+            .put("skipped", p.skipped).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         recorder?.onFrame = null
@@ -339,6 +339,7 @@ class MainActivity : Activity() {
     private fun captureResponse(rest: String): WebResourceResponse {
         val (id, what) = rest.split("/", limit = 2)
         if (what == "head") return WebResourceResponse("application/json", "utf-8", File(capDir, "cap_$id.json").inputStream())
+        if (what == "all") return WebResourceResponse("application/octet-stream", null, File(capDir, "cap_$id.bin").inputStream().buffered(1 shl 20))
         val head = JSONObject(File(capDir, "cap_$id.json").readText())
         val rect = head.getJSONArray("rect")
         val per = rect.getInt(2) * rect.getInt(3) + 2 * (rect.getInt(2) / 2) * (rect.getInt(3) / 2)
@@ -420,8 +421,8 @@ class MainActivity : Activity() {
     }
 
     private fun copyReport() {
-        pipeline?.let { p -> report.put("watching", JSONObject().put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("msPerFrame", p.trackMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
+        pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
+            .put("skipped", p.skipped).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

@@ -35,26 +35,40 @@ object Downsample {
         val w = f.width / 4; val h = f.height / 4
         val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
         val full = f.fullRange
-        val yb = f.y.buf; val yo = f.y.offset; val ys = f.y.rowStride; val yp = f.y.pixelStride
-        val ub = f.u.buf; val uo = f.u.offset; val us = f.u.rowStride; val up = f.u.pixelStride
-        val vb = f.v.buf; val vo = f.v.offset; val vs = f.v.rowStride; val vp = f.v.pixelStride
+        val ys = f.y.rowStride; val yp = f.y.pixelStride
+        val up = f.u.pixelStride; val vp = f.v.pixelStride
+        // rows are read in bulk (a byte at a time from a decoder's buffer is slow)
+        val yLen = (4 * (w - 1) + 3) * yp + 1
+        val uLen = (2 * (w - 1) + 1) * up + 1; val vLen = (2 * (w - 1) + 1) * vp + 1
+        val r0 = rowBuf(0, yLen); val r1 = rowBuf(1, yLen); val ru = rowBuf(2, uLen); val rv = rowBuf(3, vLen)
+        val yb = f.y.buf.duplicate(); val ub = f.u.buf.duplicate(); val vb = f.v.buf.duplicate()
         for (qy in 0 until h) {
-            val r0 = yo + (4 * qy + 1) * ys; val r1 = r0 + 2 * ys
-            val cu = uo + (2 * qy + 1) * us; val cv = vo + (2 * qy + 1) * vs
+            yb.position(f.y.offset + (4 * qy + 1) * ys); yb.get(r0, 0, yLen)
+            yb.position(f.y.offset + (4 * qy + 3) * ys); yb.get(r1, 0, yLen)
+            ub.position(f.u.offset + (2 * qy + 1) * f.u.rowStride); ub.get(ru, 0, uLen)
+            vb.position(f.v.offset + (2 * qy + 1) * f.v.rowStride); vb.get(rv, 0, vLen)
+            var q = qy * w
             for (qx in 0 until w) {
                 val c0 = (4 * qx + 1) * yp; val c1 = c0 + 2 * yp
-                val s = (yb.get(r0 + c0).toInt() and 0xff) + (yb.get(r0 + c1).toInt() and 0xff) +
-                    (yb.get(r1 + c0).toInt() and 0xff) + (yb.get(r1 + c1).toInt() and 0xff)
+                val s = (r0[c0].toInt() and 0xff) + (r0[c1].toInt() and 0xff) + (r1[c0].toInt() and 0xff) + (r1[c1].toInt() and 0xff)
                 val m = (s + 2) shr 2
-                val q = qy * w + qx
                 y[q] = if (full) m.toFloat() else lumaVideo[m]
-                val mu = ub.get(cu + (2 * qx + 1) * up).toInt() and 0xff
-                val mv = vb.get(cv + (2 * qx + 1) * vp).toInt() and 0xff
+                val mu = ru[(2 * qx + 1) * up].toInt() and 0xff
+                val mv = rv[(2 * qx + 1) * vp].toInt() and 0xff
                 u[q] = if (full) (mu - 128).toFloat() else chromaVideo[mu]
                 v[q] = if (full) (mv - 128).toFloat() else chromaVideo[mv]
+                q++
             }
         }
         return Quarter(w, h, y, u, v)
+    }
+
+    private val rows = ThreadLocal.withInitial { arrayOfNulls<ByteArray>(4) }
+    private fun rowBuf(k: Int, n: Int): ByteArray {
+        val a = rows.get()
+        val b = a[k]
+        if (b != null && b.size >= n) return b
+        return ByteArray(n).also { a[k] = it }
     }
 }
 

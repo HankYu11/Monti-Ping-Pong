@@ -156,6 +156,16 @@ list if refused). The preview is drawn as the recording is, not by the camera's 
 for a portrait screen), turned by the picture check; the check now decodes any tapped frame from
 its keyframe, not only keyframes.
 
+## 0.5.2
+
+0.5.1 on the Pixel 8: every frame went to the preview (accepted), the preview was the right way
+round, but the tap kept 481 of ~1240 frames and the picture check matched none. The tap waited
+for each read-back (4 ms) and frames arriving meanwhile were replaced; now each picture is
+copied into one of 3 buffers while the chip goes on and taken out two pictures later (OpenGL ES
+3; `tap.readBack`). The check failed because the preview's times count the phone's sleep and the
+recording's don't (762,430 s apart): the offset is estimated from the two clocks and set exactly
+from the matched frame (`pictureCheck` says by how much the estimate was off).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

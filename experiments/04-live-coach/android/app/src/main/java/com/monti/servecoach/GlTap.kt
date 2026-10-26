@@ -8,6 +8,7 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
+import android.opengl.GLES30
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -24,16 +25,18 @@ import java.nio.FloatBuffer
  * (on a Pixel 8 that couldn't keep up at 240 a second). Every [previewEvery]th frame is also
  * drawn on the screen.
  *
- * [onFrame] gets every frame's time (ns, the camera's, as the encoder's) and, on every
- * [every]th frame (by time), its small picture: R brightness, G and B colour + 128. The bytes
- * belong to the receiver.
+ * [onFrame] gets every frame's time (ns, by the camera's clock: not the recording's) and number;
+ * [onPicture], every [every]th frame's small picture (R brightness, G and B colour + 128), two
+ * pictures later: it is read back while the chip goes on (waiting for each took 4 ms, and frames
+ * arriving meanwhile were lost). The bytes belong to the receiver.
  */
 class GlTap(
     private val width: Int, private val height: Int,
     private val every: Int = 2,
     private val fps: Int = 240,
     private val previewEvery: Int = 8,
-    private val onFrame: (tsNs: Long, frameNo: Long, rgba: ByteArray?) -> Unit,
+    private val onFrame: (tsNs: Long, frameNo: Long) -> Unit,
+    private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray) -> Unit,
     private val onError: (String) -> Unit,
 ) {
     val qw = width / 4
@@ -67,6 +70,7 @@ class GlTap(
     @Volatile var tapped = 0L; private set
     @Volatile var missed = 0L; private set                // frames that never reached us (by their times)
     @Volatile var tapMsAvg = 0.0; private set
+    val readBack get() = if (gl3) "buffered (ES 3)" else "waiting (ES 2)"
     private var t0Ns = -1L
     private var lastNo = -1L
 
@@ -110,12 +114,17 @@ class GlTap(
         display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         val v = IntArray(2)
         check(EGL14.eglInitialize(display, v, 0, v, 1)) { "no EGL" }
-        val attrs = intArrayOf(EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT or EGL14.EGL_WINDOW_BIT, EGL14.EGL_NONE)
         val cfgs = arrayOfNulls<EGLConfig>(1); val n = IntArray(1)
-        check(EGL14.eglChooseConfig(display, attrs, 0, cfgs, 0, 1, n, 0) && n[0] > 0) { "no EGL config" }
-        config = cfgs[0]
-        context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0)
+        for (es3 in listOf(true, false)) {
+            val attrs = intArrayOf(EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
+                EGL14.EGL_RENDERABLE_TYPE, if (es3) 0x40 /* EGL_OPENGL_ES3_BIT_KHR */ else EGL14.EGL_OPENGL_ES2_BIT,
+                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT or EGL14.EGL_WINDOW_BIT, EGL14.EGL_NONE)
+            if (!EGL14.eglChooseConfig(display, attrs, 0, cfgs, 0, 1, n, 0) || n[0] == 0) continue
+            config = cfgs[0]
+            context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, if (es3) 3 else 2, EGL14.EGL_NONE), 0)
+            if (context != EGL14.EGL_NO_CONTEXT) { gl3 = es3; break }
+        }
+        check(context != EGL14.EGL_NO_CONTEXT) { "no EGL context" }
         pbuffer = EGL14.eglCreatePbufferSurface(display, config, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
         check(EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)) { "EGL context" }
 
@@ -136,6 +145,14 @@ class GlTap(
         check(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE) { "framebuffer" }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
 
+        if (gl3) {
+            GLES30.glGenBuffers(pbo.size, pbo, 0)
+            for (b in pbo) {
+                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, b)
+                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, qw * qh * 4, null, GLES30.GL_STREAM_READ)
+            }
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        }
         tapProgram = program(VERTEX_TAP, FRAGMENT_TAP)
         showProgram = program(VERTEX_SHOW, FRAGMENT_SHOW)
 
@@ -156,23 +173,31 @@ class GlTap(
             if (lastNo >= 0 && no > lastNo + 1) missed += no - lastNo - 1
             if (no <= lastNo) return                                  // a repeat
             lastNo = no
-            var rgba: ByteArray? = null
+            onFrame(ts, no)
             if (no % every == 0L) {
                 val t0 = SystemClock.elapsedRealtimeNanos()
-                rgba = tap()
+                tap(ts, no)
                 tapped++
                 tapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - tapMsAvg) / minOf(tapped, 240L)
             }
             if (no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) show()
-            onFrame(ts, no, rgba)
         } catch (e: Exception) { onError("tap: ${e.message}") }
     }
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(4 * 8).order(ByteOrder.nativeOrder()).asFloatBuffer()
         .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }
 
-    /** the small picture: drawn into the framebuffer, read back */
-    private fun tap(): ByteArray {
+    // read-back buffers (OpenGL ES 3): each picture is copied into one while the chip goes on,
+    // and taken out two pictures later, when it's long done
+    private var gl3 = false
+    private val pbo = IntArray(3)
+    private val slotTs = LongArray(3)
+    private val slotNo = LongArray(3)
+    private val slotFull = BooleanArray(3)
+    private var slot = 0
+
+    /** the small picture: drawn into the framebuffer, read back (see [onPicture]) */
+    private fun tap(ts: Long, no: Long) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
         GLES20.glViewport(0, 0, qw, qh)
         GLES20.glUseProgram(tapProgram)
@@ -185,12 +210,36 @@ class GlTap(
         GLES20.glEnableVertexAttribArray(pos)
         GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-        pixels.position(0)
-        GLES20.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
+        if (!gl3) {
+            pixels.position(0)
+            GLES20.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            val out = ByteArray(qw * qh * 4)
+            pixels.position(0); pixels.get(out)
+            onPicture(ts, no, out)
+            return
+        }
+        // the oldest buffer: its picture (two back) out first, then this one in
+        val k = slot
+        if (slotFull[k]) takeOut(k)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
+        GLES30.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glFlush()
+        slotTs[k] = ts; slotNo[k] = no; slotFull[k] = true
+        slot = (k + 1) % pbo.size
+    }
+
+    private fun takeOut(k: Int) {
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
+        val m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, qw * qh * 4, GLES30.GL_MAP_READ_BIT) as ByteBuffer?
         val out = ByteArray(qw * qh * 4)
-        pixels.position(0); pixels.get(out)
-        return out
+        if (m != null) { m.order(ByteOrder.nativeOrder()).position(0); m.get(out) }
+        GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        slotFull[k] = false
+        if (m != null) onPicture(slotTs[k], slotNo[k], out)
     }
 
     /** the preview, as the camera's own transform says, without waiting for the screen */

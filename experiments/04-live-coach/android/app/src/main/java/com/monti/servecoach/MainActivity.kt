@@ -193,7 +193,8 @@ class MainActivity : Activity() {
         // be set up, the recording decoded again, as 0.4 did
         val t = try {
             GlTap(c.size.width, c.size.height, fps = c.fps,
-                onFrame = { ts, no, rgba -> p.offerTapped(ts, no, rgba, c.size.width / 4, c.size.height / 4) },
+                onFrame = { ts, no -> p.offerTapTime(ts, no) },
+                onPicture = { ts, no, rgba -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) },
                 onError = { msg -> main.post { log("error", msg) } }).also { it.start() }
         } catch (e: Exception) { log("error", "graphics tap: ${e.message}; decoding instead"); null }
         tap = t
@@ -262,7 +263,7 @@ class MainActivity : Activity() {
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
-        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg)) }
+        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("readBack", t.readBack)) }
         tap?.stop(); tap = null
         recorder?.onFrame = null
         pipeline?.stop(); pipeline = null
@@ -466,7 +467,7 @@ class MainActivity : Activity() {
     private fun copyReport() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
-        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg)) }
+        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("readBack", t.readBack)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

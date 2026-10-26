@@ -126,7 +126,7 @@ class LivePipeline(
                 }
                 if (dec != null) drainOnce(dec)
                 if (dropped != seenDropped) { seenDropped = dropped; waitKey = true }   // frames lost: resume at a keyframe
-                lagMs = (newest - lastPts) / 1000
+                if (newest > 0) lagMs = (newest - lastPts) / 1000
             }
         } catch (_: InterruptedException) {
         } catch (e: Exception) { onError("decoder: ${e.message}") }
@@ -192,23 +192,33 @@ class LivePipeline(
     private val recentTaps = ArrayDeque<Tapped>()
 
     /**
-     * Every camera frame's time and number (240 a second, by its time), and every 2nd one's small
-     * picture, from the graphics chip: no decoding to watch for serves (a Pixel 8 couldn't decode
-     * 240 frames a second and keep up). On the tap's thread: quick.
+     * The preview stream's times are on the clock that counts sleep (the camera's), the recording's
+     * on the one that doesn't (0.5.1: 762,430 s apart): tap time minus this is recording time.
+     * Estimated from the two clocks, then set exactly by [calibrate] from a matched frame.
      */
-    fun offerTapped(tsNs: Long, frameNo: Long, rgba: ByteArray?, w: Int, h: Int) {
+    @Volatile var clockOffsetUs = (SystemClock.elapsedRealtimeNanos() - System.nanoTime()) / 1000; private set
+
+    /** Every camera frame's time (ns, the camera's clock) and number (240 a second, by its time), from the graphics chip (GlTap). Quick. */
+    fun offerTapTime(tsNs: Long, frameNo: Long) {
         tapped = true
-        val pts = tsNs / 1000
+        val pts = tsNs / 1000 - clockOffsetUs
         // frame times by number (frames that never arrived get the time they would have had)
         if (lastNo >= 0) for (k in lastNo + 1 until frameNo) ptsRing[(k % ptsRing.size).toInt()] = pts - (frameNo - k) * 1_000_000L / captureFps
         ptsRing[(frameNo % ptsRing.size).toInt()] = pts
         lastNo = frameNo
         decoded = frameNo + 1
         lastPts = pts
-        if (rgba == null) return
+    }
+
+    /**
+     * Every 2nd frame's small picture from the graphics chip (a little after its time): to the
+     * finders, as decoded frames went before (a Pixel 8 couldn't decode 240 frames a second for
+     * watching and keep up).
+     */
+    fun offerTapPicture(tsNs: Long, frameNo: Long, rgba: ByteArray, w: Int, h: Int) {
         frameW = w * 4; frameH = h * 4
         if (!calibrated) {                     // until the picture's way round is known: kept for that
-            synchronized(recentTaps) { recentTaps.addLast(Tapped(pts, rgba, w, h)); while (recentTaps.size > 48) recentTaps.removeFirst() }
+            synchronized(recentTaps) { recentTaps.addLast(Tapped(tsNs / 1000, rgba, w, h)); while (recentTaps.size > 48) recentTaps.removeFirst() }
             return
         }
         val index = frameNo / step
@@ -236,23 +246,27 @@ class LivePipeline(
         val fmt = store.outputFormat ?: return -1
         val taps = synchronized(recentTaps) { recentTaps.toList() }
         if (taps.isEmpty()) return -1
-        // one of them, decoded from the recording (from the keyframe before it to it)
+        // one of them, decoded from the recording (from the keyframe before it to it): the recorded
+        // frame nearest its time by the clocks' estimated offset, within half a frame
         var q: Quarter? = null
         var t: Tapped? = null
+        var matched = 0L
         for (cand in taps.asReversed()) {
-            val frames = store.between(cand.pts, cand.pts)
-            if (frames.isEmpty() || frames.none { kotlin.math.abs(it.ptsUs - cand.pts) <= 1 }) continue
+            val target = cand.pts - clockOffsetUs
+            val near = store.between(target - 5_000, target + 5_000).minByOrNull { kotlin.math.abs(it.ptsUs - target) } ?: continue
+            if (kotlin.math.abs(near.ptsUs - target) > 1_000_000 / captureFps / 2) continue
+            val frames = store.between(near.ptsUs, near.ptsUs)
             val dec = FrameDecoder(fmt)
             try {
                 var k = 0; var tries = 0
                 while (!dec.ended && tries++ < 2000 && q == null) {
                     if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
-                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv -> if (q == null && kotlin.math.abs(pts - cand.pts) <= 1) q = Downsample.quarter(yuv) }
+                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv -> if (q == null && pts == near.ptsUs) q = Downsample.quarter(yuv) }
                 }
             } finally { dec.release() }
-            if (q != null) { t = cand; break }
+            if (q != null) { t = cand; matched = near.ptsUs; break }
         }
-        if (t == null) { flipCheck = "no recorded frame matched the ${taps.size} tapped ones (times ${taps.first().pts}-${taps.last().pts}, recording ${store.between(0, Long.MAX_VALUE).let { if (it.isEmpty()) "empty" else "${it.first().ptsUs}-${it.last().ptsUs}" }})"; return -1 }
+        if (t == null) { flipCheck = "no recorded frame matched the ${taps.size} tapped ones (times ${taps.first().pts}-${taps.last().pts} less $clockOffsetUs, recording ${store.between(0, Long.MAX_VALUE).let { if (it.isEmpty()) "empty" else "${it.first().ptsUs}-${it.last().ptsUs}" }})"; return -1 }
         val ref = q ?: return -1
         if (ref.w != t.w || ref.h != t.h) { flipCheck = "sizes differ: ${ref.w}x${ref.h} / ${t.w}x${t.h}"; return -1 }
         val diffs = (0 until 4).map { f ->
@@ -263,7 +277,9 @@ class LivePipeline(
         }
         val best = diffs.indices.minByOrNull { diffs[it] }!!
         flip = best
-        flipCheck = "flip $best, mean differences ${diffs.joinToString(" / ") { "%.1f".format(it) }}"
+        val estimate = clockOffsetUs
+        clockOffsetUs = t.pts - matched
+        flipCheck = "flip $best, mean differences ${diffs.joinToString(" / ") { "%.1f".format(it) }}; clocks ${clockOffsetUs} us apart (estimated ${clockOffsetUs - estimate} us off)"
         calibrated = true
         synchronized(recentTaps) { recentTaps.clear() }
         return best

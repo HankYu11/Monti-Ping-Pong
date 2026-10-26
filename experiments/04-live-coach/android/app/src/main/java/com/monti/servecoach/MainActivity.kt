@@ -202,10 +202,15 @@ class MainActivity : Activity() {
         val holder = preview.holder
         holder.setFixedSize(if (t != null) c.size.width / 2 else c.size.width, if (t != null) c.size.height / 2 else c.size.height)
         fitPreview(c.size.width, c.size.height)
+        camera.allToPreview = t != null
         val go = Runnable {
             camera.start(c, listOf(t?.surface ?: holder.surface, rec.inputSurface), camHandler,
                 onError = { msg -> main.post { log("error", msg); state("Camera problem: $msg"); stopAll() } },
-                onRunning = { main.post { log("camera", "running"); if (t != null) calibrateSoon(p, 0) } })
+                onRunning = { main.post {
+                    log("camera", "running" + (if (t != null) ", every frame to the preview: ${camera.everyFrameToPreview}" else "") +
+                        camera.burstNote.let { if (it.isEmpty()) "" else " ($it)" })
+                    if (t != null) calibrateSoon(p, 0)
+                } })
             t?.showOn(holder.surface)
         }
         val (fw, fh) = if (t != null) c.size.width / 2 to c.size.height / 2 else c.size.width to c.size.height
@@ -230,7 +235,7 @@ class MainActivity : Activity() {
             Thread {
                 val f = try { p.calibrate() } catch (e: Exception) { main.post { log("error", "picture check: ${e.message}") }; -1 }
                 main.post {
-                    if (f >= 0) log("camera", "picture check: ${p.flipCheck}")
+                    if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}") }
                     else if (tries < 10) calibrateSoon(p, tries + 1)
                     else log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}")
                 }

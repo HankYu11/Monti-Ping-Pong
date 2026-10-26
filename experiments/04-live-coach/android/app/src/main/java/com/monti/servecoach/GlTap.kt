@@ -55,9 +55,10 @@ class GlTap(
     lateinit var surface: Surface
         private set
     private val pixels: ByteBuffer = ByteBuffer.allocateDirect(qw * qh * 4).order(ByteOrder.nativeOrder())
-    private val stMatrix = FloatArray(16)
 
-    /** which way the small picture is turned against the encoded frames: bit 0 flips x, bit 1 flips y (see [setFlip]) */
+    /** which way the picture is turned against the recorded frames (bit 0: x, bit 1: y), from the
+     *  pipeline's check: the preview is drawn as the recording is (the camera's own transform
+     *  assumes a portrait screen: 0.5 showed it turned a quarter) */
     @Volatile var flip = 0; private set
     @Volatile private var previewTarget: Surface? = null
 
@@ -179,7 +180,7 @@ class GlTap(
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(tapProgram, "tex"), 0)
         GLES20.glUniform2f(GLES20.glGetUniformLocation(tapProgram, "texel"), 1f / width, 1f / height)
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(tapProgram, "flip"), if (flip and 1 != 0) 1f else 0f, if (flip and 2 != 0) 1f else 0f)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(tapProgram, "flip"), 0f, 0f)
         val pos = GLES20.glGetAttribLocation(tapProgram, "pos")
         GLES20.glEnableVertexAttribArray(pos)
         GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -200,8 +201,7 @@ class GlTap(
         EGL14.eglQuerySurface(display, window, EGL14.EGL_WIDTH, w, 0); EGL14.eglQuerySurface(display, window, EGL14.EGL_HEIGHT, h, 0)
         GLES20.glViewport(0, 0, w[0], h[0])
         GLES20.glUseProgram(showProgram)
-        texture.getTransformMatrix(stMatrix)
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(showProgram, "st"), 1, false, stMatrix, 0)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(showProgram, "flip"), if (flip and 1 != 0) 1f else 0f, if (flip and 2 != 0) 1f else 0f)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(showProgram, "tex"), 0)
@@ -259,12 +259,15 @@ class GlTap(
                 float v = (c.r - y) / 1.5748;
                 gl_FragColor = vec4(y, u + 0.5, v + 0.5, 1.0);
             }"""
+        // the recording's own way round: the top of the screen shows the buffer's first row (as the
+        // tap reads it), then the check's flips
         private const val VERTEX_SHOW = """
             attribute vec2 pos;
-            uniform mat4 st;
+            uniform vec2 flip;
             varying vec2 uv;
             void main() {
-                uv = (st * vec4(pos * 0.5 + 0.5, 0.0, 1.0)).xy;
+                vec2 t = vec2(pos.x * 0.5 + 0.5, 0.5 - pos.y * 0.5);
+                uv = mix(t, 1.0 - t, flip);
                 gl_Position = vec4(pos, 0.0, 1.0);
             }"""
         private const val FRAGMENT_SHOW = """

@@ -236,20 +236,23 @@ class LivePipeline(
         val fmt = store.outputFormat ?: return -1
         val taps = synchronized(recentTaps) { recentTaps.toList() }
         if (taps.isEmpty()) return -1
-        // a keyframe the tap also saw (the same time to the microsecond, give or take one)
-        val keys = store.between(taps.first().pts, taps.last().pts).filter { it.key }
-        var pair: Pair<Tapped, EncodedFrame>? = null
-        for (k in keys) { val t = taps.firstOrNull { kotlin.math.abs(it.pts - k.ptsUs) <= 1 }; if (t != null) { pair = t to k; break } }
-        val (t, key) = pair ?: return -1
+        // one of them, decoded from the recording (from the keyframe before it to it)
         var q: Quarter? = null
-        val dec = FrameDecoder(fmt)
-        try {
-            var fed = false; var eos = false; var tries = 0
-            while (!dec.ended && tries++ < 400 && q == null) {
-                if (!fed) fed = dec.feed(key, 5_000) else if (!eos) eos = dec.endOfStream()
-                dec.drain(5_000) { _, yuv -> if (q == null) q = Downsample.quarter(yuv) }
-            }
-        } finally { dec.release() }
+        var t: Tapped? = null
+        for (cand in taps.asReversed()) {
+            val frames = store.between(cand.pts, cand.pts)
+            if (frames.isEmpty() || frames.none { kotlin.math.abs(it.ptsUs - cand.pts) <= 1 }) continue
+            val dec = FrameDecoder(fmt)
+            try {
+                var k = 0; var tries = 0
+                while (!dec.ended && tries++ < 2000 && q == null) {
+                    if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
+                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv -> if (q == null && kotlin.math.abs(pts - cand.pts) <= 1) q = Downsample.quarter(yuv) }
+                }
+            } finally { dec.release() }
+            if (q != null) { t = cand; break }
+        }
+        if (t == null) { flipCheck = "no recorded frame matched the ${taps.size} tapped ones (times ${taps.first().pts}-${taps.last().pts}, recording ${store.between(0, Long.MAX_VALUE).let { if (it.isEmpty()) "empty" else "${it.first().ptsUs}-${it.last().ptsUs}" }})"; return -1 }
         val ref = q ?: return -1
         if (ref.w != t.w || ref.h != t.h) { flipCheck = "sizes differ: ${ref.w}x${ref.h} / ${t.w}x${t.h}"; return -1 }
         val diffs = (0 until 4).map { f ->

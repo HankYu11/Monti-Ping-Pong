@@ -146,6 +146,16 @@ Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `
   read 4.8).
 - Report: `watchingBy`, `tap` (frames, tapped, missed, tapMs), `pictureCheck`.
 
+## 0.5.1
+
+0.5 on the Pixel 8: the preview was turned a quarter, and the tap got 324 frames of 2581 (30 a
+second): Android's slow-motion burst (`createHighSpeedRequestList`) sends the preview only the
+first frame of each 8. Its first request targets both streams, and a burst is accepted if made of
+its requests, so 0.5.1 repeats that one 8 times (`everyFrameToPreview` in the log; Android's own
+list if refused). The preview is drawn as the recording is, not by the camera's transform (meant
+for a portrait screen), turned by the picture check; the check now decodes any tapped frame from
+its keyframe, not only keyframes.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

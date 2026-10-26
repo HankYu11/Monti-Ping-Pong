@@ -129,7 +129,16 @@ class HighSpeedCamera(private val context: Context) {
                                 surfaces.forEach { b.addTarget(it) }
                                 b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
                                 b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                                hs.setRepeatingBurst(hs.createHighSpeedRequestList(b.build()), null, handler)
+                                val list = hs.createHighSpeedRequestList(b.build())
+                                // Android's list sends the preview only the 1st frame of each 8 (30 a
+                                // second); its 1st request goes to both, so every frame does with it 8 times
+                                // over (the app watches the preview stream). If refused: Android's own.
+                                everyFrameToPreview = false
+                                if (surfaces.size == 2 && list.size > 1 && allToPreview) try {
+                                    hs.setRepeatingBurst(List(list.size) { list[0] }, null, handler)
+                                    everyFrameToPreview = true
+                                } catch (e: Exception) { burstNote = "every frame to the preview refused: ${e.message}" }
+                                if (!everyFrameToPreview) hs.setRepeatingBurst(list, null, handler)
                                 onRunning()
                             } catch (e: Exception) { onError("request: ${e.message}") }
                         }
@@ -141,6 +150,11 @@ class HighSpeedCamera(private val context: Context) {
             override fun onError(d: CameraDevice, error: Int) { d.close(); device = null; onError("camera error $error") }
         }, handler)
     }
+
+    /** send every frame to the preview stream too (else 1 in 8), and whether that was taken */
+    var allToPreview = false
+    @Volatile var everyFrameToPreview = false; private set
+    @Volatile var burstNote = ""; private set
 
     fun stop() {
         try { session?.stopRepeating() } catch (_: Exception) {}

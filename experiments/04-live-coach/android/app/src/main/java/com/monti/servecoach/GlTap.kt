@@ -70,7 +70,22 @@ class GlTap(
     @Volatile var tapped = 0L; private set
     @Volatile var missed = 0L; private set                // frames that never reached us (by their times)
     @Volatile var tapMsAvg = 0.0; private set
-    val readBack get() = if (gl3) "buffered (ES 3)" else "waiting (ES 2)"
+    @Volatile var latchMsAvg = 0.0; private set           // taking the frame in (updateTexImage)
+    @Volatile var showMsAvg = 0.0; private set
+    @Volatile var readMsAvg = 0.0; private set            // on the reader's thread: waiting for the chip, copying out
+    @Volatile var busySkips = 0L; private set             // pictures not taken: every read-back buffer still in use
+    val readBack get() = if (gl3) "on its own thread (ES 3)" else "waiting (ES 2)"
+    private var latchN = 0L
+    private var showN = 0L
+    private var readN = 0L
+
+    // reading back on a thread of its own (a context sharing the buffers): the frames' thread only
+    // starts each copy (0.5.3: taking them out there took 3.9 ms a picture, and the camera keeps
+    // only its newest preview frame, so frames arriving meanwhile were lost)
+    private val reader = HandlerThread("gl-read").apply { start() }
+    private val readerHandler = Handler(reader.looper)
+    private var readerContext: EGLContext = EGL14.EGL_NO_CONTEXT
+    private var readerSurface: EGLSurface = EGL14.EGL_NO_SURFACE
     private var t0Ns = -1L
     private var lastNo = -1L
 
@@ -101,6 +116,12 @@ class GlTap(
                 if (window != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, window)
                 EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
                 EGL14.eglDestroySurface(display, pbuffer)
+                if (readerContext != EGL14.EGL_NO_CONTEXT) {
+                    val r = java.util.concurrent.CountDownLatch(1)
+                    readerHandler.post { EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT); r.countDown() }
+                    r.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    EGL14.eglDestroyContext(display, readerContext); EGL14.eglDestroySurface(display, readerSurface)
+                }
                 EGL14.eglDestroyContext(display, context)
                 EGL14.eglTerminate(display)
             } catch (_: Exception) {}
@@ -108,6 +129,7 @@ class GlTap(
         }
         done.await(1, java.util.concurrent.TimeUnit.SECONDS)
         thread.quitSafely()
+        reader.quitSafely()
     }
 
     private fun setUp() {
@@ -147,11 +169,24 @@ class GlTap(
 
         if (gl3) {
             GLES30.glGenBuffers(pbo.size, pbo, 0)
+            busy = java.util.concurrent.atomic.AtomicIntegerArray(pbo.size)
             for (b in pbo) {
                 GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, b)
                 GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, qw * qh * 4, null, GLES30.GL_STREAM_READ)
             }
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        }
+        if (gl3) {
+            readerContext = EGL14.eglCreateContext(display, config, context, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0)
+            readerSurface = EGL14.eglCreatePbufferSurface(display, config, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
+            if (readerContext == EGL14.EGL_NO_CONTEXT) gl3 = false
+            else {
+                val ready = java.util.concurrent.CountDownLatch(1)
+                var ok = false
+                readerHandler.post { ok = EGL14.eglMakeCurrent(display, readerSurface, readerSurface, readerContext); ready.countDown() }
+                ready.await()
+                if (!ok) gl3 = false
+            }
         }
         tapProgram = program(VERTEX_TAP, FRAGMENT_TAP)
         showProgram = program(VERTEX_SHOW, FRAGMENT_SHOW)
@@ -164,7 +199,9 @@ class GlTap(
 
     private fun onFrameAvailable() {
         try {
+            val tl = SystemClock.elapsedRealtimeNanos()
             texture.updateTexImage()
+            latchMsAvg += ((SystemClock.elapsedRealtimeNanos() - tl) / 1e6 - latchMsAvg) / minOf(++latchN, 240L)
             val ts = texture.timestamp
             frames++
             if (t0Ns < 0) t0Ns = ts
@@ -180,20 +217,22 @@ class GlTap(
                 tapped++
                 tapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - tapMsAvg) / minOf(tapped, 240L)
             }
-            if (no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) show()
+            if (no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) {
+                val ts0 = SystemClock.elapsedRealtimeNanos()
+                show()
+                showMsAvg += ((SystemClock.elapsedRealtimeNanos() - ts0) / 1e6 - showMsAvg) / minOf(++showN, 240L)
+            }
         } catch (e: Exception) { onError("tap: ${e.message}") }
     }
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(4 * 8).order(ByteOrder.nativeOrder()).asFloatBuffer()
         .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }
 
-    // read-back buffers (OpenGL ES 3): each picture is copied into one while the chip goes on,
-    // and taken out two pictures later, when it's long done
+    // read-back buffers (OpenGL ES 3): each picture is copied into one while the chip goes on;
+    // the reader takes it out when the chip is done (a fence) and frees the buffer
     private var gl3 = false
-    private val pbo = IntArray(3)
-    private val slotTs = LongArray(3)
-    private val slotNo = LongArray(3)
-    private val slotFull = BooleanArray(3)
+    private val pbo = IntArray(4)
+    private var busy = java.util.concurrent.atomic.AtomicIntegerArray(4)
     private var slot = 0
 
     /** the small picture: drawn into the framebuffer, read back (see [onPicture]) */
@@ -219,27 +258,35 @@ class GlTap(
             onPicture(ts, no, out)
             return
         }
-        // the oldest buffer: its picture (two back) out first, then this one in
         val k = slot
-        if (slotFull[k]) takeOut(k)
+        if (busy.get(k) != 0) { busySkips++; GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0); return }
         GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
         GLES30.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
         GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        val fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
         GLES20.glFlush()
-        slotTs[k] = ts; slotNo[k] = no; slotFull[k] = true
+        busy.set(k, 1)
         slot = (k + 1) % pbo.size
+        readerHandler.post { takeOut(k, fence, ts, no) }
     }
 
-    private fun takeOut(k: Int) {
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
-        val m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, qw * qh * 4, GLES30.GL_MAP_READ_BIT) as ByteBuffer?
-        val out = ByteArray(qw * qh * 4)
-        if (m != null) { m.order(ByteOrder.nativeOrder()).position(0); m.get(out) }
-        GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
-        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-        slotFull[k] = false
-        if (m != null) onPicture(slotTs[k], slotNo[k], out)
+    /** on the reader's thread: once the chip is done, the picture copied out and the buffer freed */
+    private fun takeOut(k: Int, fence: Long, ts: Long, no: Long) {
+        val t0 = SystemClock.elapsedRealtimeNanos()
+        var out: ByteArray? = null
+        try {
+            GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L)
+            GLES30.glDeleteSync(fence)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
+            val m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, qw * qh * 4, GLES30.GL_MAP_READ_BIT) as ByteBuffer?
+            if (m != null) { out = ByteArray(qw * qh * 4); m.order(ByteOrder.nativeOrder()).position(0); m.get(out) }
+            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        } catch (e: Exception) { onError("read-back: ${e.message}") }
+        busy.set(k, 0)
+        readMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - readMsAvg) / minOf(++readN, 240L)
+        out?.let { onPicture(ts, no, it) }
     }
 
     /** the preview, as the camera's own transform says, without waiting for the screen */

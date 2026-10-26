@@ -173,6 +173,15 @@ clocks, fixed in 0.5.2), and the tracker waits for the check. Now after 5 s of f
 watches anyway (as the picture comes, the clocks' estimate) and says so; the screen shows the
 app's version and whether the check is done.
 
+## 0.5.4
+
+0.5.3 (no serves yet): the picture check passed (flip 0: mean difference 0.8 against 35-36 the
+other ways; clocks 762,426 s apart, estimated within 41 us), but the tap kept 1115 of ~2260
+frames: taking a picture out of its buffer still cost 3.9 ms on the frames' thread, and the
+camera keeps only its newest preview frame. Now a second thread (a context sharing the buffers)
+waits for the chip (a fence) and copies the picture out; the frames' thread only starts it.
+Report: `tap.latchMs` / `showMs` / `readMs` / `busySkips`.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

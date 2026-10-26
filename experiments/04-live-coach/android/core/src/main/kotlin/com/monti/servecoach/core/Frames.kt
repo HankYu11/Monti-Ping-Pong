@@ -31,44 +31,57 @@ object Downsample {
      * Brightness: the mean of 4 pixels spread over each 4x4 block (a quarter of the reads of a full
      * average: at 240 frames a second the phone has about 4 ms a frame); colour: one sample.
      */
-    fun quarter(f: Yuv): Quarter {
+    fun quarter(f: Yuv): Quarter = quarter(rows(f))
+
+    /**
+     * Just the rows the quarter-size picture is made from, copied in bulk (1 in 2 brightness rows,
+     * 1 in 2 colour rows): quick, for the decoder's thread, which must hand its picture back soon.
+     * [quarter] of them is the rest of the work, on any thread.
+     */
+    class Rows(val w: Int, val h: Int, val full: Boolean, val yp: Int, val up: Int, val vp: Int,
+               val yLen: Int, val uLen: Int, val vLen: Int, val y: ByteArray, val u: ByteArray, val v: ByteArray)
+
+    fun rows(f: Yuv): Rows {
         val w = f.width / 4; val h = f.height / 4
-        val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
-        val full = f.fullRange
-        val ys = f.y.rowStride; val yp = f.y.pixelStride
-        val up = f.u.pixelStride; val vp = f.v.pixelStride
-        // rows are read in bulk (a byte at a time from a decoder's buffer is slow)
+        val yp = f.y.pixelStride; val up = f.u.pixelStride; val vp = f.v.pixelStride
         val yLen = (4 * (w - 1) + 3) * yp + 1
         val uLen = (2 * (w - 1) + 1) * up + 1; val vLen = (2 * (w - 1) + 1) * vp + 1
-        val r0 = rowBuf(0, yLen); val r1 = rowBuf(1, yLen); val ru = rowBuf(2, uLen); val rv = rowBuf(3, vLen)
+        val y = ByteArray(2 * h * yLen); val u = ByteArray(h * uLen); val v = ByteArray(h * vLen)
         val yb = f.y.buf.duplicate(); val ub = f.u.buf.duplicate(); val vb = f.v.buf.duplicate()
         for (qy in 0 until h) {
-            yb.position(f.y.offset + (4 * qy + 1) * ys); yb.get(r0, 0, yLen)
-            yb.position(f.y.offset + (4 * qy + 3) * ys); yb.get(r1, 0, yLen)
-            ub.position(f.u.offset + (2 * qy + 1) * f.u.rowStride); ub.get(ru, 0, uLen)
-            vb.position(f.v.offset + (2 * qy + 1) * f.v.rowStride); vb.get(rv, 0, vLen)
+            yb.position(f.y.offset + (4 * qy + 1) * f.y.rowStride); yb.get(y, 2 * qy * yLen, yLen)
+            yb.position(f.y.offset + (4 * qy + 3) * f.y.rowStride); yb.get(y, (2 * qy + 1) * yLen, yLen)
+            ub.position(f.u.offset + (2 * qy + 1) * f.u.rowStride); ub.get(u, qy * uLen, uLen)
+            vb.position(f.v.offset + (2 * qy + 1) * f.v.rowStride); vb.get(v, qy * vLen, vLen)
+        }
+        return Rows(w, h, f.fullRange, yp, up, vp, yLen, uLen, vLen, y, u, v)
+    }
+
+    /**
+     * Brightness: the mean of 4 pixels spread over each 4x4 block (a quarter of the reads of a full
+     * average); colour: one sample.
+     */
+    fun quarter(r: Rows): Quarter {
+        val w = r.w; val h = r.h
+        val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
+        val full = r.full; val yp = r.yp; val up = r.up; val vp = r.vp
+        val ry = r.y; val ru = r.u; val rv = r.v
+        for (qy in 0 until h) {
+            val r0 = 2 * qy * r.yLen; val r1 = r0 + r.yLen; val cu = qy * r.uLen; val cv = qy * r.vLen
             var q = qy * w
             for (qx in 0 until w) {
                 val c0 = (4 * qx + 1) * yp; val c1 = c0 + 2 * yp
-                val s = (r0[c0].toInt() and 0xff) + (r0[c1].toInt() and 0xff) + (r1[c0].toInt() and 0xff) + (r1[c1].toInt() and 0xff)
+                val s = (ry[r0 + c0].toInt() and 0xff) + (ry[r0 + c1].toInt() and 0xff) + (ry[r1 + c0].toInt() and 0xff) + (ry[r1 + c1].toInt() and 0xff)
                 val m = (s + 2) shr 2
                 y[q] = if (full) m.toFloat() else lumaVideo[m]
-                val mu = ru[(2 * qx + 1) * up].toInt() and 0xff
-                val mv = rv[(2 * qx + 1) * vp].toInt() and 0xff
+                val mu = ru[cu + (2 * qx + 1) * up].toInt() and 0xff
+                val mv = rv[cv + (2 * qx + 1) * vp].toInt() and 0xff
                 u[q] = if (full) (mu - 128).toFloat() else chromaVideo[mu]
                 v[q] = if (full) (mv - 128).toFloat() else chromaVideo[mv]
                 q++
             }
         }
         return Quarter(w, h, y, u, v)
-    }
-
-    private val rows = ThreadLocal.withInitial { arrayOfNulls<ByteArray>(4) }
-    private fun rowBuf(k: Int, n: Int): ByteArray {
-        val a = rows.get()
-        val b = a[k]
-        if (b != null && b.size >= n) return b
-        return ByteArray(n).also { a[k] = it }
     }
 }
 
@@ -86,17 +99,27 @@ class Capture(val width: Int, val height: Int, val rect: IntArray, val fullRange
 
     fun add(f: Yuv) { frames.add(crop(f)) }
 
-    /** one frame's crop, in the file's layout */
+    private var line = ByteArray(0)
+
+    /** one frame's crop, in the file's layout (rows read in bulk: a byte at a time took seconds a serve) */
     fun crop(f: Yuv): ByteArray {
         val x0 = rect[0]; val y0 = rect[1]; val w = rect[2]; val h = rect[3]
         val out = ByteArray(frameBytes)
         var o = 0
-        val yb = f.y.buf
-        for (y in 0 until h) { var i = f.y.offset + (y0 + y) * f.y.rowStride + x0 * f.y.pixelStride; for (x in 0 until w) { out[o++] = yb.get(i); i += f.y.pixelStride } }
-        for (p in listOf(f.u, f.v)) for (y in 0 until h / 2) {
-            var i = p.offset + (y0 / 2 + y) * p.rowStride + (x0 / 2) * p.pixelStride
-            for (x in 0 until w / 2) { out[o++] = p.buf.get(i); i += p.pixelStride }
+        fun plane(p: Plane, px0: Int, py0: Int, pw: Int, ph: Int) {
+            val b = p.buf.duplicate()
+            val ps = p.pixelStride
+            val len = (pw - 1) * ps + 1
+            if (ps != 1 && line.size < len) line = ByteArray(len)
+            for (y in 0 until ph) {
+                b.position(p.offset + (py0 + y) * p.rowStride + px0 * ps)
+                if (ps == 1) { b.get(out, o, pw); o += pw }
+                else { b.get(line, 0, len); var i = 0; for (x in 0 until pw) { out[o++] = line[i]; i += ps } }
+            }
         }
+        plane(f.y, x0, y0, w, h)
+        plane(f.u, x0 / 2, y0 / 2, w / 2, h / 2)
+        plane(f.v, x0 / 2, y0 / 2, w / 2, h / 2)
         return out
     }
 

@@ -151,7 +151,10 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
      * For finding candidates on other threads: call with every frame, in order, before taking its
      * [background] (it learns the background from every 24th), then [pushFound] its candidates.
      */
-    fun sample(q: Quarter, index: Long) { if (index % sampleEvery == 0L) addSample(q) }
+    fun sample(q: Quarter, index: Long) { if (needsFrame(index)) addSample(q) }
+
+    /** whether [sample] learns from this frame (else it needn't be shrunk before its blobs are found) */
+    fun needsFrame(index: Long) = index % sampleEvery == 0L
 
     /** The next frame, its candidates found elsewhere (see [sample]). */
     fun pushFound(index: Long, cands: List<FloatArray>): Serve? {

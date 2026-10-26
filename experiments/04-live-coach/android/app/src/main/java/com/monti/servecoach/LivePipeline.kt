@@ -46,10 +46,12 @@ class LivePipeline(
     // for the screen and the report
     @Volatile var decoded = 0L; private set
     @Volatile var dropped = 0L; private set              // encoded frames dropped (the decoder fell behind)
-    @Volatile var skipped = 0L; private set              // frames the tracker skipped (finding blobs fell behind)
+    @Volatile var skipped = 0L; private set
+    @Volatile var decoderFull = 0L; private set          // times the decoder had no room for the next frame (5 ms waits)
+    @Volatile var waitingForKey = 0L; private set        // frames passed over after a drop, until the next keyframe              // frames the tracker skipped (finding blobs fell behind)
     @Volatile var trackMsAvg = 0.0; private set         // per tracker frame: shrinking + finding + linking (on several threads)
-    @Volatile var shrinkMsAvg = 0.0; private set
-    @Volatile var findMsAvg = 0.0; private set
+    @Volatile var shrinkMsAvg = 0.0; private set         // on the decoder's thread: copying the rows to shrink
+    @Volatile var findMsAvg = 0.0; private set           // on a finder: shrinking + finding blobs
     @Volatile var linkMsAvg = 0.0; private set
     @Volatile var lagMs = 0L; private set
     @Volatile var servesFound = 0; private set
@@ -118,9 +120,9 @@ class LivePipeline(
                         val fmt = store.outputFormat ?: continue
                         dec = FrameDecoder(fmt)
                     }
-                    if (waitKey && !fr.key) continue                  // after a drop: start again at a keyframe
+                    if (waitKey && !fr.key) { waitingForKey++; continue }   // after a drop: start again at a keyframe
                     waitKey = false
-                    while (running && !dec.feed(fr, 5_000)) drainOnce(dec)
+                    while (running && !dec.feed(fr, 5_000)) { decoderFull++; drainOnce(dec) }
                 }
                 if (dec != null) drainOnce(dec)
                 if (dropped != seenDropped) { seenDropped = dropped; waitKey = true }   // frames lost: resume at a keyframe
@@ -161,16 +163,19 @@ class LivePipeline(
         val index = n / step
         if (!blocking && jobs.remainingCapacity() == 0) { skipped++; return }      // the finders are behind: skip it
         frameW = yuv.width; frameH = yuv.height
+        // here only the rows the small picture is made from are copied (the decoder wants its
+        // picture back); the finders make the small picture
         val t0 = System.nanoTime()
-        val q = Downsample.quarter(yuv)
+        val rows = Downsample.rows(yuv)
         shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
-        val tr = tracker ?: ServeTracker(q.w, q.h, captureFps / step).also { tracker = it }
-        tr.sample(q, index)                                    // the background, from every 24th frame
+        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { tracker = it }
+        // the background learns from every 24th frame, before that frame's blobs are found
+        val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
         val found = if (bg == null) null else finders.submit(Callable {
-            val d = detectors.get() ?: Detector(q.w, q.h).also { detectors.set(it) }
+            val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it) }
             val t = System.nanoTime()
-            val c = d.find(q, bg)
+            val c = d.find(q0 ?: Downsample.quarter(rows), bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
         })

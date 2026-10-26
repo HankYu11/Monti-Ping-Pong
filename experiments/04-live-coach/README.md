@@ -110,6 +110,19 @@ Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `
   nothing said so. Now the clip is cut from the same frames as the capture, the moment the serve
   is found, with 0.5 s more before it and 0.3 s after; a failure is logged.
 
+## What 0.4.1 showed (Pixel 8), and 0.4.2
+
+- The blob finders kept up (`skipped` 0), but 8373 frames were encoded and 5422 decoded: the
+  decoder's thread fell behind (shrinking took 3.3 ms of it a frame, and writing a capture, 4.2 s,
+  decoded at the same time). Clip C1 (the two saved clips, in the scratch set as C1/C2): here the
+  tracker finds its flight and the engine reads 28.4 rev/s backspin + gyro (the web app: 28.38);
+  on the phone, with frames missing, the crop missed the flight's right half and a 13 px blob
+  was read instead. C2 is the moments before a serve (bouncing the ball, the toss): rightly no
+  serve; the serve after it wasn't caught.
+- 0.4.2: the decoder's thread only copies the rows the small picture is made from (bulk); the
+  finders make it. A capture's crop copies rows in bulk (a byte at a time before). Report:
+  `waitingForKey` (frames passed over after a drop), `decoderFull` (waits for the decoder).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

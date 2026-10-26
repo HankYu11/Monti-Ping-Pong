@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private var cfg: HighSpeedCamera.Config? = null
     private var recorder: ClipRecorder? = null
     private var pipeline: LivePipeline? = null
+    private var tap: GlTap? = null
     private var tts: TextToSpeech? = null
     private var mode = Mode.IDLE
     private enum class Mode { IDLE, LIVE, REPLAY }
@@ -187,28 +188,54 @@ class MainActivity : Activity() {
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
         val p = newPipeline(rec, blocking = false)
-        rec.onFrame = { p.offer(it) }
         p.start()
+        // Watching: the camera's preview stream, shrunk by the graphics chip (GlTap); if that can't
+        // be set up, the recording decoded again, as 0.4 did
+        val t = try {
+            GlTap(c.size.width, c.size.height, fps = c.fps,
+                onFrame = { ts, no, rgba -> p.offerTapped(ts, no, rgba, c.size.width / 4, c.size.height / 4) },
+                onError = { msg -> main.post { log("error", msg) } }).also { it.start() }
+        } catch (e: Exception) { log("error", "graphics tap: ${e.message}; decoding instead"); null }
+        tap = t
+        if (t == null) rec.onFrame = { p.offer(it) }
+        report.put("watchingBy", if (t != null) "graphics chip" else "decoder")
         val holder = preview.holder
-        holder.setFixedSize(c.size.width, c.size.height)
+        holder.setFixedSize(if (t != null) c.size.width / 2 else c.size.width, if (t != null) c.size.height / 2 else c.size.height)
         fitPreview(c.size.width, c.size.height)
         val go = Runnable {
-            camera.start(c, listOf(holder.surface, rec.inputSurface), camHandler,
+            camera.start(c, listOf(t?.surface ?: holder.surface, rec.inputSurface), camHandler,
                 onError = { msg -> main.post { log("error", msg); state("Camera problem: $msg"); stopAll() } },
-                onRunning = { main.post { log("camera", "running") } })
+                onRunning = { main.post { log("camera", "running"); if (t != null) calibrateSoon(p, 0) } })
+            t?.showOn(holder.surface)
         }
-        if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
+        val (fw, fh) = if (t != null) c.size.width / 2 to c.size.height / 2 else c.size.width to c.size.height
+        if (holder.surface.isValid && holder.surfaceFrame.width() == fw) go.run()
         else holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) {}
             override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hgt: Int) {
-                if (w == c.size.width && hgt == c.size.height) { holder.removeCallback(this); go.run() }
+                if (w == fw && hgt == fh) { holder.removeCallback(this); go.run() }
             }
-            override fun surfaceDestroyed(h: SurfaceHolder) {}
+            override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         mode = Mode.LIVE
         setStartButton(true)
         state("Watching for a serve…")
         say("Ready. Serve when you like.")
+    }
+
+    /** which way round the tap's picture is, once a few frames have been recorded (tried for 5 s) */
+    private fun calibrateSoon(p: LivePipeline, tries: Int) {
+        main.postDelayed({
+            if (pipeline !== p) return@postDelayed
+            Thread {
+                val f = try { p.calibrate() } catch (e: Exception) { main.post { log("error", "picture check: ${e.message}") }; -1 }
+                main.post {
+                    if (f >= 0) log("camera", "picture check: ${p.flipCheck}")
+                    else if (tries < 10) calibrateSoon(p, tries + 1)
+                    else log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}")
+                }
+            }.start()
+        }, 500)
     }
 
     private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240): LivePipeline =
@@ -227,9 +254,11 @@ class MainActivity : Activity() {
 
     private fun stopAll() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
+            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
+        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg)) }
+        tap?.stop(); tap = null
         recorder?.onFrame = null
         pipeline?.stop(); pipeline = null
         recorder?.stop(); recorder = null
@@ -386,6 +415,16 @@ class MainActivity : Activity() {
             log("unclear", "#${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}")
             return
         }
+        // read only "after a bounce" and slowly turning: in the live tests that was other movement
+        // (walking off to fetch the ball, 4.8 rev/s), not a serve; listed, not announced. (A real
+        // serve can come out labelled "bounce" when its crop starts late: L1, 23 rev/s.)
+        val phases = sv.optJSONArray("phases")
+        val own = (0 until (phases?.length() ?: 0)).any { k -> phases!!.getJSONObject(k).let { it.optBoolean("clear") && it.optString("phase") != "bounce" } }
+        if (!own && sv.optDouble("rps") < 10) {
+            unclear++
+            log("unclear", "#${r.optInt("capture")}: only read after a bounce (${"%.1f".format(sv.optDouble("rps"))} rev/s ${sv.optString("type")}): not counted as a serve")
+            return
+        }
         val rps = sv.optDouble("rps")
         val type = sv.optString("type")
         val coach = r.optJSONObject("coach")
@@ -421,7 +460,8 @@ class MainActivity : Activity() {
 
     private fun copyReport() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
+            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
+        tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

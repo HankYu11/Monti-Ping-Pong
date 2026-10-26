@@ -25,7 +25,7 @@ fun main(args: Array<String>) {
     val every = maxOf(1L, total / 6)
     val spread = ArrayList<com.monti.servecoach.core.Quarter>()
     var j = 0L
-    frames(clip, W, H) { f -> if (j % every == 0L && spread.size < 5) spread.add(Downsample.quarter(f)); j++ }
+    frames(clip, W, H) { f -> if (j % every == 0L && spread.size < 5) spread.add((if (System.getenv("GPU") != null) Downsample.quarterMean(f) else Downsample.quarter(f))); j++ }
     tracker.prime(spread)
     if (System.getenv("DEBUG") != null) tracker.onTrack = { pts, why ->
         val a = pts.first(); val b = pts.last()
@@ -40,7 +40,7 @@ fun main(args: Array<String>) {
     frames(clip, W, H) { f ->
         if (n % step == 0L) {
             val a = System.nanoTime()
-            val q = Downsample.quarter(f)
+            val q = (if (System.getenv("GPU") != null) Downsample.quarterMean(f) else Downsample.quarter(f))
             val b = System.nanoTime()
             val s = if (par == null) tracker.push(q, n / step) else par.push(q, n / step)
             dsNs += b - a; pushNs += System.nanoTime() - b; pushed++

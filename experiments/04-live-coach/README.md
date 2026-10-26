@@ -123,6 +123,29 @@ Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `
   finders make it. A capture's crop copies rows in bulk (a byte at a time before). Report:
   `waitingForKey` (frames passed over after a drop), `decoderFull` (waits for the decoder).
 
+## What 0.4.2 showed (Pixel 8), and 0.5
+
+- Replaying the saved clip C1 on the phone: 28.42 rev/s backspin + gyro, as here (28.4) and in
+  the web app (28.38). The measuring is right when no frames are missing.
+- Live, 8 serves: 14216 frames encoded, 7844 decoded, 4154 passed over after drops, the decoder
+  full 484 times. The phone can't decode 1080p at 240 frames a second for watching and keep up;
+  of 7 saved clips only one (L1) held a serve's flight, the rest the moments around serves.
+  L1 here: 22.95 rev/s backspin (web app 22.93).
+- Measuring along the live tracker's tracks was faster but not sure enough: on L1 it measured a
+  hand moving along the bottom; smoothing the tracks fixed that and lost V3. **0.5 goes back to
+  the engine's own search in the crop** (all serves read as the whole clip does).
+- **0.5 watches without decoding**: the camera's preview stream (every frame, as the recording)
+  goes to the graphics chip (`GlTap`), which draws each frame at a quarter of its size (each
+  pixel the mean of its 4x4 block) as brightness and colour, and reads that back: 0.5 MB a
+  frame instead of decoding 2 million pixels. It also draws the preview on the screen. The
+  decoder is used only for a serve's own frames. Which way round the chip's picture is against
+  the recording is checked once at the start (a recorded keyframe decoded, compared 4 ways:
+  `pictureCheck`). On the PC, pictures made that way (4x4 means) find every serve and measure
+  them the same.
+- A reading only "after a bounce" under 10 rev/s isn't announced (walking off to fetch the ball
+  read 4.8).
+- Report: `watchingBy`, `tap` (frames, tapped, missed, tapMs), `pictureCheck`.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

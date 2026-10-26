@@ -44,7 +44,7 @@ class LivePipeline(
     private val jobs = LinkedBlockingQueue<Job>(if (blocking) 16 else 24)   // 0.2 s of frames waiting (1.5 MB each)
 
     // for the screen and the report
-    @Volatile var decoded = 0L; private set
+    @Volatile var decoded = 0L; private set              // frames decoded (or, from the tap, seen)
     @Volatile var dropped = 0L; private set              // encoded frames dropped (the decoder fell behind)
     @Volatile var skipped = 0L; private set
     @Volatile var decoderFull = 0L; private set          // times the decoder had no room for the next frame (5 ms waits)
@@ -180,6 +180,90 @@ class LivePipeline(
             c
         })
         jobs.put(Job(index, found))
+    }
+
+    // ------------------------------------------------------------ live, from the graphics chip (GlTap)
+    @Volatile var tapped = false; private set
+    @Volatile var calibrated = false; private set
+    @Volatile var flip = 0; private set
+    @Volatile var flipCheck = ""; private set
+    private var lastNo = -1L
+    private class Tapped(val pts: Long, val rgba: ByteArray, val w: Int, val h: Int)
+    private val recentTaps = ArrayDeque<Tapped>()
+
+    /**
+     * Every camera frame's time and number (240 a second, by its time), and every 2nd one's small
+     * picture, from the graphics chip: no decoding to watch for serves (a Pixel 8 couldn't decode
+     * 240 frames a second and keep up). On the tap's thread: quick.
+     */
+    fun offerTapped(tsNs: Long, frameNo: Long, rgba: ByteArray?, w: Int, h: Int) {
+        tapped = true
+        val pts = tsNs / 1000
+        // frame times by number (frames that never arrived get the time they would have had)
+        if (lastNo >= 0) for (k in lastNo + 1 until frameNo) ptsRing[(k % ptsRing.size).toInt()] = pts - (frameNo - k) * 1_000_000L / captureFps
+        ptsRing[(frameNo % ptsRing.size).toInt()] = pts
+        lastNo = frameNo
+        decoded = frameNo + 1
+        lastPts = pts
+        if (rgba == null) return
+        frameW = w * 4; frameH = h * 4
+        if (!calibrated) {                     // until the picture's way round is known: kept for that
+            synchronized(recentTaps) { recentTaps.addLast(Tapped(pts, rgba, w, h)); while (recentTaps.size > 48) recentTaps.removeFirst() }
+            return
+        }
+        val index = frameNo / step
+        if (jobs.remainingCapacity() == 0) { skipped++; return }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { tracker = it }
+        val f = flip
+        val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
+        val bg = tr.background()
+        val found = if (bg == null) null else finders.submit(Callable {
+            val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
+            val t = System.nanoTime()
+            val c = d.find(q0 ?: Downsample.fromRgba(rgba, w, h, f), bg)
+            findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
+            c
+        })
+        jobs.offer(Job(index, found))
+    }
+
+    /**
+     * Which way the chip's small picture is turned against the recorded frames: one of the
+     * recent ones next to the same frame decoded from the recording, compared all 4 ways round.
+     * Returns the flip (bit 0: x, bit 1: y), or -1 when no frame could be matched yet.
+     */
+    fun calibrate(): Int {
+        val fmt = store.outputFormat ?: return -1
+        val taps = synchronized(recentTaps) { recentTaps.toList() }
+        if (taps.isEmpty()) return -1
+        // a keyframe the tap also saw (the same time to the microsecond, give or take one)
+        val keys = store.between(taps.first().pts, taps.last().pts).filter { it.key }
+        var pair: Pair<Tapped, EncodedFrame>? = null
+        for (k in keys) { val t = taps.firstOrNull { kotlin.math.abs(it.pts - k.ptsUs) <= 1 }; if (t != null) { pair = t to k; break } }
+        val (t, key) = pair ?: return -1
+        var q: Quarter? = null
+        val dec = FrameDecoder(fmt)
+        try {
+            var fed = false; var eos = false; var tries = 0
+            while (!dec.ended && tries++ < 400 && q == null) {
+                if (!fed) fed = dec.feed(key, 5_000) else if (!eos) eos = dec.endOfStream()
+                dec.drain(5_000) { _, yuv -> if (q == null) q = Downsample.quarter(yuv) }
+            }
+        } finally { dec.release() }
+        val ref = q ?: return -1
+        if (ref.w != t.w || ref.h != t.h) { flipCheck = "sizes differ: ${ref.w}x${ref.h} / ${t.w}x${t.h}"; return -1 }
+        val diffs = (0 until 4).map { f ->
+            val g = Downsample.fromRgba(t.rgba, t.w, t.h, f)
+            var s = 0.0
+            for (i in g.y.indices) s += kotlin.math.abs(g.y[i] - ref.y[i])
+            s / g.y.size
+        }
+        val best = diffs.indices.minByOrNull { diffs[it] }!!
+        flip = best
+        flipCheck = "flip $best, mean differences ${diffs.joinToString(" / ") { "%.1f".format(it) }}"
+        calibrated = true
+        synchronized(recentTaps) { recentTaps.clear() }
+        return best
     }
 
     /** the tracker's own thread: blobs linked into tracks, frame by frame in order */

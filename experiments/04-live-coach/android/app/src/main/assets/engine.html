@@ -47,7 +47,9 @@
       } else frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
       const tFetch = performance.now() - t0;
       const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
-        useTrack: !!(head.track && head.track.length),     // the live tracker's tracks: no search of its own (2-4x faster)
+        // the engine's own search in the crop: measuring along the live tracker's tracks instead was
+        // 2-4x faster but less sure (live clip L1: it measured a hand; smoothing it lost V3)
+        useTrack: false,
         single: true, serveDir: "any", robust: true, onProgress: (step, frac) => Android.onProgress(id, String(step), +frac || 0),
       });
       const sv = (res.serves || [])[0];
@@ -56,7 +58,7 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), usedTrack: !!(head.track && head.track.length), engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
+        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), usedTrack: false, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
       }));
     } catch (e) {
       Android.onResult(id, JSON.stringify({ ms: performance.now() - t0, error: "engine: " + (e && e.message ? e.message : e) }));

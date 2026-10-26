@@ -33,6 +33,40 @@ object Downsample {
      */
     fun quarter(f: Yuv): Quarter = quarter(rows(f))
 
+    /** For tests: as the graphics chip makes it (GlTap), every pixel of each 4x4 block averaged, colour over its 2x2. */
+    fun quarterMean(f: Yuv): Quarter {
+        val w = f.width / 4; val h = f.height / 4
+        val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
+        for (qy in 0 until h) for (qx in 0 until w) {
+            var s = 0
+            for (dy in 0 until 4) for (dx in 0 until 4) s += f.y[4 * qx + dx, 4 * qy + dy]
+            var su = 0; var sv = 0
+            for (dy in 0 until 2) for (dx in 0 until 2) { su += f.u[2 * qx + dx, 2 * qy + dy]; sv += f.v[2 * qx + dx, 2 * qy + dy] }
+            val q = qy * w + qx
+            val m = s / 16f
+            y[q] = if (f.fullRange) m else ((m - 16f) * 255f / 219f).coerceIn(0f, 255f)
+            u[q] = if (f.fullRange) su / 4f - 128f else (su / 4f - 128f) * 255f / 224f
+            v[q] = if (f.fullRange) sv / 4f - 128f else (sv / 4f - 128f) * 255f / 224f
+        }
+        return Quarter(w, h, y, u, v)
+    }
+
+    /** The small picture as the graphics chip makes it (R brightness, G and B colour + 128, full range), flipped as [flip] says (bit 0: x, bit 1: y). */
+    fun fromRgba(b: ByteArray, w: Int, h: Int, flip: Int = 0): Quarter {
+        val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
+        for (qy in 0 until h) {
+            val sy = if (flip and 2 != 0) h - 1 - qy else qy
+            for (qx in 0 until w) {
+                val sx = if (flip and 1 != 0) w - 1 - qx else qx
+                val i = (sy * w + sx) * 4; val q = qy * w + qx
+                y[q] = (b[i].toInt() and 0xff).toFloat()
+                u[q] = ((b[i + 1].toInt() and 0xff) - 128).toFloat()
+                v[q] = ((b[i + 2].toInt() and 0xff) - 128).toFloat()
+            }
+        }
+        return Quarter(w, h, y, u, v)
+    }
+
     /**
      * Just the rows the quarter-size picture is made from, copied in bulk (1 in 2 brightness rows,
      * 1 in 2 colour rows): quick, for the decoder's thread, which must hand its picture back soon.

@@ -25,6 +25,28 @@ fun framesBetween(list: List<EncodedFrame>, fromUs: Long, toUs: Long): List<Enco
     return list.subList(start, end)
 }
 
+/**
+ * Writes encoded frames (decoding order, from a keyframe) to an MP4, keeping those up to toUs;
+ * times start at 0. Returns the number of frames written (0: too few to be worth a file).
+ */
+fun writeMp4(frames: List<EncodedFrame>, format: MediaFormat, toUs: Long, out: java.io.File): Int {
+    val pick = frames.filter { it.ptsUs <= toUs }
+    if (pick.size < 10) return 0
+    val mux = android.media.MediaMuxer(out.absolutePath, android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    try {
+        val track = mux.addTrack(format)
+        mux.start()
+        val base = pick.minOf { it.ptsUs }
+        val info = android.media.MediaCodec.BufferInfo()
+        for (fr in pick) {
+            info.set(0, fr.data.size, fr.ptsUs - base, if (fr.key) android.media.MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+            mux.writeSampleData(track, java.nio.ByteBuffer.wrap(fr.data), info)
+        }
+        mux.stop()
+    } finally { mux.release() }
+    return pick.size
+}
+
 /** A video file's frames, all in memory (a serve clip is a few MB): replayed as if live. */
 class FileFrames(context: android.content.Context, uri: android.net.Uri) : FrameStore {
     val frames = ArrayList<EncodedFrame>()

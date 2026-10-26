@@ -103,6 +103,13 @@ Not checkable here: the decoder's speed next to the camera at 240 fps (Report: `
 - Report: `encoded` (frames the camera gave), `skipped` (frames the tracker let go to keep up),
   `shrinkMs` / `findMs` / `linkMs`, and per result `fetchMs`, `usedTrack`.
 
+## 0.4.1
+
+- Serve clips are saved again (Movies/ServeCoach). 0.3 cut each clip from memory only after its
+  capture was written, by when the serve had dropped out of the 5 s kept, so none were saved and
+  nothing said so. Now the clip is cut from the same frames as the capture, the moment the serve
+  is found, with 0.5 s more before it and 0.3 s after; a failure is logged.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

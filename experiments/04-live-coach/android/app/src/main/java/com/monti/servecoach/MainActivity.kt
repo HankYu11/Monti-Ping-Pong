@@ -213,7 +213,8 @@ class MainActivity : Activity() {
 
     private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240): LivePipeline =
         LivePipeline(store, capDir, fps, blocking,
-            onCapture = { info -> main.post { onCaptured(info) } },
+            clipDir = if (blocking) null else cacheDir,
+            onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
 
     private fun fitPreview(w: Int, h: Int) {
@@ -274,11 +275,11 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ a serve was spotted
-    private fun onCaptured(info: Capture.Info) {
+    private fun onCaptured(info: Capture.Info, clip: File?) {
         log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
         waiting.addLast(info)
         while (waiting.size > (if (mode == Mode.LIVE) 3 else 30)) waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete() }
-        if (mode == Mode.LIVE) saveClip(info)
+        if (mode == Mode.LIVE) { if (clip != null) saveClip(info, clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
         next()
     }
 
@@ -293,20 +294,18 @@ class MainActivity : Activity() {
     }
 
     /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
-    private fun saveClip(info: Capture.Info) {
-        val rec = recorder ?: return
+    private fun saveClip(info: Capture.Info, tmp: File) {
         Thread {
             try {
-                val tmp = File(cacheDir, "clip_${info.id}.mp4")
-                if (rec.cut(info.fromUs, info.toUs, tmp) == 0) return@Thread
                 val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_${info.id}.mp4"
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, name); put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
                 }
-                contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)?.let { uri ->
-                    contentResolver.openOutputStream(uri)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
-                }
+                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("the phone's video library refused a new file")
+                contentResolver.openOutputStream(uri)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
+                    ?: throw IllegalStateException("couldn't open the new video file")
                 tmp.delete()
                 main.post { log("saved", "#${info.id} Movies/ServeCoach/$name") }
             } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }

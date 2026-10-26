@@ -27,7 +27,8 @@ class LivePipeline(
     private val captureDir: File,
     private val captureFps: Int = 240,
     private val blocking: Boolean = false,              // replay: wait for room rather than drop frames
-    private val onCapture: (Capture.Info) -> Unit,
+    private val clipDir: File? = null,                  // live: each serve's own clip (MP4) written here too
+    private val onCapture: (Capture.Info, File?) -> Unit,
     private val onError: (String) -> Unit,
 ) {
     private val queue = LinkedBlockingQueue<EncodedFrame>(if (blocking) 64 else 720)
@@ -221,7 +222,15 @@ class LivePipeline(
             val t0 = SystemClock.elapsedRealtime()
             val frames = store.between(fromUs, toUs)
             val fmt = store.outputFormat ?: return
-            if (frames.isEmpty()) return
+            if (frames.isEmpty()) { onError("capture #$id: its frames were no longer in memory"); return }
+            // the clip from these same frames, now: the store keeps only the last few seconds
+            // (0.3 cut it after the capture was written, by when they were gone)
+            var clip: File? = null
+            if (clipDir != null) try {
+                val f = File(clipDir, "clip_$id.mp4")
+                // with half a second more before (the toss) and a little after, for replaying it
+                if (writeMp4(store.between(fromUs - 500_000, toUs + 300_000), fmt, toUs + 300_000, f) > 0) clip = f
+            } catch (e: Exception) { onError("clip #$id: ${e.message}") }
             val dec = FrameDecoder(fmt)
             val bin = File(captureDir, "cap_$id.bin")
             var cap: Capture? = null
@@ -241,7 +250,7 @@ class LivePipeline(
             val c = cap ?: return
             val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), serve.first * step), n)
             File(captureDir, "cap_$id.json").writeText(head)
-            onCapture(Capture.Info(id, n, c.frameBytes, head, SystemClock.elapsedRealtime() - t0, fromUs, toUs))
+            onCapture(Capture.Info(id, n, c.frameBytes, head, SystemClock.elapsedRealtime() - t0, fromUs, toUs), clip)
         } catch (e: Exception) { onError("capture: ${e.message}") }
     }
 }

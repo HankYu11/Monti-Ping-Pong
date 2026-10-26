@@ -3,11 +3,8 @@ package com.monti.servecoach
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
-import android.media.MediaMuxer
 import android.os.Handler
 import android.view.Surface
-import java.io.File
-import java.nio.ByteBuffer
 
 /**
  * Encodes the slow-motion stream and keeps the last few seconds in memory, so the stretch around
@@ -95,31 +92,4 @@ class ClipRecorder(private val cfg: HighSpeedCamera.Config, private val keepSeco
     fun newestPtsUs(): Long = synchronized(lock) { if (frames.isEmpty()) -1 else frames.last().ptsUs }
 
     override fun between(fromUs: Long, toUs: Long): List<EncodedFrame> = synchronized(lock) { framesBetween(frames.toList(), fromUs, toUs) }
-
-    /**
-     * Writes the frames from fromUs to toUs (frame time, microseconds) to an MP4, starting at the
-     * keyframe before fromUs. Returns the number of frames written, or 0.
-     */
-    fun cut(fromUs: Long, toUs: Long, out: File): Int {
-        val fmt = format ?: return 0
-        val pick: List<EncodedFrame> = synchronized(lock) {
-            val list = frames.toList()
-            var start = list.indexOfLast { it.key && it.ptsUs <= fromUs }
-            if (start < 0) start = list.indexOfFirst { it.key }
-            if (start < 0) return 0
-            list.subList(start, list.size).filter { it.ptsUs <= toUs }
-        }
-        if (pick.size < 10) return 0
-        val mux = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val track = mux.addTrack(fmt)
-        mux.start()
-        val base = pick.first().ptsUs
-        val info = MediaCodec.BufferInfo()
-        for (fr in pick) {
-            info.set(0, fr.data.size, fr.ptsUs - base, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
-            mux.writeSampleData(track, ByteBuffer.wrap(fr.data), info)
-        }
-        mux.stop(); mux.release()
-        return pick.size
-    }
 }

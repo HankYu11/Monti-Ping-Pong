@@ -4,7 +4,6 @@ import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.HardwareBuffer
 import android.media.ImageReader
-import android.media.ImageWriter
 import android.opengl.EGLExt
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -38,10 +37,11 @@ import java.nio.FloatBuffer
  * With [encoder] (its input surface), the frames come through the camera's *recording* stream
  * instead (0.6): in slow motion only that one is lossless (the camera gives a preview consumer
  * no queue: with frames arriving in batches, 0.5.4 lost 42% of them). The camera fills a queue of
- * ours (an ImageReader made to look like an encoder); the chip takes one frame at a time from it
- * (ImageWriter into the texture, the next only once this one is in), shrinks it, and draws it
- * whole into the real encoder, timed as the camera timed it. The screen's preview is then the
- * camera's own (30 a second).
+ * ours (an ImageReader made to look like an encoder); the chip reads each frame's buffer straight
+ * from it (HwTex: no copy), shrinks it, draws it whole into the real encoder, timed as the camera
+ * timed it, and the buffer goes back to the camera. The screen's preview is then the camera's own
+ * (30 a second). (0.6 passed frames on with an ImageWriter; the screen froze: frames didn't come
+ * back to the queue, and in slow motion a stalled stream stalls the camera.)
  */
 class GlTap(
     private val width: Int, private val height: Int,
@@ -70,15 +70,13 @@ class GlTap(
     private var fboTex = 0
     private var tapProgram = 0
     private var showProgram = 0
-    private lateinit var texture: SurfaceTexture
-    private lateinit var textureSurface: Surface
+    private var texture: SurfaceTexture? = null
+    private var textureSurface: Surface? = null
     /** the surface the camera fills: the texture's, or (through the recording stream) the queue's */
     lateinit var surface: Surface
         private set
     private var queue: ImageReader? = null
-    private var writer: ImageWriter? = null
     private var encWindow: EGLSurface = EGL14.EGL_NO_SURFACE
-    private var inFlight = false
     @Volatile var queued = 0L; private set               // frames taken from the camera's queue
     @Volatile var encodeMsAvg = 0.0; private set
     private var encodeN = 0L
@@ -119,7 +117,8 @@ class GlTap(
         val done = java.util.concurrent.CountDownLatch(1)
         var err: Exception? = null
         handler.post { try { setUp() } catch (e: Exception) { err = e }; done.countDown() }
-        done.await()
+        // never hang the screen on it (0.6 froze after Start): 3 s, then the next way of watching
+        if (!done.await(3, java.util.concurrent.TimeUnit.SECONDS)) { thread.quitSafely(); reader.quitSafely(); throw IllegalStateException("setting up took over 3 s") }
         err?.let { throw it }
     }
 
@@ -136,11 +135,11 @@ class GlTap(
         val done = java.util.concurrent.CountDownLatch(1)
         handler.post {
             try {
-                texture.setOnFrameAvailableListener(null)
+                texture?.setOnFrameAvailableListener(null)
                 queue?.setOnImageAvailableListener(null, null)
-                writer?.close(); queue?.close()
+                queue?.close()
                 if (encWindow != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, encWindow)
-                textureSurface.release(); texture.release()
+                textureSurface?.release(); texture?.release()
                 if (window != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, window)
                 EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
                 EGL14.eglDestroySurface(display, pbuffer)
@@ -220,72 +219,94 @@ class GlTap(
         tapProgram = program(VERTEX_TAP, FRAGMENT_TAP)
         showProgram = program(VERTEX_SHOW, FRAGMENT_SHOW)
 
-        texture = SurfaceTexture(tex)
-        texture.setDefaultBufferSize(width, height)
-        texture.setOnFrameAvailableListener({ onFrameAvailable() }, handler)
-        textureSurface = Surface(texture)
-        surface = textureSurface
-        if (encoder != null) {
+        if (encoder == null) {
+            val st = SurfaceTexture(tex)
+            st.setDefaultBufferSize(width, height)
+            st.setOnFrameAvailableListener({ onFrameAvailable() }, handler)
+            texture = st
+            textureSurface = Surface(st)
+            surface = textureSurface!!
+        } else {
+            check(HwTex.loaded) { "native part not loaded" }
             encWindow = EGL14.eglCreateWindowSurface(display, config, encoder, intArrayOf(EGL14.EGL_NONE), 0)
             check(encWindow != EGL14.EGL_NO_SURFACE) { "encoder surface" }
             val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12,
                 HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
-            q.setOnImageAvailableListener({ pump() }, handler)
+            q.setOnImageAvailableListener({ drainQueue() }, handler)
             queue = q
-            writer = ImageWriter.newInstance(textureSurface, 2, ImageFormat.PRIVATE)
             surface = q.surface
         }
     }
 
+    /** the preview stream: the newest frame into the texture */
     private fun onFrameAvailable() {
         try {
+            val st = texture ?: return
             val tl = SystemClock.elapsedRealtimeNanos()
-            texture.updateTexImage()
+            st.updateTexImage()
             latchMsAvg += ((SystemClock.elapsedRealtimeNanos() - tl) / 1e6 - latchMsAvg) / minOf(++latchN, 240L)
-            val ts = texture.timestamp
-            frames++
-            if (t0Ns < 0) t0Ns = ts
-            // the frame's number by its time, so frames that never arrived leave gaps
-            val no = Math.round((ts - t0Ns) * fps / 1e9)
-            if (lastNo >= 0 && no > lastNo + 1) missed += no - lastNo - 1
-            if (no <= lastNo) return                                  // a repeat
-            lastNo = no
-            onFrame(ts, no)
-            if (no % every == 0L) {
-                val t0 = SystemClock.elapsedRealtimeNanos()
-                tap(ts, no)
-                tapped++
-                tapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - tapMsAvg) / minOf(tapped, 240L)
-            }
-            if (encoder != null) {
-                val te = SystemClock.elapsedRealtimeNanos()
-                encode(ts)
-                encodeMsAvg += ((SystemClock.elapsedRealtimeNanos() - te) / 1e6 - encodeMsAvg) / minOf(++encodeN, 240L)
-            }
-            if (encoder == null && no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) {
-                val ts0 = SystemClock.elapsedRealtimeNanos()
-                show()
-                showMsAvg += ((SystemClock.elapsedRealtimeNanos() - ts0) / 1e6 - showMsAvg) / minOf(++showN, 240L)
-            }
+            handleFrame(st.timestamp)
         } catch (e: Exception) { onError("tap: ${e.message}") }
-        finally { if (encoder != null) { inFlight = false; pump() } }
     }
 
-    /** the next frame from the camera's queue into the texture, once the last one is in */
-    private var inFlightSince = 0L
-    @Volatile var stalls = 0L; private set
-    private fun pump() {
-        // a frame that never came through (200 ms): don't wait for it for ever
-        if (inFlight && SystemClock.elapsedRealtime() - inFlightSince > 200) { inFlight = false; stalls++ }
-        if (inFlight) return
-        val img = try { queue?.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: return
-        try {
-            inFlight = true
-            inFlightSince = SystemClock.elapsedRealtime()
-            writer!!.queueInputImage(img)
-            queued++
-        } catch (e: Exception) { inFlight = false; img.close(); onError("into the texture: ${e.message}") }
+    /** the recording stream: every frame waiting in the queue, in order, each buffer back to the camera after */
+    private fun drainQueue() {
+        val q = queue ?: return
+        while (true) {
+            val img = try { q.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: return
+            var eglImage = 0L
+            try {
+                queued++
+                val tl = SystemClock.elapsedRealtimeNanos()
+                val hb = img.hardwareBuffer ?: continue
+                eglImage = HwTex.bind(hb, tex)
+                hb.close()
+                if (eglImage == 0L) { bindFailures++; if (bindFailures == 1L) onError("couldn't read a camera frame on the chip"); continue }
+                latchMsAvg += ((SystemClock.elapsedRealtimeNanos() - tl) / 1e6 - latchMsAvg) / minOf(++latchN, 240L)
+                handleFrame(img.timestamp)
+                // the chip must be done with the buffer before the camera gets it back
+                if (gl3) {
+                    val f = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+                    GLES30.glClientWaitSync(f, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 50_000_000L)
+                    GLES30.glDeleteSync(f)
+                } else GLES20.glFinish()
+            } catch (e: Exception) { onError("tap: ${e.message}") }
+            finally {
+                if (eglImage != 0L) HwTex.release(eglImage)
+                img.close()
+            }
+        }
     }
+    @Volatile var bindFailures = 0L; private set
+
+    private fun handleFrame(ts: Long) {
+        frames++
+        if (t0Ns < 0) t0Ns = ts
+        // the frame's number by its time, so frames that never arrived leave gaps
+        val no = Math.round((ts - t0Ns) * fps / 1e9)
+        if (lastNo >= 0 && no > lastNo + 1) missed += no - lastNo - 1
+        if (no <= lastNo) return                                  // a repeat
+        lastNo = no
+        onFrame(ts, no)
+        if (no % every == 0L) {
+            val t0 = SystemClock.elapsedRealtimeNanos()
+            tap(ts, no)
+            tapped++
+            tapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - tapMsAvg) / minOf(tapped, 240L)
+        }
+        if (encoder != null) {
+            val te = SystemClock.elapsedRealtimeNanos()
+            encode(ts)
+            encodeMsAvg += ((SystemClock.elapsedRealtimeNanos() - te) / 1e6 - encodeMsAvg) / minOf(++encodeN, 240L)
+        }
+        if (encoder == null && no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) {
+            val ts0 = SystemClock.elapsedRealtimeNanos()
+            show()
+            showMsAvg += ((SystemClock.elapsedRealtimeNanos() - ts0) / 1e6 - showMsAvg) / minOf(++showN, 240L)
+        }
+    }
+
+    @Volatile var stalls = 0L; private set
 
     /** the whole frame into the encoder, as the camera timed it, the right way round */
     private fun encode(ts: Long) {

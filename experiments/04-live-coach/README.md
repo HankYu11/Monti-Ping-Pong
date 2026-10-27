@@ -214,9 +214,20 @@ every capture up to 600 MB is fetched whole, in chunks of 24 frames. On the PC, 
 measure in 2-5 s from memory, as the phone read them (M7 44.35 / 31.9, M12 43.0, M6 28.5 / 23.5,
 M14 51.0 / 48.8).
 
+## 0.6.3
+
+0.6/0.6.2 froze after Start: frames passed on with an ImageWriter evidently didn't come back
+to the camera's queue, and in slow motion a stalled stream stalls the camera (and its preview).
+Now the chip reads each queued frame's buffer directly: a few lines of native code
+(`cpp/hwtex.c`, built with the NDK into `jniLibs/arm64-v8a/libhwtex.so`) make it an OpenGL
+texture without a copy (EGLImage from the HardwareBuffer, which Java can't do). After the
+shrinking and the drawing into the encoder (and a fence), the buffer goes back to the camera.
+Setting up never blocks the screen for more than 3 s (then the preview stream, then decoding),
+and no frames from the queue within 3 s is said on screen. Report: `tap.queued`, `bindFailures`.
+
 ## Build
 
-`android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and
+`android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and
 writes `release/serve-coach-live-<version>.apk`, signed with a debug key (sideloading only).
 `gradle :desktop:installDist`, then `desktop/build/install/desktop/bin/desktop clip.mp4 outDir`
 (needs ffmpeg) runs the serve tracker on a clip and writes its captures (`.cap`).

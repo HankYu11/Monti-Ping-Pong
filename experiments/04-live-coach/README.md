@@ -299,6 +299,28 @@ serves meanwhile are ignored (`ignoredWhileMeasuring`) -> its answer, or "Couldn
 one", then "Ready" again. Never stuck: no answer in 30 s and it's ready again. Walking (pose)
 doesn't start a turn.
 
+## 0.7.3: captures cut on the graphics chip
+
+Writing a capture took 1.4-6.5 s: every decoded frame of the serve copied out by the processor
+from the decoder's slow memory. Now (`CaptureGl`) the decoder renders the serve's frames into
+graphics buffers, two shaders (`assets/shaders/crop_y.frag`, `crop_c.frag`) cut out the crop as
+the capture's planes, and the read-back is the capture, while the next frame decodes. The chip
+sees colour converted its own way, so the first capture of a session also decodes one frame the
+old way and fits the mapping back to the decoder's bytes (`ColourFit`; which matrix, gain and
+offset per plane): captures stay what the engine was checked with. That mattered: the phone's
+videos are full range and have always been read as limited; given true full range, a 10-frame
+paddle stretch read 32 rev/s instead of 44. On any failure: the old way (twice: off).
+
+Tested without a phone (`gltest/`): the shaders on Mesa against NumPy, the fit, and the engine's
+readings on captures remade through the shaders (same within 0.1-0.6 rev/s). Not testable here:
+the phone's decoder rendering into the chip's buffers, and the time it takes; "Test with a
+video" compares the first 20 frames of each capture both ways on the phone (`chipCheck`).
+Report: `captureBy` (how, timings, the fit), `chipCaptureFailures`.
+
+Crops are now a multiple of 8 wide (all serve clips read as before). Found on the way, not yet
+fixed: in N12 and N15 the ball merges with the paddle at the hit, the tracker's crop follows
+the merged blob and the engine then takes the paddle (the whole clip reads 30.9 and 46.8).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

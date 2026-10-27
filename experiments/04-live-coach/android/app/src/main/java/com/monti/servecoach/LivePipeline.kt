@@ -35,6 +35,8 @@ class LivePipeline(
     private val onNote: (String) -> Unit = {},
     /** live: one serve at a time; called when one is spotted (its number), then nothing until [resume] */
     private val onSpotted: ((Int) -> Unit)? = null,
+    /** the app's assets (the capture shaders), to cut captures on the graphics chip */
+    private val assets: android.content.res.AssetManager? = null,
 ) {
     /** measuring a serve: others are ignored until [resume] (turn by turn, so each answer is clearly about one serve) */
     @Volatile var paused = false; private set
@@ -389,6 +391,60 @@ class LivePipeline(
         Thread({ writeCapture(id, serve, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
+    /** captures cut on the graphics chip (off after two failures) */
+    @Volatile var gpuCaptures = true
+    @Volatile var gpuFailures = 0; private set
+    @Volatile var lastCaptureBy = ""; private set
+
+    /** "Test with a video": how far the chip's captures are from the old way's (mean and largest difference per plane) */
+    @Volatile var chipCheck = ""; private set
+
+    private fun compareWithCopied(bin: File, frames: List<EncodedFrame>, fmt: android.media.MediaFormat, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int, count: Int): String {
+        val per = rect[2] * rect[3] + 2 * (rect[2] / 2) * (rect[3] / 2)
+        val ny = rect[2] * rect[3]; val nc = (rect[2] / 2) * (rect[3] / 2)
+        val sums = DoubleArray(3); val maxs = IntArray(3); var compared = 0
+        val chip = ByteArray(per)
+        java.io.RandomAccessFile(bin, "r").use { f ->
+            val dec = FrameDecoder(fmt)
+            try {
+                var k = 0
+                while (!dec.ended && compared < count) {
+                    if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
+                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
+                        if (pts < fromUs || pts > toUs || compared >= count) return@drain
+                        val old = Capture(w, h, rect, dec.fullRange, captureFps).crop(yuv)
+                        f.seek(compared.toLong() * per); f.readFully(chip)
+                        for (i in 0 until per) {
+                            val plane = if (i < ny) 0 else if (i < ny + nc) 1 else 2
+                            val d = kotlin.math.abs((old[i].toInt() and 0xff) - (chip[i].toInt() and 0xff))
+                            sums[plane] += d.toDouble(); if (d > maxs[plane]) maxs[plane] = d
+                        }
+                        compared++
+                    }
+                }
+            } finally { dec.release() }
+        }
+        if (compared == 0) return "nothing compared"
+        val names = listOf("Y", "U", "V"); val sizes = listOf(ny, nc, nc)
+        return "$compared frames: " + (0..2).joinToString(", ") { "${names[it]} mean ${"%.2f".format(sums[it] / (sizes[it].toDouble() * compared))} max ${maxs[it]}" }
+    }
+
+    /** the first frame in [fromUs, toUs] decoded the old way: its time, cropped planes, and range (for CaptureGl's fit) */
+    private fun firstDecoded(frames: List<EncodedFrame>, fmt: android.media.MediaFormat, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int): Triple<Long, ByteArray, Boolean>? {
+        val dec = FrameDecoder(fmt)
+        var got: Triple<Long, ByteArray, Boolean>? = null
+        try {
+            var k = 0
+            while (!dec.ended && got == null) {
+                if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
+                dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
+                    if (got == null && pts >= fromUs && pts <= toUs) got = Triple(pts, Capture(w, h, rect, dec.fullRange, captureFps).crop(yuv), dec.fullRange)
+                }
+            }
+        } finally { dec.release() }
+        return got
+    }
+
     /** the serve's frames, all of them, decoded again and cropped: a header (JSON) and the frames (one file) */
     private fun writeCapture(id: Int, serve: ServeTracker.Serve, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int) {
         try {
@@ -404,22 +460,44 @@ class LivePipeline(
                 // with half a second more before (the toss) and a little after, for replaying it
                 if (writeMp4(store.between(fromUs - 500_000, toUs + 300_000), fmt, toUs + 300_000, f) > 0) clip = f
             } catch (e: Exception) { onError("clip #$id: ${e.message}") }
-            val dec = FrameDecoder(fmt)
             val bin = File(captureDir, "cap_$id.bin")
             var cap: Capture? = null
             var n = 0
-            FileOutputStream(bin).buffered(1 shl 20).use { out ->
-                var k = 0
-                while (!dec.ended) {
-                    if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
-                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
-                        if (pts < fromUs || pts > toUs) return@drain
-                        val c = cap ?: Capture(w, h, rect, dec.fullRange, captureFps).also { cap = it }
-                        out.write(c.crop(yuv)); n++
+            // on the graphics chip (CaptureGl), else the frames copied out by the processor
+            if (assets != null && gpuCaptures) try {
+                val t1 = SystemClock.elapsedRealtime()
+                val reference = if (CaptureGl.calib == null) firstDecoded(frames, fmt, fromUs, toUs, rect, w, h) else null
+                val refMs = SystemClock.elapsedRealtime() - t1
+                val r = FileOutputStream(bin).buffered(1 shl 20).use { out -> CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, out, reference?.let { it.first to it.second }) }
+                if (r.frames > 0) {
+                    cap = Capture(w, h, rect, reference?.third ?: r.fullRange, captureFps)
+                    n = r.frames
+                    // replaying a video (testing): the first 20 frames cut the old way too, compared
+                    if (blocking) chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20)
+                    lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
+                    onNote("capture #$id: $lastCaptureBy")
+                }
+            } catch (e: Throwable) {
+                gpuFailures++
+                onError("capture #$id on the chip: ${e.message}; copying it out instead")
+                if (gpuFailures >= 2) gpuCaptures = false
+            }
+            if (cap == null) {
+                val dec = FrameDecoder(fmt)
+                FileOutputStream(bin).buffered(1 shl 20).use { out ->
+                    var k = 0
+                    while (!dec.ended) {
+                        if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
+                        dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
+                            if (pts < fromUs || pts > toUs) return@drain
+                            val c = cap ?: Capture(w, h, rect, dec.fullRange, captureFps).also { cap = it }
+                            out.write(c.crop(yuv)); n++
+                        }
                     }
                 }
+                dec.release()
+                lastCaptureBy = "copied out"
             }
-            dec.release()
             val c = cap ?: return
             val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), serve.first * step), n)
             File(captureDir, "cap_$id.json").writeText(head)

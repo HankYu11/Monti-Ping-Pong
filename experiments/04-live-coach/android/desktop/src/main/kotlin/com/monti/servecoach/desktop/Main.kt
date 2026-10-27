@@ -15,6 +15,12 @@ import java.io.File
  *   desktop clip.mp4 outDir      -> outDir/<clip>_<n>.cap and a line of JSON per serve
  */
 fun main(args: Array<String>) {
+    // fit chip.bin decoded.yuv: ColourFit on two planes of the same size (tests)
+    if (args[0] == "fit") {
+        val a = File(args[1]).readBytes(); val b = File(args[2]).readBytes(); val n = args[3].toInt()
+        val f = com.monti.servecoach.core.ColourFit.fit(a, b, 0, n)
+        println("gain %.4f offset %.2f rms %.2f".format(f.gain, f.offset, f.rms)); return
+    }
     val clip = File(args[0]); val outDir = File(args[1]).apply { mkdirs() }
     val (W, H) = probe(clip)
     // as the app: the tracker sees every 2nd frame (120 a second), the capture all of them

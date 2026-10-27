@@ -290,6 +290,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val y0 = ((s.box[1] * sy - pad).toInt()).coerceAtLeast(0) and 1.inv()
         val x1 = ((s.box[2] * sx + pad).toInt() + 1).coerceAtMost(W)
         val y1 = ((s.box[3] * sy + pad).toInt() + 1).coerceAtMost(H)
-        return intArrayOf(x0, y0, (x1 - x0) and 1.inv(), (y1 - y0) and 1.inv())
+        // width a multiple of 8: the graphics chip packs 4 pixels a texel, and colour is half width
+        return intArrayOf(x0, y0, (x1 - x0) and 7.inv(), (y1 - y0) and 1.inv())
     }
 }

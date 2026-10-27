@@ -232,6 +232,10 @@ class GlTap(
             check(HwTex.loaded) { "native part not loaded" }
             encWindow = EGL14.eglCreateWindowSurface(display, config, encoder, intArrayOf(EGL14.EGL_NONE), 0)
             check(encWindow != EGL14.EGL_NO_SURFACE) { "encoder surface" }
+            // the encoder's surface stays current (switching to it and back each frame cost time),
+            // and handing it a frame doesn't wait for a screen refresh
+            check(EGL14.eglMakeCurrent(display, encWindow, encWindow, context)) { "encoder surface current" }
+            EGL14.eglSwapInterval(display, 0)
             val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12,
                 HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
             q.setOnImageAvailableListener({ drainQueue() }, handler)
@@ -264,9 +268,26 @@ class GlTap(
     /** the recording stream: every frame waiting in the queue, in order */
     private fun drainQueue() {
         val q = queue ?: return
+        val start = SystemClock.elapsedRealtimeNanos()
+        if (busySince == 0L) busySince = start
+        var got = 0
+        try { drainLoop(q) { got++ } } finally {
+            busyNs += SystemClock.elapsedRealtimeNanos() - start
+            drains++; if (got > maxBurst) maxBurst = got.toLong()
+        }
+    }
+    private var busySince = 0L
+    private var busyNs = 0L
+    @Volatile var drains = 0L; private set
+    @Volatile var maxBurst = 0L; private set
+    /** the share of the time the frames' thread was at work (through the recording stream) */
+    val busyShare get() = if (busySince == 0L) 0.0 else busyNs.toDouble() / maxOf(1L, SystemClock.elapsedRealtimeNanos() - busySince)
+
+    private inline fun drainLoop(q: ImageReader, counted: () -> Unit) {
         while (true) {
             retire(2)                                            // at most 2 frames in flight before the next
             val img = try { q.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: break
+            counted()
             var kept = false
             try {
                 queued++
@@ -339,7 +360,7 @@ class GlTap(
 
     /** the whole frame into the encoder, as the camera timed it, the right way round */
     private fun encode(ts: Long) {
-        if (!EGL14.eglMakeCurrent(display, encWindow, encWindow, context)) { EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context); return }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         GLES20.glViewport(0, 0, width, height)
         GLES20.glUseProgram(showProgram)
         GLES20.glUniform2f(GLES20.glGetUniformLocation(showProgram, "flip"), 0f, 0f)
@@ -351,9 +372,12 @@ class GlTap(
         GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         EGLExt.eglPresentationTimeANDROID(display, encWindow, ts)
+        val t0 = SystemClock.elapsedRealtimeNanos()
         EGL14.eglSwapBuffers(display, encWindow)
-        EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)
+        swapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - swapMsAvg) / minOf(++swapN, 240L)
     }
+    @Volatile var swapMsAvg = 0.0; private set
+    private var swapN = 0L
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(4 * 8).order(ByteOrder.nativeOrder()).asFloatBuffer()
         .apply { put(floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)); position(0) }

@@ -234,6 +234,14 @@ make its EGLImage. Now each buffer's EGLImage is made once and kept (the camera 
 up to 2 frames stay in flight: a buffer goes back when its fence says the chip is done.
 Report: `tap.fenceWaitMs`.
 
+## 0.6.5
+
+0.6.4: ~82 frames a second (685 in ~8 s), though the measured steps add to ~3 ms a frame
+(EGLImage 0.25, shrink 0.95 every 2nd, into the encoder 2.1, fence 0.22). The encoder's
+surface now stays current (no switching each frame) with swap interval 0, and the report says
+where the rest goes: `tap.swapMs` (handing the encoder a frame), `busy` (share of time the
+frames' thread works), `framesPerWake` and `maxBurst` (how the camera delivers).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

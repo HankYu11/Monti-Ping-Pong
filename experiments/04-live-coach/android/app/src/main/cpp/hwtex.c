@@ -29,3 +29,22 @@ JNIEXPORT void JNICALL
 Java_com_monti_servecoach_HwTex_release(JNIEnv *env, jclass cls, jlong image) {
     if (image) eglDestroyImageKHR(eglGetCurrentDisplay(), (EGLImageKHR) (intptr_t) image);
 }
+
+// The EGLImage of a buffer, made once and kept (the camera cycles the same few buffers): 0 on failure.
+JNIEXPORT jlong JNICALL
+Java_com_monti_servecoach_HwTex_image(JNIEnv *env, jclass cls, jobject hardwareBuffer) {
+    AHardwareBuffer *ahb = AHardwareBuffer_fromHardwareBuffer(env, hardwareBuffer);
+    if (!ahb) return 0;
+    EGLClientBuffer cb = eglGetNativeClientBufferANDROID(ahb);
+    if (!cb) return 0;
+    EGLint attrs[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
+    EGLImageKHR img = eglCreateImageKHR(eglGetCurrentDisplay(), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, cb, attrs);
+    return img == EGL_NO_IMAGE_KHR ? 0 : (jlong) (intptr_t) img;
+}
+
+// Attaches an EGLImage to the external texture [tex] of the current context.
+JNIEXPORT void JNICALL
+Java_com_monti_servecoach_HwTex_attach(JNIEnv *env, jclass cls, jlong image, jint tex) {
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, (GLuint) tex);
+    glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, (GLeglImageOES) (intptr_t) image);
+}

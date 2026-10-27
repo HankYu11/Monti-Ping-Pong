@@ -225,6 +225,15 @@ shrinking and the drawing into the encoder (and a fence), the buffer goes back t
 Setting up never blocks the screen for more than 3 s (then the preview stream, then decoding),
 and no frames from the queue within 3 s is said on screen. Report: `tap.queued`, `bindFailures`.
 
+## 0.6.4
+
+0.6.3 worked (no freeze, frames from the recording queue, the picture check exact: clocks 0 us
+apart), but the camera sent only 756 frames in ~12 s, about 60 a second: it sends a frame only
+when a buffer comes back, and each came back only after waiting for the chip, plus 1.5 ms to
+make its EGLImage. Now each buffer's EGLImage is made once and kept (the camera cycles 12), and
+up to 2 frames stay in flight: a buffer goes back when its fence says the chip is done.
+Report: `tap.fenceWaitMs`.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

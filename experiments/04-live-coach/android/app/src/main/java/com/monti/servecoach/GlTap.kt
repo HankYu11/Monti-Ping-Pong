@@ -137,6 +137,8 @@ class GlTap(
             try {
                 texture?.setOnFrameAvailableListener(null)
                 queue?.setOnImageAvailableListener(null, null)
+                while (inFlight.isNotEmpty()) { val f = inFlight.removeFirst(); GLES30.glDeleteSync(f.fence); f.img.close() }
+                images.values.forEach { HwTex.release(it) }; images.clear()
                 queue?.close()
                 if (encWindow != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, encWindow)
                 textureSurface?.release(); texture?.release()
@@ -249,34 +251,61 @@ class GlTap(
         } catch (e: Exception) { onError("tap: ${e.message}") }
     }
 
-    /** the recording stream: every frame waiting in the queue, in order, each buffer back to the camera after */
+    // Each buffer's EGLImage, made the first time it comes round (by its id) and kept: making one
+    // took 1.5 ms a frame. Frames in flight: their buffer goes back to the camera once the chip is
+    // done with it (a fence), not waited for frame by frame (0.6.3: the camera, which only sends a
+    // frame when a buffer comes back, slowed to 60 a second).
+    private val images = HashMap<Long, Long>()
+    private class InFlight(val img: android.media.Image, val fence: Long)
+    private val inFlight = ArrayDeque<InFlight>()
+    @Volatile var fenceWaitMsAvg = 0.0; private set
+    private var fenceN = 0L
+
+    /** the recording stream: every frame waiting in the queue, in order */
     private fun drainQueue() {
         val q = queue ?: return
         while (true) {
-            val img = try { q.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: return
-            var eglImage = 0L
+            retire(2)                                            // at most 2 frames in flight before the next
+            val img = try { q.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: break
+            var kept = false
             try {
                 queued++
                 val tl = SystemClock.elapsedRealtimeNanos()
                 val hb = img.hardwareBuffer ?: continue
-                eglImage = HwTex.bind(hb, tex)
+                val id = hb.id
+                var eglImage = images[id] ?: 0L
+                if (eglImage == 0L) { eglImage = HwTex.image(hb); if (eglImage != 0L) images[id] = eglImage }
                 hb.close()
                 if (eglImage == 0L) { bindFailures++; if (bindFailures == 1L) onError("couldn't read a camera frame on the chip"); continue }
+                HwTex.attach(eglImage, tex)
                 latchMsAvg += ((SystemClock.elapsedRealtimeNanos() - tl) / 1e6 - latchMsAvg) / minOf(++latchN, 240L)
                 handleFrame(img.timestamp)
-                // the chip must be done with the buffer before the camera gets it back
                 if (gl3) {
                     val f = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
-                    GLES30.glClientWaitSync(f, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 50_000_000L)
-                    GLES30.glDeleteSync(f)
+                    GLES20.glFlush()
+                    inFlight.addLast(InFlight(img, f)); kept = true
                 } else GLES20.glFinish()
             } catch (e: Exception) { onError("tap: ${e.message}") }
-            finally {
-                if (eglImage != 0L) HwTex.release(eglImage)
-                img.close()
-            }
+            finally { if (!kept) img.close() }
+        }
+        retire(0, wait = false)                                  // whatever is already done
+    }
+
+    /** buffers back to the camera: all but [keep] of those in flight (waiting for the chip), and any already done */
+    private fun retire(keep: Int, wait: Boolean = true) {
+        while (inFlight.isNotEmpty()) {
+            val f = inFlight.first()
+            val t0 = SystemClock.elapsedRealtimeNanos()
+            val mustWait = wait && inFlight.size > keep
+            val r = GLES30.glClientWaitSync(f.fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, if (mustWait) 50_000_000L else 0L)
+            if (r == GLES30.GL_TIMEOUT_EXPIRED && !mustWait) break
+            if (mustWait) fenceWaitMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - fenceWaitMsAvg) / minOf(++fenceN, 240L)
+            GLES30.glDeleteSync(f.fence)
+            f.img.close()
+            inFlight.removeFirst()
         }
     }
+
     @Volatile var bindFailures = 0L; private set
 
     private fun handleFrame(ts: Long) {

@@ -55,6 +55,7 @@ class LivePipeline(
     @Volatile var linkMsAvg = 0.0; private set
     @Volatile var lagMs = 0L; private set
     @Volatile var servesFound = 0; private set
+    @Volatile var trimmed = 0; private set                // captures cut down to 300 MB
     @Volatile var tracker: ServeTracker? = null; private set
     private var captures = 0
 
@@ -342,7 +343,21 @@ class LivePipeline(
 
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
         servesFound++
-        val first = serve.first * step; val last = serve.last * step + step - 1
+        var first = serve.first * step; var last = serve.last * step + step - 1
+        // at most 300 MB of frames (the engine takes up to 600 MB at once; over that, a frame at a
+        // time: 29 s for one serve in 0.6.8): the run-up before the flight trimmed to 0.1 s first,
+        // then the end
+        run {
+            val r = tr.cropFor(serve, frameW, frameH)
+            val per = r[2].toLong() * r[3] + 2L * (r[2] / 2) * (r[3] / 2)
+            val maxN = (300_000_000L / maxOf(1L, per)).coerceAtLeast(60L)
+            if (last - first + 1 > maxN) {
+                val flightStart = (serve.track.firstOrNull()?.get(0)?.toLong() ?: serve.first) * step
+                first = maxOf(first, flightStart - captureFps / 10)
+                if (last - first + 1 > maxN) last = first + maxN - 1
+                trimmed++
+            }
+        }
         val dec = decoded
         if (dec - first > ptsRing.size || first >= dec) return          // too long ago to find again
         val fromUs = ptsRing[(first % ptsRing.size).toInt()] - 1

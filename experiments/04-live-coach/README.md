@@ -206,6 +206,14 @@ backspin (PC 44.4 / 32.0), #12 42.9 side-topspin (42.7), #6 28.5 / 23.5 (28.5 / 
 mirrored: head-on). #9-#11 were never measured: the app kept 3 serves waiting and some readings
 took 13-15 s. 0.6.1 keeps up to 12 (and 1.5 GB of frames); a dropped one is logged.
 
+## 0.6.2
+
+The 13-15 s readings (#2, #8, #15, #16) were the captures over 160 MB: those were read into the
+engine a frame at a time, again on every pass (their `fetchMs` was 5-7 ms: only the header). Now
+every capture up to 600 MB is fetched whole, in chunks of 24 frames. On the PC, those serves
+measure in 2-5 s from memory, as the phone read them (M7 44.35 / 31.9, M12 43.0, M6 28.5 / 23.5,
+M14 51.0 / 48.8).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

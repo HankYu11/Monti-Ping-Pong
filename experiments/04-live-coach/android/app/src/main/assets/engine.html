@@ -37,13 +37,16 @@
     const t0 = performance.now();
     try {
       const head = await (await fetch(`${base}/head`)).json();
-      // the whole capture in one go when it fits easily in memory (a request per frame costs ms each), else frame by frame
+      // All the frames in memory, fetched in chunks of 24 (one request each). Before 0.6.2 a capture
+      // over 160 MB was read a frame at a time, again on every pass: 13-15 s instead of 2-6.
       const [, , cw, ch] = head.rect, per = cw * ch + 2 * (cw >> 1) * (ch >> 1);
       let frames = null, frame = null;
-      if (per * head.n <= 160e6) {
-        const all = await (await fetch(`${base}/all`)).arrayBuffer();
+      if (per * head.n <= 600e6) {
         frames = [];
-        for (let k = 0; k < head.n && (k + 1) * per <= all.byteLength; k++) frames.push(new Uint8Array(all, k * per, per));
+        for (let k = 0; k < head.n; k += 24) {
+          const buf = await (await fetch(`${base}/frames/${k}/24`)).arrayBuffer();
+          for (let j = 0; (j + 1) * per <= buf.byteLength; j++) frames.push(new Uint8Array(buf, j * per, per));
+        }
       } else frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
       const tFetch = performance.now() - t0;
       const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {

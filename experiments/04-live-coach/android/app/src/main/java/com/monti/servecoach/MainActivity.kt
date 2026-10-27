@@ -397,6 +397,17 @@ class MainActivity : Activity() {
         val (id, what) = rest.split("/", limit = 2)
         if (what == "head") return WebResourceResponse("application/json", "utf-8", File(capDir, "cap_$id.json").inputStream())
         if (what == "all") return WebResourceResponse("application/octet-stream", null, File(capDir, "cap_$id.bin").inputStream().buffered(1 shl 20))
+        if (what.startsWith("frames/")) {                   // frames/<from>/<count>: a chunk of them
+            val (from, count) = what.removePrefix("frames/").split("/").map { it.toLong() }
+            val head = JSONObject(File(capDir, "cap_$id.json").readText())
+            val r = head.getJSONArray("rect")
+            val per = r.getInt(2).toLong() * r.getInt(3) + 2L * (r.getInt(2) / 2) * (r.getInt(3) / 2)
+            val f = RandomAccessFile(File(capDir, "cap_$id.bin"), "r")
+            val n = minOf(count, maxOf(0L, f.length() / per - from))
+            val bytes = ByteArray((n * per).toInt())
+            f.use { it.seek(from * per); it.readFully(bytes) }
+            return WebResourceResponse("application/octet-stream", null, ByteArrayInputStream(bytes))
+        }
         val head = JSONObject(File(capDir, "cap_$id.json").readText())
         val rect = head.getJSONArray("rect")
         val per = rect.getInt(2) * rect.getInt(3) + 2 * (rect.getInt(2) / 2) * (rect.getInt(3) / 2)

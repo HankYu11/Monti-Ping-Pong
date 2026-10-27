@@ -30,6 +30,9 @@ class LivePipeline(
     private val clipDir: File? = null,                  // live: each serve's own clip (MP4) written here too
     private val onCapture: (Capture.Info, File?) -> Unit,
     private val onError: (String) -> Unit,
+    /** the player's pose, to tell walking from serving (null: not used) */
+    private val pose: PoseWatcher? = null,
+    private val onNote: (String) -> Unit = {},
 ) {
     private val queue = LinkedBlockingQueue<EncodedFrame>(if (blocking) 64 else 720)
     @Volatile private var running = true
@@ -176,7 +179,9 @@ class LivePipeline(
         val found = if (bg == null) null else finders.submit(Callable {
             val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it) }
             val t = System.nanoTime()
-            val c = d.find(q0 ?: Downsample.quarter(rows), bg)
+            val q = q0 ?: Downsample.quarter(rows)
+            if (index % 8 == 0L) pose?.offer(q, index * step)
+            val c = d.find(q, bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
         })
@@ -233,7 +238,9 @@ class LivePipeline(
         val found = if (bg == null) null else finders.submit(Callable {
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
-            val c = d.find(q0 ?: Downsample.fromRgba(rgba, w, h, f), bg)
+            val q = q0 ?: Downsample.fromRgba(rgba, w, h, f)
+            if (index % 8 == 0L) pose?.offer(q, index * step)
+            val c = d.find(q, bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
         })
@@ -344,6 +351,8 @@ class LivePipeline(
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
         servesFound++
         var first = serve.first * step; var last = serve.last * step + step - 1
+        // a ball moving while the player walks (fetching it) isn't a serve
+        pose?.veto(first, last)?.let { why -> onNote("not a serve: $why"); return }
         // at most 300 MB of frames (the engine takes up to 600 MB at once; over that, a frame at a
         // time: 29 s for one serve in 0.6.8): the run-up before the flight trimmed to 0.1 s first,
         // then the end

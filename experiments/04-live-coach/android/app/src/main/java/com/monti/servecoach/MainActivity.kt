@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     private var recorder: ClipRecorder? = null
     private var pipeline: LivePipeline? = null
     private var tap: GlTap? = null
+    private var poseWatcher: PoseWatcher? = null
     private var queueMode = 0                              // see GlTap's queueMode
 
     /** the chip couldn't read the queue's buffers, or read nonsense: start again with the next mark */
@@ -280,6 +281,8 @@ class MainActivity : Activity() {
 
     private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240): LivePipeline =
         LivePipeline(store, capDir, fps, blocking,
+            pose = PoseWatcher(this, fps) { msg -> main.post { log("error", msg) } }.also { poseWatcher = it },
+            onNote = { msg -> main.post { log("skipped", msg) } },
             clipDir = if (blocking) null else cacheDir,
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
@@ -303,7 +306,9 @@ class MainActivity : Activity() {
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
         tap?.stop(); tap = null
         recorder?.onFrame = null
+        poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
         pipeline?.stop(); pipeline = null
+        poseWatcher?.stop(); poseWatcher = null
         recorder?.stop(); recorder = null
         mode = Mode.IDLE
         setStartButton(false)
@@ -523,6 +528,7 @@ class MainActivity : Activity() {
             .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
+        poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

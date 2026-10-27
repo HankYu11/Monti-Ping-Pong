@@ -11,8 +11,9 @@ android {
         applicationId = "com.monti.servecoach"
         minSdk = 29
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.6.9"
+        ndk { abiFilters += listOf("arm64-v8a") }       // the native part is built for it only
+        versionCode = 22
+        versionName = "0.7"
     }
     buildTypes {
         release {
@@ -25,6 +26,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    androidResources { noCompress += "task" }            // the pose model, read straight from the APK
 }
 
-dependencies { implementation(project(":core")) }
+dependencies {
+    implementation(project(":core"))
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")   // the pose model (PoseWatcher)
+}

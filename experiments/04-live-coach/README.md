@@ -279,6 +279,18 @@ was cut off before them). N7 and N10 the phone called clear and the PC low (diff
 a frame at a time. 0.6.9 caps a capture at 300 MB (the run-up before the flight trimmed to
 0.1 s, then the end; `trimmed` in the report).
 
+## 0.7: telling walking from serving (pose)
+
+In the 0.6.8 session 8 of 17 captures were the player walking to fetch the ball. Now MediaPipe's
+pose model (`pose_landmarker_lite`, on the phone, no network) looks at the tracker's small
+picture about 15 times a second (`PoseWatcher`), and a ball movement isn't a serve when the
+player's hips travelled more than one torso length sideways within any second, from half a
+second before it to its end. Measured on the clips (`pose/feat.py`, 480x270 at 15 a second):
+all 21 serves recorded so far (club M6-M15, home N1/N4/N7/N10/N12/N15, L1, C1, T1, T4, U1,
+V1, V2) 0.04-0.68; walking (N2, N3, N5, N6, N8, N9, N11, N13, N14, L2, L5) 1.37-3.32. No one
+seen: no say. Also in "Test with a video". Report: `pose` (looked, found, ms, notServes) and a
+"skipped" event for each. Any Android phone with slow motion for apps (and arm64) can run it.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

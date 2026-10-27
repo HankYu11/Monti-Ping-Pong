@@ -197,6 +197,15 @@ with the camera's own time (so recording and tap share one clock). The preview i
 own again. If that can't be set up: the preview stream (0.5.4), else decoding (0.4).
 Report: `watchingBy`, `tap.queued` / `encodeMs` / `stalls`.
 
+## A session at the club on 0.5.4, and 0.6.1
+
+16 captures, 15 clips saved (M1-M15). The phone at the server's... far end of the table, low,
+filming the server head-on: the ball flies toward the camera (45-62 degrees). M1-M5 the phone
+being set up; M6-M15 serves. Where phone and PC both read clearly they agree: #7 44.5 / 31.9
+backspin (PC 44.4 / 32.0), #12 42.9 side-topspin (42.7), #6 28.5 / 23.5 (28.5 / 23.4, top/back
+mirrored: head-on). #9-#11 were never measured: the app kept 3 serves waiting and some readings
+took 13-15 s. 0.6.1 keeps up to 12 (and 1.5 GB of frames); a dropped one is logged.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

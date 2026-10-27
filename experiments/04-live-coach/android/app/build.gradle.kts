@@ -11,8 +11,8 @@ android {
         applicationId = "com.monti.servecoach"
         minSdk = 29
         targetSdk = 35
-        versionCode = 12
-        versionName = "0.6"
+        versionCode = 13
+        versionName = "0.6.1"
     }
     buildTypes {
         release {

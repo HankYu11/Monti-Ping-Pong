@@ -332,7 +332,11 @@ class MainActivity : Activity() {
     private fun onCaptured(info: Capture.Info, clip: File?) {
         log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
         waiting.addLast(info)
-        while (waiting.size > (if (mode == Mode.LIVE) 3 else 30)) waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete() }
+        // serves waiting to be measured: up to 12 (0.5.4 kept 3 and lost 3 of 15 to slow readings), and
+        // 1.5 GB of frames (a capture is up to ~350 MB); the oldest go first, their clips are saved
+        fun bytes() = waiting.sumOf { it.n.toLong() * it.frameBytes }
+        while (waiting.size > (if (mode == Mode.LIVE) 12 else 30) || (waiting.size > 1 && bytes() > 1_500_000_000L))
+            waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete(); log("skipped", "#${it.id}: too many serves waiting to be measured") }
         if (mode == Mode.LIVE) { if (clip != null) saveClip(info, clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
         next()
     }

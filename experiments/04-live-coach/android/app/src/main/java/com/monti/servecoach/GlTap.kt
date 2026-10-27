@@ -52,13 +52,17 @@ class GlTap(
     private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray) -> Unit,
     private val onError: (String) -> Unit,
     private val encoder: Surface? = null,
-    /** mark the queue's buffers as read by the chip: Android then gives it a preview's queue, which drops (0.6.5) */
-    private val gpuUsage: Boolean = false,
+    /**
+     * How the queue's buffers are marked, besides an encoder's: 0 drawn into by the chip
+     * (GPU_COLOR_OUTPUT), 1 sampled by the chip (GPU_SAMPLED_IMAGE: Android then gives it a
+     * preview's queue, which drops: 0.6.5). An encoder's mark alone the chip couldn't read (0.6.6).
+     */
+    val queueMode: Int = 0,
     private val onBindFailed: () -> Unit = {},
 ) {
     /** recording stream through here (see above), else the preview stream */
     val throughRecording get() = encoder != null
-    val queueKind get() = if (encoder == null) "-" else if (gpuUsage) "encoder + chip (drops)" else "encoder only"
+    val queueKind get() = if (encoder == null) "-" else if (queueMode == 0) "encoder + drawn by chip" else "encoder + sampled by chip (drops)"
     val qw = width / 4
     val qh = height / 4
     private val thread = HandlerThread("gl-tap").apply { start() }
@@ -242,8 +246,8 @@ class GlTap(
             EGL14.eglSwapInterval(display, 0)
             // an encoder's usage only: with "read by the chip" too, Android treated it as a preview and
             // dropped frames waiting to be taken (0.6.5: 886 of ~2470 arrived, the thread idle 72%)
-            val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12,
-                if (gpuUsage) HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE else HardwareBuffer.USAGE_VIDEO_ENCODE)
+            val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12, HardwareBuffer.USAGE_VIDEO_ENCODE or
+                (if (queueMode == 0) HardwareBuffer.USAGE_GPU_COLOR_OUTPUT else HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE))
             q.setOnImageAvailableListener({ drainQueue() }, handler)
             queue = q
             surface = q.surface
@@ -305,7 +309,7 @@ class GlTap(
                 hb.close()
                 if (eglImage == 0L) {
                     bindFailures++
-                    if (bindFailures == 1L) { onError("couldn't read a camera frame on the chip" + if (!gpuUsage) "; starting again with the buffers marked for it" else ""); onBindFailed() }
+                    if (bindFailures == 1L) { onError("couldn't read a camera frame on the chip ($queueKind)"); onBindFailed() }
                     continue
                 }
                 HwTex.attach(eglImage, tex)

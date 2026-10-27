@@ -251,6 +251,15 @@ timeout, so a frame not yet taken is replaced by the next. Now the queue asks fo
 usage only (VIDEO_ENCODE), as the real encoder in 0.4 did (which got every frame). If the chip
 can't read such a buffer, the app starts again with the mark (`tap.queue` says which).
 
+## 0.6.7
+
+0.6.6: the chip couldn't import buffers marked for an encoder alone, so the app fell back to
+"sampled by the chip" (drops: 1225 of ~3620 frames). Now it first tries "drawn into by the chip"
+(GPU_COLOR_OUTPUT), which the camera service doesn't treat as a texture (so no drops), then
+falls back. Since the recording is drawn from the buffer the chip reads, the picture check
+also checks the picture itself (brightness, contrast, rows changing smoothly) and falls back
+if it looks wrong. `tap.queue` and `pictureCheck` say what was used and found.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

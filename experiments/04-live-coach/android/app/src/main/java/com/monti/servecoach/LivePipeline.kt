@@ -187,6 +187,8 @@ class LivePipeline(
     @Volatile var calibrated = false; private set
     @Volatile var flip = 0; private set
     @Volatile var flipCheck = ""; private set
+    @Volatile var pictureStats = ""; private set
+    @Volatile var flipBest = 0.0; private set             // the mean difference the picture check found the right way round
     private var lastNo = -1L
     private class Tapped(val pts: Long, val rgba: ByteArray, val w: Int, val h: Int)
     private val recentTaps = ArrayDeque<Tapped>()
@@ -281,10 +283,24 @@ class LivePipeline(
             s / g.y.size
         }
         val best = diffs.indices.minByOrNull { diffs[it] }!!
+        flipBest = diffs[best]
+        // Through the recording stream the recording is drawn from the very buffer the chip reads, so
+        // agreeing with it proves little: the picture must also look like a picture (not black,
+        // white or flat), and its rows must change smoothly (not noise from a buffer read wrongly).
+        run {
+            val g = Downsample.fromRgba(t.rgba, t.w, t.h, best).y
+            val mean = g.average()
+            val sd = kotlin.math.sqrt(g.sumOf { (it - mean) * (it - mean) } / g.size)
+            var rough = 0.0; var n = 0
+            for (y in 1 until t.h) for (x in 0 until t.w step 4) { rough += kotlin.math.abs(g[y * t.w + x] - g[(y - 1) * t.w + x]); n++ }
+            rough /= maxOf(1, n)
+            pictureStats = "brightness ${"%.0f".format(mean)}, contrast ${"%.0f".format(sd)}, row-to-row ${"%.1f".format(rough)}"
+            if (mean < 8 || mean > 247 || sd < 4 || rough > 0.5 * sd + 10) flipBest = 99.0
+        }
         flip = best
         val estimate = clockOffsetUs
         clockOffsetUs = t.pts - matched
-        flipCheck = "flip $best, mean differences ${diffs.joinToString(" / ") { "%.1f".format(it) }}; clocks ${clockOffsetUs} us apart (estimated ${clockOffsetUs - estimate} us off)"
+        flipCheck = "$pictureStats; flip $best, mean differences ${diffs.joinToString(" / ") { "%.1f".format(it) }}; clocks ${clockOffsetUs} us apart (estimated ${clockOffsetUs - estimate} us off)"
         calibrated = true
         synchronized(recentTaps) { recentTaps.clear() }
         return best

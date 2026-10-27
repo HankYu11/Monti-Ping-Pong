@@ -63,7 +63,15 @@ class MainActivity : Activity() {
     private var recorder: ClipRecorder? = null
     private var pipeline: LivePipeline? = null
     private var tap: GlTap? = null
-    private var queueForChip = false                       // see GlTap's gpuUsage
+    private var queueMode = 0                              // see GlTap's queueMode
+
+    /** the chip couldn't read the queue's buffers, or read nonsense: start again with the next mark */
+    private fun nextQueueMode() {
+        if (queueMode >= 1 || mode != Mode.LIVE) return
+        queueMode++
+        log("camera", "starting again with the queue marked ${if (queueMode == 1) "sampled by the chip" else "?"}")
+        stopAll(); startLive()
+    }
     private var tts: TextToSpeech? = null
     private var mode = Mode.IDLE
     private enum class Mode { IDLE, LIVE, REPLAY }
@@ -200,10 +208,7 @@ class MainActivity : Activity() {
         val onTapError = { msg: String -> main.post { log("error", msg) }; Unit }
         var t: GlTap? = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface,
-                gpuUsage = queueForChip, onBindFailed = {
-                    // the chip couldn't read an encoder-only buffer: start again with them marked for it
-                    main.post { if (!queueForChip && mode == Mode.LIVE) { queueForChip = true; stopAll(); startLive() } }
-                }).also { it.start() }
+                queueMode = queueMode, onBindFailed = { main.post { nextQueueMode() } }).also { it.start() }
         } catch (e: Exception) { log("error", "recording stream through the graphics chip: ${e.message}; trying the preview stream"); null }
         if (t == null) t = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError).also { it.start() }
@@ -257,7 +262,11 @@ class MainActivity : Activity() {
             Thread {
                 val f = try { p.calibrate() } catch (e: Exception) { main.post { log("error", "picture check: ${e.message}") }; -1 }
                 main.post {
-                    if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}") }
+                    if (f >= 0 && p.flipBest > 15 && tap?.throughRecording == true) {
+                        // the chip's picture isn't the recording's: it read the buffers wrongly
+                        log("error", "picture check: the chip's picture doesn't match the recording (${p.flipCheck})")
+                        nextQueueMode()
+                    } else if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}") }
                     else if (tries < 10) calibrateSoon(p, tries + 1)
                     else {
                         log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}; watching anyway")

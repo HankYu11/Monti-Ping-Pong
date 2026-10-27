@@ -260,6 +260,14 @@ falls back. Since the recording is drawn from the buffer the chip reads, the pic
 also checks the picture itself (brightness, contrast, rows changing smoothly) and falls back
 if it looks wrong. `tap.queue` and `pictureCheck` say what was used and found.
 
+## What 0.6.7 showed, and 0.6.8
+
+Every frame watched: 2584 of 2602 reached the chip (28 missed), 2526 encoded; the queue marked
+"drawn into by the chip" stayed lossless and the chip read it right (brightness 108, contrast
+59, rows smooth; the recording matched within 0.8). The frames' thread was busy half the time.
+62 pictures were skipped with all 4 read-back buffers busy (once 56 frames came at once after a
+hiccup): 0.6.8 has 8.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

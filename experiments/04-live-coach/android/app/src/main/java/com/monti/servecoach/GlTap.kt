@@ -399,8 +399,8 @@ class GlTap(
     // read-back buffers (OpenGL ES 3): each picture is copied into one while the chip goes on;
     // the reader takes it out when the chip is done (a fence) and frees the buffer
     private var gl3 = false
-    private val pbo = IntArray(4)
-    private var busy = java.util.concurrent.atomic.AtomicIntegerArray(4)
+    private val pbo = IntArray(8)
+    private var busy = java.util.concurrent.atomic.AtomicIntegerArray(8)
     private var slot = 0
 
     /** the small picture: drawn into the framebuffer, read back (see [onPicture]) */

@@ -242,6 +242,15 @@ surface now stays current (no switching each frame) with swap interval 0, and th
 where the rest goes: `tap.swapMs` (handing the encoder a frame), `busy` (share of time the
 frames' thread works), `framesPerWake` and `maxBurst` (how the camera delivers).
 
+## 0.6.6
+
+0.6.5: the frames' thread was busy 28% of the time and found one frame each time it woke, yet
+886 of ~2470 frames arrived: the camera dropped them. The queue was marked "read by the chip"
+(GPU_SAMPLED_IMAGE), and the camera service treats any such consumer as a texture: no dequeue
+timeout, so a frame not yet taken is replaced by the next. Now the queue asks for an encoder's
+usage only (VIDEO_ENCODE), as the real encoder in 0.4 did (which got every frame). If the chip
+can't read such a buffer, the app starts again with the mark (`tap.queue` says which).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

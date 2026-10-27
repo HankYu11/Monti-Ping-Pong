@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     private var recorder: ClipRecorder? = null
     private var pipeline: LivePipeline? = null
     private var tap: GlTap? = null
+    private var queueForChip = false                       // see GlTap's gpuUsage
     private var tts: TextToSpeech? = null
     private var mode = Mode.IDLE
     private enum class Mode { IDLE, LIVE, REPLAY }
@@ -198,7 +199,11 @@ class MainActivity : Activity() {
         val onPicture = { ts: Long, no: Long, rgba: ByteArray -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) }
         val onTapError = { msg: String -> main.post { log("error", msg) }; Unit }
         var t: GlTap? = try {
-            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface).also { it.start() }
+            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface,
+                gpuUsage = queueForChip, onBindFailed = {
+                    // the chip couldn't read an encoder-only buffer: start again with them marked for it
+                    main.post { if (!queueForChip && mode == Mode.LIVE) { queueForChip = true; stopAll(); startLive() } }
+                }).also { it.start() }
         } catch (e: Exception) { log("error", "recording stream through the graphics chip: ${e.message}; trying the preview stream"); null }
         if (t == null) t = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError).also { it.start() }
@@ -284,7 +289,7 @@ class MainActivity : Activity() {
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)
+            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
         tap?.stop(); tap = null
@@ -506,7 +511,7 @@ class MainActivity : Activity() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)
+            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
         report.put("events", events).put("results", results)

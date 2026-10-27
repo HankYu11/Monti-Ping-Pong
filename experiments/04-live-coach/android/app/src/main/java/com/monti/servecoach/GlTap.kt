@@ -52,9 +52,13 @@ class GlTap(
     private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray) -> Unit,
     private val onError: (String) -> Unit,
     private val encoder: Surface? = null,
+    /** mark the queue's buffers as read by the chip: Android then gives it a preview's queue, which drops (0.6.5) */
+    private val gpuUsage: Boolean = false,
+    private val onBindFailed: () -> Unit = {},
 ) {
     /** recording stream through here (see above), else the preview stream */
     val throughRecording get() = encoder != null
+    val queueKind get() = if (encoder == null) "-" else if (gpuUsage) "encoder + chip (drops)" else "encoder only"
     val qw = width / 4
     val qh = height / 4
     private val thread = HandlerThread("gl-tap").apply { start() }
@@ -236,8 +240,10 @@ class GlTap(
             // and handing it a frame doesn't wait for a screen refresh
             check(EGL14.eglMakeCurrent(display, encWindow, encWindow, context)) { "encoder surface current" }
             EGL14.eglSwapInterval(display, 0)
+            // an encoder's usage only: with "read by the chip" too, Android treated it as a preview and
+            // dropped frames waiting to be taken (0.6.5: 886 of ~2470 arrived, the thread idle 72%)
             val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12,
-                HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
+                if (gpuUsage) HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE else HardwareBuffer.USAGE_VIDEO_ENCODE)
             q.setOnImageAvailableListener({ drainQueue() }, handler)
             queue = q
             surface = q.surface
@@ -297,7 +303,11 @@ class GlTap(
                 var eglImage = images[id] ?: 0L
                 if (eglImage == 0L) { eglImage = HwTex.image(hb); if (eglImage != 0L) images[id] = eglImage }
                 hb.close()
-                if (eglImage == 0L) { bindFailures++; if (bindFailures == 1L) onError("couldn't read a camera frame on the chip"); continue }
+                if (eglImage == 0L) {
+                    bindFailures++
+                    if (bindFailures == 1L) { onError("couldn't read a camera frame on the chip" + if (!gpuUsage) "; starting again with the buffers marked for it" else ""); onBindFailed() }
+                    continue
+                }
                 HwTex.attach(eglImage, tex)
                 latchMsAvg += ((SystemClock.elapsedRealtimeNanos() - tl) / 1e6 - latchMsAvg) / minOf(++latchN, 240L)
                 handleFrame(img.timestamp)

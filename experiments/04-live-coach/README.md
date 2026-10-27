@@ -182,6 +182,21 @@ camera keeps only its newest preview frame. Now a second thread (a context shari
 waits for the chip (a fence) and copies the picture out; the frames' thread only starts it.
 Report: `tap.latchMs` / `showMs` / `readMs` / `busySkips`.
 
+## 0.6: watching through the recording stream
+
+0.5.4: the tap's thread was nearly idle (taking a frame in 0.43 ms, starting a read 0.68 ms),
+yet 42% of frames never arrived. Android's camera service (Camera3OutputStream) gives a preview
+consumer (a texture) a frame spacer and a queue that may drop: a queued frame not yet taken is
+replaced by the next, and in slow motion frames come in batches. Only the recording stream
+(an encoder) gets a lossless queue, and slow motion allows only preview or encoder outputs.
+
+So the camera's recording output is now a queue of ours (an ImageReader made to look like an
+encoder, 12 frames); the chip takes one frame at a time from it (ImageWriter into the texture,
+the next once this one is in), shrinks it for the tracker, and draws it whole into the encoder
+with the camera's own time (so recording and tap share one clock). The preview is the camera's
+own again. If that can't be set up: the preview stream (0.5.4), else decoding (0.4).
+Report: `watchingBy`, `tap.queued` / `encodeMs` / `stalls`.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+): copies the current engine in and

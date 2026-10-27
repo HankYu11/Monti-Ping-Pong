@@ -191,32 +191,43 @@ class MainActivity : Activity() {
         recorder = rec
         val p = newPipeline(rec, blocking = false)
         p.start()
-        // Watching: the camera's preview stream, shrunk by the graphics chip (GlTap); if that can't
-        // be set up, the recording decoded again, as 0.4 did
-        val t = try {
-            GlTap(c.size.width, c.size.height, fps = c.fps,
-                onFrame = { ts, no -> p.offerTapTime(ts, no) },
-                onPicture = { ts, no, rgba -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) },
-                onError = { msg -> main.post { log("error", msg) } }).also { it.start() }
+        // Watching: the camera's recording stream through the graphics chip, which shrinks each
+        // frame for the tracker and passes it on to the encoder (GlTap with an encoder); if that
+        // can't be set up, the preview stream (0.5.4: lost frames), else the recording decoded
+        val onFrame = { ts: Long, no: Long -> p.offerTapTime(ts, no) }
+        val onPicture = { ts: Long, no: Long, rgba: ByteArray -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) }
+        val onTapError = { msg: String -> main.post { log("error", msg) }; Unit }
+        var t: GlTap? = try {
+            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface).also { it.start() }
+        } catch (e: Exception) { log("error", "recording stream through the graphics chip: ${e.message}; trying the preview stream"); null }
+        if (t == null) t = try {
+            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError).also { it.start() }
         } catch (e: Exception) { log("error", "graphics tap: ${e.message}; decoding instead"); null }
         tap = t
         if (t == null) rec.onFrame = { p.offer(it) }
-        report.put("watchingBy", if (t != null) "graphics chip" else "decoder")
+        report.put("watchingBy", when { t == null -> "decoder"; t.throughRecording -> "graphics chip, recording stream"; else -> "graphics chip, preview stream" })
+        val viaRecording = t?.throughRecording == true
+        val previewOwn = t == null || viaRecording                 // the camera draws the preview itself
         val holder = preview.holder
-        holder.setFixedSize(if (t != null) c.size.width / 2 else c.size.width, if (t != null) c.size.height / 2 else c.size.height)
+        holder.setFixedSize(if (previewOwn) c.size.width else c.size.width / 2, if (previewOwn) c.size.height else c.size.height / 2)
         fitPreview(c.size.width, c.size.height)
-        camera.allToPreview = t != null
+        camera.allToPreview = t != null && !viaRecording
         val go = Runnable {
-            camera.start(c, listOf(t?.surface ?: holder.surface, rec.inputSurface), camHandler,
+            val outs = when {
+                t == null -> listOf(holder.surface, rec.inputSurface)
+                viaRecording -> listOf(holder.surface, t.surface)
+                else -> listOf(t.surface, rec.inputSurface)
+            }
+            camera.start(c, outs, camHandler,
                 onError = { msg -> main.post { log("error", msg); state("Camera problem: $msg"); stopAll() } },
                 onRunning = { main.post {
-                    log("camera", "running" + (if (t != null) ", every frame to the preview: ${camera.everyFrameToPreview}" else "") +
+                    log("camera", "running" + (if (t != null && !viaRecording) ", every frame to the preview: ${camera.everyFrameToPreview}" else "") +
                         camera.burstNote.let { if (it.isEmpty()) "" else " ($it)" })
                     if (t != null) calibrateSoon(p, 0)
                 } })
-            t?.showOn(holder.surface)
+            if (t != null && !viaRecording) t.showOn(holder.surface)
         }
-        val (fw, fh) = if (t != null) c.size.width / 2 to c.size.height / 2 else c.size.width to c.size.height
+        val (fw, fh) = if (previewOwn) c.size.width to c.size.height else c.size.width / 2 to c.size.height / 2
         if (holder.surface.isValid && holder.surfaceFrame.width() == fw) go.run()
         else holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) {}
@@ -270,7 +281,8 @@ class MainActivity : Activity() {
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)) }
+            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)
+            .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("stalls", t.stalls)) }
         tap?.stop(); tap = null
         recorder?.onFrame = null
         pipeline?.stop(); pipeline = null
@@ -475,7 +487,8 @@ class MainActivity : Activity() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)) }
+            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack)
+            .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("stalls", t.stalls)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))

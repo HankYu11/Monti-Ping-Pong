@@ -251,10 +251,15 @@ class LivePipeline(
         var q: Quarter? = null
         var t: Tapped? = null
         var matched = 0L
+        // (through the recording stream the encoder gets the camera's own times: no offset)
         for (cand in taps.asReversed()) {
-            val target = cand.pts - clockOffsetUs
-            val near = store.between(target - 5_000, target + 5_000).minByOrNull { kotlin.math.abs(it.ptsUs - target) } ?: continue
-            if (kotlin.math.abs(near.ptsUs - target) > 1_000_000 / captureFps / 2) continue
+            var near: EncodedFrame? = null
+            for (off in listOf(clockOffsetUs, 0L)) {
+                val target = cand.pts - off
+                val n = store.between(target - 5_000, target + 5_000).minByOrNull { kotlin.math.abs(it.ptsUs - target) } ?: continue
+                if (kotlin.math.abs(n.ptsUs - target) <= 1_000_000 / captureFps / 2) { near = n; break }
+            }
+            if (near == null) continue
             val frames = store.between(near.ptsUs, near.ptsUs)
             val dec = FrameDecoder(fmt)
             try {

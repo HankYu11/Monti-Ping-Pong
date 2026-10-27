@@ -1,6 +1,11 @@
 package com.monti.servecoach
 
+import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
+import android.hardware.HardwareBuffer
+import android.media.ImageReader
+import android.media.ImageWriter
+import android.opengl.EGLExt
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
@@ -29,6 +34,14 @@ import java.nio.FloatBuffer
  * [onPicture], every [every]th frame's small picture (R brightness, G and B colour + 128), two
  * pictures later: it is read back while the chip goes on (waiting for each took 4 ms, and frames
  * arriving meanwhile were lost). The bytes belong to the receiver.
+ *
+ * With [encoder] (its input surface), the frames come through the camera's *recording* stream
+ * instead (0.6): in slow motion only that one is lossless (the camera gives a preview consumer
+ * no queue: with frames arriving in batches, 0.5.4 lost 42% of them). The camera fills a queue of
+ * ours (an ImageReader made to look like an encoder); the chip takes one frame at a time from it
+ * (ImageWriter into the texture, the next only once this one is in), shrinks it, and draws it
+ * whole into the real encoder, timed as the camera timed it. The screen's preview is then the
+ * camera's own (30 a second).
  */
 class GlTap(
     private val width: Int, private val height: Int,
@@ -38,7 +51,10 @@ class GlTap(
     private val onFrame: (tsNs: Long, frameNo: Long) -> Unit,
     private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray) -> Unit,
     private val onError: (String) -> Unit,
+    private val encoder: Surface? = null,
 ) {
+    /** recording stream through here (see above), else the preview stream */
+    val throughRecording get() = encoder != null
     val qw = width / 4
     val qh = height / 4
     private val thread = HandlerThread("gl-tap").apply { start() }
@@ -55,8 +71,17 @@ class GlTap(
     private var tapProgram = 0
     private var showProgram = 0
     private lateinit var texture: SurfaceTexture
+    private lateinit var textureSurface: Surface
+    /** the surface the camera fills: the texture's, or (through the recording stream) the queue's */
     lateinit var surface: Surface
         private set
+    private var queue: ImageReader? = null
+    private var writer: ImageWriter? = null
+    private var encWindow: EGLSurface = EGL14.EGL_NO_SURFACE
+    private var inFlight = false
+    @Volatile var queued = 0L; private set               // frames taken from the camera's queue
+    @Volatile var encodeMsAvg = 0.0; private set
+    private var encodeN = 0L
     private val pixels: ByteBuffer = ByteBuffer.allocateDirect(qw * qh * 4).order(ByteOrder.nativeOrder())
 
     /** which way the picture is turned against the recorded frames (bit 0: x, bit 1: y), from the
@@ -112,7 +137,10 @@ class GlTap(
         handler.post {
             try {
                 texture.setOnFrameAvailableListener(null)
-                surface.release(); texture.release()
+                queue?.setOnImageAvailableListener(null, null)
+                writer?.close(); queue?.close()
+                if (encWindow != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, encWindow)
+                textureSurface.release(); texture.release()
                 if (window != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, window)
                 EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
                 EGL14.eglDestroySurface(display, pbuffer)
@@ -140,7 +168,8 @@ class GlTap(
         for (es3 in listOf(true, false)) {
             val attrs = intArrayOf(EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
                 EGL14.EGL_RENDERABLE_TYPE, if (es3) 0x40 /* EGL_OPENGL_ES3_BIT_KHR */ else EGL14.EGL_OPENGL_ES2_BIT,
-                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT or EGL14.EGL_WINDOW_BIT, EGL14.EGL_NONE)
+                EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT or EGL14.EGL_WINDOW_BIT,
+                0x3142 /* EGL_RECORDABLE_ANDROID */, if (encoder != null) 1 else -1 /* EGL_DONT_CARE */, EGL14.EGL_NONE)
             if (!EGL14.eglChooseConfig(display, attrs, 0, cfgs, 0, 1, n, 0) || n[0] == 0) continue
             config = cfgs[0]
             context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, if (es3) 3 else 2, EGL14.EGL_NONE), 0)
@@ -194,7 +223,18 @@ class GlTap(
         texture = SurfaceTexture(tex)
         texture.setDefaultBufferSize(width, height)
         texture.setOnFrameAvailableListener({ onFrameAvailable() }, handler)
-        surface = Surface(texture)
+        textureSurface = Surface(texture)
+        surface = textureSurface
+        if (encoder != null) {
+            encWindow = EGL14.eglCreateWindowSurface(display, config, encoder, intArrayOf(EGL14.EGL_NONE), 0)
+            check(encWindow != EGL14.EGL_NO_SURFACE) { "encoder surface" }
+            val q = ImageReader.newInstance(width, height, ImageFormat.PRIVATE, 12,
+                HardwareBuffer.USAGE_VIDEO_ENCODE or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
+            q.setOnImageAvailableListener({ pump() }, handler)
+            queue = q
+            writer = ImageWriter.newInstance(textureSurface, 2, ImageFormat.PRIVATE)
+            surface = q.surface
+        }
     }
 
     private fun onFrameAvailable() {
@@ -217,12 +257,52 @@ class GlTap(
                 tapped++
                 tapMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - tapMsAvg) / minOf(tapped, 240L)
             }
-            if (no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) {
+            if (encoder != null) {
+                val te = SystemClock.elapsedRealtimeNanos()
+                encode(ts)
+                encodeMsAvg += ((SystemClock.elapsedRealtimeNanos() - te) / 1e6 - encodeMsAvg) / minOf(++encodeN, 240L)
+            }
+            if (encoder == null && no % previewEvery == 1L && window != EGL14.EGL_NO_SURFACE) {
                 val ts0 = SystemClock.elapsedRealtimeNanos()
                 show()
                 showMsAvg += ((SystemClock.elapsedRealtimeNanos() - ts0) / 1e6 - showMsAvg) / minOf(++showN, 240L)
             }
         } catch (e: Exception) { onError("tap: ${e.message}") }
+        finally { if (encoder != null) { inFlight = false; pump() } }
+    }
+
+    /** the next frame from the camera's queue into the texture, once the last one is in */
+    private var inFlightSince = 0L
+    @Volatile var stalls = 0L; private set
+    private fun pump() {
+        // a frame that never came through (200 ms): don't wait for it for ever
+        if (inFlight && SystemClock.elapsedRealtime() - inFlightSince > 200) { inFlight = false; stalls++ }
+        if (inFlight) return
+        val img = try { queue?.acquireNextImage() } catch (e: Exception) { onError("queue: ${e.message}"); null } ?: return
+        try {
+            inFlight = true
+            inFlightSince = SystemClock.elapsedRealtime()
+            writer!!.queueInputImage(img)
+            queued++
+        } catch (e: Exception) { inFlight = false; img.close(); onError("into the texture: ${e.message}") }
+    }
+
+    /** the whole frame into the encoder, as the camera timed it, the right way round */
+    private fun encode(ts: Long) {
+        if (!EGL14.eglMakeCurrent(display, encWindow, encWindow, context)) { EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context); return }
+        GLES20.glViewport(0, 0, width, height)
+        GLES20.glUseProgram(showProgram)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(showProgram, "flip"), 0f, 0f)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(showProgram, "tex"), 0)
+        val pos = GLES20.glGetAttribLocation(showProgram, "pos")
+        GLES20.glEnableVertexAttribArray(pos)
+        GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        EGLExt.eglPresentationTimeANDROID(display, encWindow, ts)
+        EGL14.eglSwapBuffers(display, encWindow)
+        EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context)
     }
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(4 * 8).order(ByteOrder.nativeOrder()).asFloatBuffer()

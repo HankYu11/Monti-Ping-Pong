@@ -33,7 +33,13 @@ class LivePipeline(
     /** the player's pose, to tell walking from serving (null: not used) */
     private val pose: PoseWatcher? = null,
     private val onNote: (String) -> Unit = {},
+    /** live: one serve at a time; called when one is spotted (its number), then nothing until [resume] */
+    private val onSpotted: ((Int) -> Unit)? = null,
 ) {
+    /** measuring a serve: others are ignored until [resume] (turn by turn, so each answer is clearly about one serve) */
+    @Volatile var paused = false; private set
+    @Volatile var ignoredWhileMeasuring = 0; private set
+    fun resume() { paused = false }
     private val queue = LinkedBlockingQueue<EncodedFrame>(if (blocking) 64 else 720)
     @Volatile private var running = true
     private val thread = Thread({ run() }, "decoder")
@@ -353,6 +359,10 @@ class LivePipeline(
         var first = serve.first * step; var last = serve.last * step + step - 1
         // a ball moving while the player walks (fetching it) isn't a serve
         pose?.veto(first, last)?.let { why -> onNote("not a serve: $why"); return }
+        if (onSpotted != null) {
+            if (paused) { ignoredWhileMeasuring++; onNote("a serve while the last one was being measured: ignored"); return }
+            paused = true
+        }
         // at most 300 MB of frames (the engine takes up to 600 MB at once; over that, a frame at a
         // time: 29 s for one serve in 0.6.8): the run-up before the flight trimmed to 0.1 s first,
         // then the end
@@ -374,6 +384,7 @@ class LivePipeline(
         val w = frameW; val h = frameH
         val rect = tr.cropFor(serve, w, h)
         val id = ++captures
+        onSpotted?.invoke(id)
         // the capture is written on its own thread, so the tracker keeps up
         Thread({ writeCapture(id, serve, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }

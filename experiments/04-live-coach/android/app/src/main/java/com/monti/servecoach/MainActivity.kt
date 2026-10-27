@@ -179,8 +179,8 @@ class MainActivity : Activity() {
         sb.append("Engine ${if (engineReady) "ready" else "loading"}" + (if (waiting.isNotEmpty()) " · ${waiting.size} waiting" else "") +
             (if (unclear > 0) " · $unclear movements weren't readable serves" else ""))
         statsText.text = sb.toString()
-        if (mode != Mode.IDLE && measuring == null && waiting.isEmpty() && !stateText.text.startsWith("Watching") && !stateText.text.startsWith("Replaying"))
-            state(if (mode == Mode.LIVE) "Watching for a serve…" else "Replaying…")
+        if (mode == Mode.REPLAY && measuring == null && waiting.isEmpty() && !stateText.text.startsWith("Replaying"))
+            state("Replaying…")
     }
 
     // ------------------------------------------------------------------ camera
@@ -252,8 +252,9 @@ class MainActivity : Activity() {
         })
         mode = Mode.LIVE
         setStartButton(true)
-        state("Watching for a serve…")
-        say("Ready. Serve when you like.")
+        stateText.setTextColor(Color.rgb(140, 200, 255))
+        state("Starting: wait for Ready…")
+        say("Wait for ready, then serve. One at a time: after each, wait for the answer and ready.")
     }
 
     /** which way round the tap's picture is, once a few frames have been recorded (tried for 5 s) */
@@ -267,12 +268,13 @@ class MainActivity : Activity() {
                         // the chip's picture isn't the recording's: it read the buffers wrongly
                         log("error", "picture check: the chip's picture doesn't match the recording (${p.flipCheck})")
                         nextQueueMode()
-                    } else if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}") }
+                    } else if (f >= 0) { tap?.setFlip(f); log("camera", "picture check: ${p.flipCheck}"); if (mode == Mode.LIVE) setReady("Ready.") }
                     else if (tries < 10) calibrateSoon(p, tries + 1)
                     else {
                         log("error", "picture check failed: ${p.flipCheck.ifEmpty { "no frame matched" }}; watching anyway")
                         p.assumeDefault()
                         say("Picture check failed. Watching anyway; send the report.")
+                        if (mode == Mode.LIVE) setReady("Ready.")
                     }
                 }
             }.start()
@@ -283,6 +285,7 @@ class MainActivity : Activity() {
         LivePipeline(store, capDir, fps, blocking,
             pose = PoseWatcher(this, fps) { msg -> main.post { log("error", msg) } }.also { poseWatcher = it },
             onNote = { msg -> main.post { log("skipped", msg) } },
+            onSpotted = if (blocking) null else { id -> main.post { onSpotted(id) } },
             clipDir = if (blocking) null else cacheDir,
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
@@ -297,7 +300,7 @@ class MainActivity : Activity() {
 
     private fun stopAll() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed)
+            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring)
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
@@ -311,7 +314,9 @@ class MainActivity : Activity() {
         poseWatcher?.stop(); poseWatcher = null
         recorder?.stop(); recorder = null
         mode = Mode.IDLE
+        turnId = 0
         setStartButton(false)
+        stateText.setTextColor(Color.rgb(140, 200, 255))
         state("Stopped")
     }
 
@@ -469,6 +474,32 @@ class MainActivity : Activity() {
         "slow" to ("The brush was too slow" to "Accelerate through the contact: snap the wrist."),
     )
 
+    // ------------------------------------------------------------------ turn by turn (live)
+    // Ready -> a serve spotted ("Got it", others ignored) -> its answer spoken -> Ready. Answers
+    // take seconds, longer than between serves: without turns it wasn't clear which serve an
+    // answer was about.
+    private var turnId = 0
+    private fun setReady(spoken: String?) {
+        pipeline?.resume()
+        turnId = 0
+        stateText.setTextColor(Color.rgb(110, 220, 130))
+        state("Ready: serve")
+        if (spoken != null) say(spoken, queue = true)
+    }
+    private fun onSpotted(id: Int) {
+        if (mode != Mode.LIVE) return
+        turnId = id
+        stateText.setTextColor(Color.rgb(255, 190, 80))
+        state("Got it: measuring serve #$id…")
+        say("Got it.")
+        // never stuck waiting: if no answer comes in 30 s (a capture that failed), ready again
+        main.postDelayed({ if (mode == Mode.LIVE && turnId == id) { log("error", "#$id: no answer in 30 s"); setReady("Ready.") } }, 30_000)
+    }
+    /** after an answer (or none) in live mode: the next turn */
+    private fun turnDone(spoken: String) {
+        if (mode == Mode.LIVE) setReady("$spoken Ready.") else say(spoken)
+    }
+
     private fun show(r: JSONObject) {
         val sv = r.optJSONObject("serve")
         val secs = r.optLong("wallMs") / 1000.0
@@ -476,6 +507,9 @@ class MainActivity : Activity() {
             // a movement that wasn't a readable serve (a toss, a catch, someone walking by): not announced
             unclear++
             log("unclear", "#${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}")
+            bigText.text = "—"
+            coachText.text = "Couldn't read serve #${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}"
+            if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
             return
         }
         // read only "after a bounce" and slowly turning: in the live tests that was other movement
@@ -486,6 +520,7 @@ class MainActivity : Activity() {
         if (!own && sv.optDouble("rps") < 10) {
             unclear++
             log("unclear", "#${r.optInt("capture")}: only read after a bounce (${"%.1f".format(sv.optDouble("rps"))} rev/s ${sv.optString("type")}): not counted as a serve")
+            if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
             return
         }
         val rps = sv.optDouble("rps")
@@ -510,10 +545,10 @@ class MainActivity : Activity() {
         history.addFirst("#${r.optInt("capture")}  ${rps.roundToInt()} rev/s $type" + (if (t != null) " · ${t.first}" else ""))
         while (history.size > 8) history.removeLast()
         historyText.text = history.joinToString("\n")
-        say("${rps.roundToInt()} revs per second, $type. ${t?.first ?: ""}")
+        turnDone("${rps.roundToInt()} revs per second, $type. ${t?.first ?: ""}")
     }
 
-    private fun say(text: String) { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "r") }
+    private fun say(text: String, queue: Boolean = false) { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "r") }
 
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
@@ -523,7 +558,7 @@ class MainActivity : Activity() {
 
     private fun copyReport() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed)) }
+            .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
             .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)

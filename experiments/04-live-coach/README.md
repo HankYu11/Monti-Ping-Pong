@@ -291,6 +291,14 @@ V1, V2) 0.04-0.68; walking (N2, N3, N5, N6, N8, N9, N11, N13, N14, L2, L5) 1.37-
 seen: no say. Also in "Test with a video". Report: `pose` (looked, found, ms, notServes) and a
 "skipped" event for each. Any Android phone with slow motion for apps (and arm64) can run it.
 
+## 0.7.1: turn by turn
+
+Answers take a few seconds, longer than between serves, so it wasn't clear which serve an answer
+was about. Now: "Ready" (green) -> a serve spotted: "Got it" (amber, "measuring serve #n"), and
+serves meanwhile are ignored (`ignoredWhileMeasuring`) -> its answer, or "Couldn't read that
+one", then "Ready" again. Never stuck: no answer in 30 s and it's ready again. Walking (pose)
+doesn't start a turn.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

@@ -115,13 +115,16 @@ class HighSpeedCamera(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun start(cfg: Config, surfaces: List<Surface>, handler: Handler, onError: (String) -> Unit, onRunning: () -> Unit) {
         val executor = Executor { handler.post(it) }
+        val gen = ++generation
         manager.openCamera(cfg.cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(d: CameraDevice) {
+                if (gen != generation) { d.close(); return }       // stopped while it was opening
                 device = d
                 val outputs = surfaces.map { OutputConfiguration(it) }
                 val sc = SessionConfiguration(SessionConfiguration.SESSION_HIGH_SPEED, outputs, executor,
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(s: CameraCaptureSession) {
+                            if (gen != generation) { s.close(); return }
                             val hs = s as CameraConstrainedHighSpeedCaptureSession
                             session = hs
                             try {
@@ -147,7 +150,7 @@ class HighSpeedCamera(private val context: Context) {
                 try { d.createCaptureSession(sc) } catch (e: Exception) { onError("session: ${e.message}") }
             }
             override fun onDisconnected(d: CameraDevice) { d.close(); device = null }
-            override fun onError(d: CameraDevice, error: Int) { d.close(); device = null; onError("camera error $error") }
+            override fun onError(d: CameraDevice, error: Int) { d.close(); device = null; if (gen == generation) onError("camera error $error") }
         }, handler)
     }
 
@@ -156,7 +159,11 @@ class HighSpeedCamera(private val context: Context) {
     @Volatile var everyFrameToPreview = false; private set
     @Volatile var burstNote = ""; private set
 
+    /** counts starts and stops, so a camera that opens after it was stopped is closed at once */
+    @Volatile private var generation = 0
+
     fun stop() {
+        generation++
         try { session?.stopRepeating() } catch (_: Exception) {}
         try { session?.close() } catch (_: Exception) {}
         session = null

@@ -361,6 +361,13 @@ labelled clips climbs over 15). All labelled clips: the same 31 serves with the 
 Q1-Q3 give none. The phone needs the ball to cross the picture: side-on, level with the table.
 Also: a reading with no error logged "#2: null"; it now gives its first issue.
 
+## 0.7.7: the picture before Start
+
+While nothing runs, the screen shows what the recording will see: the same slow-motion camera
+mode (same size, same field of view), with only the screen fed (30 frames a second). Start
+closes it and opens the full session; Stop, a finished replay and coming back to the app open
+it again. A camera that finishes opening after it was stopped is closed at once.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

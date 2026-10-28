@@ -75,6 +75,8 @@ class MainActivity : Activity() {
     }
     private var tts: TextToSpeech? = null
     private var mode = Mode.IDLE
+    private var previewing = false        // the camera on with only the screen's picture, before Start
+    private var resumed = false
     private enum class Mode { IDLE, LIVE, REPLAY }
 
     private var engineReady = false
@@ -133,7 +135,7 @@ class MainActivity : Activity() {
         }
         stateText = tv(14f, true, Color.rgb(140, 200, 255)).apply { text = "Starting…" }
         bigText = tv(30f, true).apply { text = "" }
-        coachText = tv(15f).apply { text = "Put the phone beside the table: landscape, side-on, 1–1.5 m from the ball's path. Then press Start and serve." }
+        coachText = tv(15f).apply { text = "Put the phone beside the table: landscape, side-on, 1–1.5 m from the ball's path. Check the picture: the ball should fly across it, over the table. Then press Start and serve." }
         historyText = tv(13f, color = Color.rgb(200, 210, 225))
         statsText = tv(11f, color = Color.rgb(130, 145, 165))
         panel.addView(stateText); panel.addView(bigText); panel.addView(coachText)
@@ -192,10 +194,46 @@ class MainActivity : Activity() {
         report.put("chosen", if (c == null) JSONObject.NULL else JSONObject().put("camera", c.cameraId).put("size", "${c.size.width}x${c.size.height}")
             .put("fps", c.fps).put("codec", c.mime).put("encoder", c.encoder))
         state(if (c == null) "This phone doesn't offer slow motion to apps" else "Ready")
+        startPreview()
+    }
+
+    /**
+     * While nothing runs, the picture the recording will have (the same slow-motion mode, only the
+     * screen fed: 30 frames a second), to set the phone up by before pressing Start.
+     */
+    private fun startPreview() {
+        val c = cfg ?: return
+        if (mode != Mode.IDLE || previewing || !resumed || checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return
+        previewing = true
+        val holder = preview.holder
+        holder.setFixedSize(c.size.width, c.size.height)
+        fitPreview(c.size.width, c.size.height)
+        camera.allToPreview = false
+        val go = Runnable {
+            if (!previewing || mode != Mode.IDLE) return@Runnable
+            camera.start(c, listOf(holder.surface), camHandler,
+                onError = { msg -> main.post { if (previewing) { log("camera", "preview: $msg"); previewing = false; camera.stop() } } },
+                onRunning = {})
+        }
+        if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
+        else holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(h: SurfaceHolder) {}
+            override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hgt: Int) {
+                if (w == c.size.width && hgt == c.size.height) { holder.removeCallback(this); go.run() }
+            }
+            override fun surfaceDestroyed(h: SurfaceHolder) {}
+        })
+    }
+
+    private fun stopPreview() {
+        if (!previewing) return
+        previewing = false
+        camera.stop()
     }
 
     private fun startLive() {
         val c = cfg ?: return
+        stopPreview()
         val rec = ClipRecorder(c)
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
@@ -319,9 +357,11 @@ class MainActivity : Activity() {
         setStartButton(false)
         stateText.setTextColor(Color.rgb(140, 200, 255))
         state("Stopped")
+        main.post { startPreview() }          // unless something started meanwhile (a restart)
     }
 
-    override fun onPause() { super.onPause(); if (mode == Mode.LIVE) stopAll() }
+    override fun onResume() { super.onResume(); resumed = true; startPreview() }
+    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode == Mode.LIVE) stopAll() }
     override fun onDestroy() { super.onDestroy(); stopAll(); tts?.shutdown(); camThread.quitSafely(); encThread.quitSafely() }
 
     // ------------------------------------------------------------------ replay a video (testing without a table)
@@ -334,6 +374,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         val uri = data?.data
         if (requestCode != 7 || resultCode != RESULT_OK || uri == null) return
+        stopPreview()
         mode = Mode.REPLAY
         setStartButton(true)
         state("Replaying…")

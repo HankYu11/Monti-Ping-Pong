@@ -213,7 +213,7 @@ class MainActivity : Activity() {
             if (!previewing || mode != Mode.IDLE) return@Runnable
             camera.start(c, listOf(holder.surface), camHandler,
                 onError = { msg -> main.post { if (previewing) { log("camera", "preview: $msg"); previewing = false; camera.stop() } } },
-                onRunning = {})
+                onRunning = { main.post { log("camera", "preview running") } })
         }
         if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
         else holder.addCallback(object : SurfaceHolder.Callback {

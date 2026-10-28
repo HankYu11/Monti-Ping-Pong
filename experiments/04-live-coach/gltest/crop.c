@@ -62,23 +62,25 @@ int main(int argc, char **argv) {
     GLenum bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 }; glDrawBuffers(2, bufs);
     float quad[] = { -1, -1, 1, -1, -1, 1, 1, 1 };
     glEnableVertexAttribArray(0); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
-    unsigned char *rgb = malloc((size_t) W * H * 3), *out = malloc((size_t) w * h * 3 / 2);
+    int TH = getenv("TEXH") ? atoi(getenv("TEXH")) : H;     /* the buffer's rows (a decoder pads 1080 to 1088) */
+    float SZH = getenv("SIZEH") ? atof(getenv("SIZEH")) : H; /* what the shader is told */
+    unsigned char *rgb = malloc((size_t) W * TH * 3), *out = malloc((size_t) w * h * 3 / 2);
     int n = 0;
-    while (fread(rgb, 1, (size_t) W * H * 3, stdin) == (size_t) W * H * 3) {
+    while (fread(rgb, 1, (size_t) W * TH * 3, stdin) == (size_t) W * TH * 3) {
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, src);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, W, H, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, W, TH, 0, GL_RGB, GL_UNSIGNED_BYTE, rgb);
         // brightness
         glBindFramebuffer(GL_FRAMEBUFFER, fy); glViewport(0, 0, w / 4, h); glUseProgram(py);
         glUniform1i(glGetUniformLocation(py, "tex"), 0);
-        glUniform2f(glGetUniformLocation(py, "size"), W, H); glUniform2f(glGetUniformLocation(py, "origin"), x0, y0);
+        glUniform2f(glGetUniformLocation(py, "size"), W, SZH); glUniform2f(glGetUniformLocation(py, "origin"), x0, y0);
         glUniform3fv(glGetUniformLocation(py, "wY"), 1, wY); glUniform2fv(glGetUniformLocation(py, "ym"), 1, ym);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glReadBuffer(GL_COLOR_ATTACHMENT0); glReadPixels(0, 0, w / 4, h, GL_RGBA, GL_UNSIGNED_BYTE, out);
         // colour
         glBindFramebuffer(GL_FRAMEBUFFER, fc); glViewport(0, 0, w / 8, h / 2); glUseProgram(pc);
         glUniform1i(glGetUniformLocation(pc, "tex"), 0);
-        glUniform2f(glGetUniformLocation(pc, "size"), W, H); glUniform2f(glGetUniformLocation(pc, "origin"), x0, y0);
+        glUniform2f(glGetUniformLocation(pc, "size"), W, SZH); glUniform2f(glGetUniformLocation(pc, "origin"), x0, y0);
         glUniform3fv(glGetUniformLocation(pc, "wY"), 1, wY); glUniform2fv(glGetUniformLocation(pc, "cs"), 1, cs);
         glUniform2fv(glGetUniformLocation(pc, "um"), 1, um); glUniform2fv(glGetUniformLocation(pc, "vm"), 1, vm);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

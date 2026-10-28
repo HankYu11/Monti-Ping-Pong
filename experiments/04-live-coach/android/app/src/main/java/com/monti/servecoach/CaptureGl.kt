@@ -70,6 +70,7 @@ class CaptureGl(private val assets: AssetManager) {
         val targets = Targets(rect)
         var fullRange = false
         var written = 0
+        var bufW = W; var bufH = H
         val t0 = SystemClock.elapsedRealtime()
         var cutNs = 0L
         try {
@@ -111,12 +112,15 @@ class CaptureGl(private val assets: AssetManager) {
                 val hb = img.hardwareBuffer ?: throw IllegalStateException("no buffer")
                 var eglImage = images[hb.id] ?: 0L
                 if (eglImage == 0L) { eglImage = HwTex.image(hb); if (eglImage == 0L) throw IllegalStateException("the chip can't read the decoder's frames"); images[hb.id] = eglImage }
+                // the buffer's own size: a decoder pads 1080 rows to 1088, and the shaders address
+                // the texture by it (taken as 1080 on the phone: the fit was off by 7 levels)
+                bufW = hb.width; bufH = hb.height
                 hb.close()
                 HwTex.attach(eglImage, tex)
-                if (calib == null && reference != null && pts == reference.first) calibrate(targets, W, H, rect, reference.second)
+                if (calib == null && reference != null && pts == reference.first) calibrate(targets, bufW, bufH, rect, reference.second)
                 // never the chip's own numbers unmapped: without a fit the capture is made the old way
                 val c = calib ?: throw IllegalStateException("no colour fit yet (the reference frame wasn't decoded)")
-                inFlight.addLast(targets.cut(c, W, H, rect, img))
+                inFlight.addLast(targets.cut(c, bufW, bufH, rect, img))
                 while (inFlight.size > 2) { written += inFlight.removeFirst().takeOut(out) }
                 cutNs += System.nanoTime() - tc
             }
@@ -153,8 +157,11 @@ class CaptureGl(private val assets: AssetManager) {
             Calib(bt601, y, u, v)
         }
         val best = fits.minByOrNull { it.y.rms }!!
+        calibNote = "$best; other matrix rms ${"%.2f".format(fits.first { it !== best }.y.rms)}; buffer ${W}x$H"
+        // the chip's picture must line up with the decoder's (here 0.26-0.46 levels): if not, it's
+        // read wrongly on this phone, and the captures are made the old way
+        check(best.y.rms <= 3.0) { "the chip's frames don't match the decoder's (rms ${"%.1f".format(best.y.rms)}): $calibNote" }
         calib = best
-        calibNote = "$best; other matrix rms ${"%.2f".format(fits.first { it !== best }.y.rms)}"
     }
 
     /** one frame's worth of read-back, in flight until the chip is done */

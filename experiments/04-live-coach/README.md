@@ -321,6 +321,15 @@ Crops are now a multiple of 8 wide (all serve clips read as before). Found on th
 fixed: in N12 and N15 the ball merges with the paddle at the hit, the tracker's crop follows
 the merged blob and the engine then takes the paddle (the whole clip reads 30.9 and 46.8).
 
+## What 0.7.3 showed ("Test with a video", clip #1 of the 0.6.8 session), and 0.7.4
+
+The capture was cut on the chip: 202 frames decoded and cut in 1.1 s (copying took 2-4 s), and
+it read 31.45 rev/s backspin (31.35 before). But the colour fit was off by 7 levels (here 0.46):
+a decoder pads a 1080-row frame to 1088 rows, and the shaders were told 1080, so the picture was
+stretched by 8 rows over its height. On Mesa: 10.7 that way, 0.26 by the buffer's own size.
+0.7.4 uses the buffer's size, and refuses the chip (old way) if a fit is worse than 3 levels;
+"Test with a video" logs the 20-frame comparison as an event.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

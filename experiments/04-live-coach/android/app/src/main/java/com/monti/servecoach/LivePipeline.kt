@@ -473,14 +473,14 @@ class LivePipeline(
                     cap = Capture(w, h, rect, reference?.third ?: r.fullRange, captureFps)
                     n = r.frames
                     // replaying a video (testing): the first 20 frames cut the old way too, compared
-                    if (blocking) chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20)
+                    if (blocking) { chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20); onNote("capture #$id, chip against copied: $chipCheck") }
                     lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
                     onNote("capture #$id: $lastCaptureBy")
                 }
             } catch (e: Throwable) {
                 gpuFailures++
                 onError("capture #$id on the chip: ${e.message}; copying it out instead")
-                if (gpuFailures >= 2) gpuCaptures = false
+                if (gpuFailures >= 2 || e.message?.contains("don't match") == true) gpuCaptures = false
             }
             if (cap == null) {
                 val dec = FrameDecoder(fmt)

@@ -109,7 +109,7 @@ class Parallel(private val tracker: ServeTracker) {
     fun push(q: com.monti.servecoach.core.Quarter, index: Long): ServeTracker.Serve? {
         tracker.sample(q, index)
         val bg = tracker.background()
-        val f = if (bg == null) null else pool.submit(java.util.concurrent.Callable {
+        val f = if (bg == null) null else pool.submit(java.util.concurrent.Callable<List<FloatArray>> {
             val d = detectors.get() ?: com.monti.servecoach.core.Detector(q.w, q.h).also { detectors.set(it) }
             d.find(q, bg)
         })

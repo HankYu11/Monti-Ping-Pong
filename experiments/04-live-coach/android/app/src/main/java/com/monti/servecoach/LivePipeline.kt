@@ -184,7 +184,7 @@ class LivePipeline(
         // the background learns from every 24th frame, before that frame's blobs are found
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
-        val found = if (bg == null) null else finders.submit(Callable {
+        val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
             val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it) }
             val t = System.nanoTime()
             val q = q0 ?: Downsample.quarter(rows)
@@ -243,7 +243,7 @@ class LivePipeline(
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()
-        val found = if (bg == null) null else finders.submit(Callable {
+        val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
             val q = q0 ?: Downsample.fromRgba(rgba, w, h, f)

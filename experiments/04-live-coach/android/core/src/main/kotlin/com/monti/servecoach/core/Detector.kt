@@ -8,6 +8,9 @@ import kotlin.math.sqrt
 /** The background a frame is compared with: per pixel brightness and colour, quarter size. */
 class Background(val y: FloatArray, val u: FloatArray, val v: FloatArray)
 
+/** A frame's candidates, and the share of the picture that moved (a body near the camera moves a lot of it). */
+class Found(val moving: Float) : ArrayList<FloatArray>()
+
 /**
  * Ball-like blobs in one frame, as the engine's scanFrame finds them: brightness evened out for
  * light flicker (a ratio per row against the background), then a pixel moves when its brightness
@@ -25,13 +28,15 @@ class Detector(val w: Int, val h: Int) {
     val nanos = LongArray(3)
 
     /** [x, y, r] of each candidate */
-    fun find(q: Quarter, bg: Background): List<FloatArray> {
+    fun find(q: Quarter, bg: Background): Found {
         var t = System.nanoTime()
         makeMask(q, bg)
         var n = System.nanoTime(); nanos[0] += n - t; t = n
         open2()
         n = System.nanoTime(); nanos[1] += n - t; t = n
-        val out = ArrayList<FloatArray>()
+        var moved = 0
+        for (b in mask) if (b.toInt() != 0) moved++
+        val out = Found(moved.toFloat() / mask.size)
         components { area, bw, bh, cx, cy ->
             // a ball the meter can read is 20 px across or more: 12 px of area here and up
             // (the engine's search takes 3 and up, then its rules drop the small ones)

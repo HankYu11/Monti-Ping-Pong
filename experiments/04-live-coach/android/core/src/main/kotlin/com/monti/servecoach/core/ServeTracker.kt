@@ -21,7 +21,9 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     /** A finished serve: frames [first, last] (as pushed) and the box [x0, y0, x1, y1] in quarter-size pixels. */
     data class Serve(val first: Long, val last: Long, val box: FloatArray, val ballRadius: Float, val tracks: Int, val why: String,
                      /** the flight's track, [frame, x, y, r] at the tracker's rate and size, and the tracks near it (the bounce, the toss) */
-                     val track: List<FloatArray> = emptyList(), val near: List<List<FloatArray>> = emptyList()) {
+                     val track: List<FloatArray> = emptyList(), val near: List<List<FloatArray>> = emptyList(),
+                     /** the share of the picture moving while the ball flew: median and largest */
+                     val moving: FloatArray = floatArrayOf(0f, 0f)) {
         /**
          * The tracks for the engine (the header's "track" and "near"): frames counted from the
          * capture's first ([f0], a whole frame; [step] whole frames per tracker frame), points in whole-picture pixels.
@@ -87,6 +89,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         t = lap(0, t)
         val cands = if (bgY != null && samples.size >= 3) candidates(q) else emptyList()
         candidatesSeen += cands.size
+        (cands as? Found)?.let { movingAt[(i % movingAt.size).toInt()] = it.moving }
         t = System.nanoTime()
         link(i, cands)
         val s = maybeServe(i)
@@ -133,6 +136,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
 
     // ------------------------------------------------------------ candidates in one frame
     private val detector = Detector(w, h)
+    private val movingAt = FloatArray(1024)            // the share of the picture moving, by frame
 
     /** The background as it is now, for finding candidates on other threads ([Detector.find]). */
     fun background(): Background? = bgNow
@@ -162,6 +166,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         frameNo = index + 1
         framesSeen++
         candidatesSeen += cands.size
+        (cands as? Found)?.let { movingAt[(i % movingAt.size).toInt()] = it.moving }
         link(i, cands)
         return maybeServe(i)
     }
@@ -241,6 +246,29 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         return null
     }
 
+    /**
+     * A serve's best track that flies like a ball but isn't one (0.7.4, a player walking past a phone
+     * low on the table: 30 of 34 "serves" were bodies). Measured on the labelled clips at 120 tracker
+     * frames a second on a 480-wide picture, every real serve: fastest 5.1+ px a frame, median 2.0+,
+     * ball 6.1 px or less, under a tenth of the picture moving. Walking, arms and a handled camera:
+     * slower, bigger, or much of the picture moving. Scaled to the picture's width and the rate.
+     */
+    private fun notABall(sp: FloatArray, r: Float, moving: FloatArray): String? {
+        val perFrame = w / 480f * 120f / fps
+        if (sp[1] < 4.5f * perFrame || sp[0] < 1.5f * perFrame) return "slow (a body?)"
+        if (r > 7f * w / 480f) return "too big (a body?)"
+        if (moving[1] > 0.2f) return "picture moving"
+        return null
+    }
+
+    /** a track's speed, small-picture pixels per tracker frame: median and fastest (over 4-frame steps) */
+    fun speeds(p: List<FloatArray>): FloatArray {
+        val v = ArrayList<Float>()
+        for (k in 4 until p.size) { val a = p[k - 4]; val b = p[k]; v.add(hypot(b[1] - a[1], b[2] - a[2]) / max(1f, b[0] - a[0])) }
+        if (v.isEmpty()) return floatArrayOf(0f, 0f)
+        v.sort(); return floatArrayOf(v[v.size / 2], v.last())
+    }
+
     private fun median(v: List<Float>): Float {
         if (v.isEmpty()) return 0f
         val s = v.sorted(); val n = s.size
@@ -275,9 +303,19 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         for (tr in keep) if (tr !== best) near.add(tr.pts)
         for (tr in recent) if (tr !in keep && tr.last()[0] >= b0 - 0.3f * fps && tr.last()[0] <= b0 + 3 &&
             hypot(tr.last()[1] - f[1], tr.last()[2] - f[2]) < 12 * f[3]) { grow(tr); near.add(tr.pts) }
-        val why = "best of ${done.size}: ${best.pts.size} frames, score ${best.score.toInt()}"
+        val mv = (b0.toLong()..b1.toLong()).map { movingAt[(it % movingAt.size).toInt()] }.sorted()
+        val moving = if (mv.isEmpty()) floatArrayOf(0f, 0f) else floatArrayOf(mv[mv.size / 2], mv.last())
+        val sp = speeds(best.pts)
+        val r = median(best.pts.map { it[3] })
+        val no = notABall(sp, r, moving)
+        if (no != null) {
+            rejected[no] = (rejected[no] ?: 0) + 1
+            done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
+            return null
+        }
+        val why = "best of ${done.size}: ${best.pts.size} frames, score ${best.score.toInt()}, moving ${"%.3f".format(moving[0])}/${"%.3f".format(moving[1])}, speed ${"%.1f".format(sp[0])}/${"%.1f".format(sp[1])} r ${"%.1f".format(r)}"
         val s = Serve(max(0, first - (0.25 * fps).toLong()), min(last + (0.05 * fps).toLong(), first + (1.5 * fps).toLong()), box, rMax, keep.size, why,
-            best.pts.toList(), near)
+            best.pts.toList(), near, moving)
         done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
         return s
     }

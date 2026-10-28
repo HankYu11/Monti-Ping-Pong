@@ -330,6 +330,23 @@ stretched by 8 rows over its height. On Mesa: 10.7 that way, 0.26 by the buffer'
 0.7.4 uses the buffer's size, and refuses the chip (old way) if a fit is worse than 3 levels;
 "Test with a video" logs the 20-frame comparison as an event.
 
+## 0.7.5: walking past the phone isn't a serve
+
+The 0.7.4 session (phone low on the table, next to where the player walks) made 34 captures,
+about 30 of them the player's body; pose saw a whole body in only 61% of looks, so its veto
+missed most. The tracker now checks a serve's best track before saying "Got it": every real
+serve in the labelled clips (30, from T, U, V, C, L, M, N, P) flies 5.1+ px a tracker frame at
+its fastest (480-wide picture, 120 a second), 2.0+ at its median, with a ball of 6.1 px or less
+and under a tenth of the picture moving. Bodies, arms and a handled camera are slower, bigger,
+or much of the picture moves. Rejected: fastest under 4.5 or median under 1.5 ("slow (a body?)"),
+ball over 7 ("too big (a body?)"), over a fifth of the picture moving ("picture moving"), all
+scaled to the picture's width and rate.
+
+On the clips: all 30 serves kept, with the same frames and crops as without the check (so the
+same readings); of the walking and handling clips (L2-L7, M1-M5, N2-N14 without serves, P30,
+P31, P1, P3) none gives a serve now, except two real ball flights at the start of N2 and N13.
+The report's `rejected` counts the new reasons.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

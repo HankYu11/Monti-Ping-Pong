@@ -507,9 +507,11 @@ class MainActivity : Activity() {
         if (sv == null || !sv.optBoolean("clear")) {
             // a movement that wasn't a readable serve (a toss, a catch, someone walking by): not announced
             unclear++
-            log("unclear", "#${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}")
+            // a JSON null reads as "null" through optString
+            val why = (if (r.isNull("error")) "" else r.optString("error")).ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
+            log("unclear", "#${r.optInt("capture")}: $why")
             bigText.text = "—"
-            coachText.text = "Couldn't read serve #${r.optInt("capture")}: ${r.optString("error").ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }}"
+            coachText.text = "Couldn't read serve #${r.optInt("capture")}: $why"
             if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
             return
         }

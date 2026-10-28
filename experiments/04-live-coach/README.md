@@ -347,6 +347,20 @@ same readings); of the walking and handling clips (L2-L7, M1-M5, N2-N14 without 
 P31, P1, P3) none gives a serve now, except two real ball flights at the start of N2 and N13.
 The report's `rejected` counts the new reasons.
 
+## 0.7.6: the toss isn't a serve
+
+The 0.7.5 test (phone low on the table by the net post, the server at the far end): 2 serves
+gave 3 captures, none read. One was the player standing still, touching his face (it doesn't
+come back from its saved clip); the other two were the toss. The real flights went mostly
+toward the phone, small and slow in the picture over the blue table, and were never tracked.
+The toss, coming down (Q2) or going up and away (Q3), was the only good track. Now a group of
+only falling tracks isn't a serve ("toss only": a real serve has a flight across the picture
+too, though its falling toss may be its best track, as in N4 and N10), and "upward (toss)"
+takes anything climbing steeper than about 27 degrees (it was 45; no serve flight in the
+labelled clips climbs over 15). All labelled clips: the same 31 serves with the same frames;
+Q1-Q3 give none. The phone needs the ball to cross the picture: side-on, level with the table.
+Also: a reading with no error logged "#2: null"; it now gives its first issue.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

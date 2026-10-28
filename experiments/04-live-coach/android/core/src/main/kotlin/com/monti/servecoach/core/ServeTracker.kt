@@ -233,7 +233,9 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         var path = 0f
         for (k in 1 until p.size) path += hypot(p[k][1] - p[k - 1][1], p[k][2] - p[k - 1][2])
         if (disp < 0.6f * path) return "zigzag"
-        if (dy < 0 && -dy > abs(dx)) return "upward (toss)"
+        // rising steeply: a toss (Q3, phone low by the net: up and away at 40 degrees); a serve's
+        // flight, even rising off its bounce, climbs at under 15 degrees in every labelled clip
+        if (dy < 0 && -dy > 0.5f * abs(dx)) return "upward (toss)"
         val grow = median(p.takeLast(4).map { it[3] }) / max(1e-6f, median(p.take(4).map { it[3] }))
         val n = p.size
         fun part(a0: Double, b0: Double): Float {
@@ -259,6 +261,11 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (r > 7f * w / 480f) return "too big (a body?)"
         if (moving[1] > 0.2f) return "picture moving"
         return null
+    }
+
+    private fun falls(tr: Track): Boolean {
+        val a = tr.first(); val b = tr.last()
+        return b[2] - a[2] > 2 * abs(b[1] - a[1])
     }
 
     /** a track's speed, small-picture pixels per tracker frame: median and fastest (over 4-frame steps) */
@@ -289,6 +296,13 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         // the best track is the serve; with it the tracks of nearly its quality close in time (the
         // flight after the bounce), and a toss track that ended just before it, near its start
         val best = done.maxByOrNull { it.score }!!
+        // only falling tracks (Q2: the toss coming down, its flight unseen): no serve. A real serve
+        // has a flight across the picture too, though its falling toss may be the best track (N4)
+        if (done.all { falls(it) }) {
+            rejected["toss only"] = (rejected["toss only"] ?: 0) + 1
+            done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
+            return null
+        }
         val b0 = best.first()[0]; val b1 = best.last()[0]
         val keep = ArrayList<Track>()
         for (tr in done) if (tr === best || (tr.score >= 0.3f * best.score && tr.first()[0] >= b0 - 0.3f * fps && tr.first()[0] <= b1 + 0.4f * fps)) keep.add(tr)

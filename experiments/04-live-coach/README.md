@@ -376,6 +376,18 @@ the preview is an ordinary 30-a-second session at the same size, it is closed on
 thread, and the slow-motion session opens only after that close is done (Start shows
 "Starting…" meanwhile). 0.7.8 logged "preview running"; still there.
 
+## 0.8.0: one spin number, and clips of what was skipped
+
+0.7.9 at the club worked (the preview, then 16.8 rev/s side-backspin + gyro on a serve filmed
+along the table, the same 16.8 on the desktop from the same clip), but "some serves were
+skipped", and "two spin numbers" (rev/s and RPM) were confusing. Now the screen, the history and
+the voice give RPM only, to the nearest 10. A skipped serve left nothing to look at; now each
+movement the last checks turn down ("slow (a body?)", "too big (a body?)", "picture moving",
+"toss only") and each track taken for a toss going up is saved as a clip,
+`ServeCoach_<time>_skipped<n>_<reason>.mp4`, up to 30 a session (not while a serve is being
+measured). Every serve's toss can show up among them; the point is to see which check takes
+real serves. Labelled clips: the same serves as before.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

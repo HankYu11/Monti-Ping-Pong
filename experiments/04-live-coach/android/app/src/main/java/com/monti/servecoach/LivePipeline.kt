@@ -28,6 +28,8 @@ class LivePipeline(
     private val captureFps: Int = 240,
     private val blocking: Boolean = false,              // replay: wait for room rather than drop frames
     private val clipDir: File? = null,                  // live: each serve's own clip (MP4) written here too
+    /** live: a clip of a movement turned down as not a serve (its number, why, the file) */
+    private val onSkippedClip: ((Int, String, File) -> Unit)? = null,
     private val onCapture: (Capture.Info, File?) -> Unit,
     private val onError: (String) -> Unit,
     /** the player's pose, to tell walking from serving (null: not used) */
@@ -103,7 +105,7 @@ class LivePipeline(
         }
         if (qs.isEmpty()) return
         val q = qs[0]
-        tracker = (tracker ?: ServeTracker(q.w, q.h, captureFps / step)).also { it.prime(qs) }
+        tracker = (tracker ?: ServeTracker(q.w, q.h, captureFps / step).also { watchSkips(it) }).also { it.prime(qs) }
     }
 
     /** from the encoder (or the replay): never blocks the camera; frames are dropped when we fall behind */
@@ -180,7 +182,7 @@ class LivePipeline(
         val t0 = System.nanoTime()
         val rows = Downsample.rows(yuv)
         shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
-        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { tracker = it }
+        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); tracker = it }
         // the background learns from every 24th frame, before that frame's blobs are found
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
@@ -239,7 +241,7 @@ class LivePipeline(
         }
         val index = frameNo / step
         if (jobs.remainingCapacity() == 0) { skipped++; return }
-        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { tracker = it }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); tracker = it }
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()
@@ -355,6 +357,31 @@ class LivePipeline(
         } catch (_: InterruptedException) {
         } catch (e: Exception) { onError("tracker: ${e.message}") }
     }
+
+    /**
+     * Live: a clip of each movement the last checks turned down ("slow (a body?)", "toss only"...),
+     * up to 30 a session, so a real serve wrongly skipped can be seen (0.7.9: "some serves were skipped").
+     */
+    private fun watchSkips(tr: ServeTracker) {
+        if (clipDir == null || onSkippedClip == null) return
+        tr.onSkipped = { f, l, why ->
+            val first = f * step; val last = l * step + step - 1
+            val dec = decoded
+            if (!paused && skippedClips < 30 && dec - first <= ptsRing.size && first < dec) {
+                val n = ++skippedClips
+                val fromUs = ptsRing[(first % ptsRing.size).toInt()] - 1
+                val toUs = ptsRing[(minOf(last, dec - 1) % ptsRing.size).toInt()] + 1
+                Thread({
+                    try {
+                        val fmt = store.outputFormat ?: return@Thread
+                        val file = File(clipDir, "skipped_$n.mp4")
+                        if (writeMp4(store.between(fromUs - 500_000, toUs + 300_000), fmt, toUs + 300_000, file) > 0) onSkippedClip.invoke(n, why, file)
+                    } catch (e: Exception) { onError("skipped clip $n: ${e.message}") }
+                }, "skipped-$n").apply { priority = Thread.MIN_PRIORITY }.start()
+            }
+        }
+    }
+    @Volatile var skippedClips = 0; private set
 
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
         servesFound++

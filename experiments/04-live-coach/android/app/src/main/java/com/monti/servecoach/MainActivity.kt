@@ -336,6 +336,7 @@ class MainActivity : Activity() {
             onSpotted = if (blocking) null else { id -> main.post { onSpotted(id) } },
             assets = assets,
             clipDir = if (blocking) null else cacheDir,
+            onSkippedClip = if (blocking) null else { n, why, f -> main.post { log("skipped", "not a serve ($why): clip kept"); saveClip("skipped${n}_${why.replace(Regex("[^a-z]+"), "-").trim('-')}", f) } },
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
 
@@ -417,7 +418,7 @@ class MainActivity : Activity() {
         fun bytes() = waiting.sumOf { it.n.toLong() * it.frameBytes }
         while (waiting.size > (if (mode == Mode.LIVE) 12 else 30) || (waiting.size > 1 && bytes() > 1_500_000_000L))
             waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete(); log("skipped", "#${it.id}: too many serves waiting to be measured") }
-        if (mode == Mode.LIVE) { if (clip != null) saveClip(info, clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
+        if (mode == Mode.LIVE) { if (clip != null) saveClip("${info.id}", clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
         next()
     }
 
@@ -432,10 +433,10 @@ class MainActivity : Activity() {
     }
 
     /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
-    private fun saveClip(info: Capture.Info, tmp: File) {
+    private fun saveClip(label: String, tmp: File) {
         Thread {
             try {
-                val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_${info.id}.mp4"
+                val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_$label.mp4"
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, name); put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
@@ -445,7 +446,7 @@ class MainActivity : Activity() {
                 contentResolver.openOutputStream(uri)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
                     ?: throw IllegalStateException("couldn't open the new video file")
                 tmp.delete()
-                main.post { log("saved", "#${info.id} Movies/ServeCoach/$name") }
+                main.post { log("saved", "Movies/ServeCoach/$name") }
             } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }
         }.start()
     }
@@ -573,7 +574,7 @@ class MainActivity : Activity() {
         val own = (0 until (phases?.length() ?: 0)).any { k -> phases!!.getJSONObject(k).let { it.optBoolean("clear") && it.optString("phase") != "bounce" } }
         if (!own && sv.optDouble("rps") < 10) {
             unclear++
-            log("unclear", "#${r.optInt("capture")}: only read after a bounce (${"%.1f".format(sv.optDouble("rps"))} rev/s ${sv.optString("type")}): not counted as a serve")
+            log("unclear", "#${r.optInt("capture")}: only read after a bounce (${(sv.optDouble("rps") * 60).roundToInt()} RPM ${sv.optString("type")}): not counted as a serve")
             if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
             return
         }
@@ -594,12 +595,14 @@ class MainActivity : Activity() {
             if (sv.has("speed")) append("ball ${"%.1f".format(sv.optDouble("speed"))} m/s · ")
             append("answer in ${"%.1f".format(secs)} s")
         }
-        bigText.text = "${rps.roundToInt()} rev/s · ${(rps * 60).roundToInt()} RPM"
+        // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
+        val rpm = (rps * 6).roundToInt() * 10
+        bigText.text = "$rpm RPM"
         coachText.text = "$type\n$tip\n$numbers$closer"
-        history.addFirst("#${r.optInt("capture")}  ${rps.roundToInt()} rev/s $type" + (if (t != null) " · ${t.first}" else ""))
+        history.addFirst("#${r.optInt("capture")}  $rpm RPM $type" + (if (t != null) " · ${t.first}" else ""))
         while (history.size > 8) history.removeLast()
         historyText.text = history.joinToString("\n")
-        turnDone("${rps.roundToInt()} revs per second, $type. ${t?.first ?: ""}")
+        turnDone("$rpm RPM, $type. ${t?.first ?: ""}")
     }
 
     private fun say(text: String, queue: Boolean = false) { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "r") }

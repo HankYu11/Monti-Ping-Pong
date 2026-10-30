@@ -72,6 +72,9 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     var candidatesSeen = 0L; private set
     val rejected = HashMap<String, Int>()
 
+    /** a group of good tracks that the last checks turned down: its frames [first, last] (as pushed) and why */
+    var onSkipped: ((Long, Long, String) -> Unit)? = null
+
     /** for tests: every finished track of 8+ frames and why it isn't a serve (null: it is) */
     var onTrack: ((List<FloatArray>, String?) -> Unit)? = null
 
@@ -207,7 +210,12 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (tr.pts.size >= 6) { recent.addLast(tr); while (recent.size > 30) recent.removeFirst() }
         val why = judge(tr)
         if (tr.pts.size >= 8) onTrack?.invoke(tr.pts, why)
-        if (why != null) { if (tr.pts.size >= 6) rejected[why] = (rejected[why] ?: 0) + 1; return }
+        if (why != null) {
+            if (tr.pts.size >= 6) rejected[why] = (rejected[why] ?: 0) + 1
+            // a toss, or a serve's flight climbing steeply (a phone low or at an angle): seen in a clip
+            if (why == "upward (toss)") onSkipped?.invoke(tr.first()[0].toLong(), tr.last()[0].toLong(), why)
+            return
+        }
         tr.score = tr.pts.size * median(tr.pts.map { it[3] })
         done.add(tr)
         // The bounce may follow as a track of its own, and a better track may come: wait 0.4 s. Only a
@@ -300,6 +308,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         // has a flight across the picture too, though its falling toss may be the best track (N4)
         if (done.all { falls(it) }) {
             rejected["toss only"] = (rejected["toss only"] ?: 0) + 1
+            onSkipped?.invoke(done.minOf { it.first()[0] }.toLong(), done.maxOf { it.last()[0] }.toLong(), "toss only")
             done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
             return null
         }
@@ -324,6 +333,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val no = notABall(sp, r, moving)
         if (no != null) {
             rejected[no] = (rejected[no] ?: 0) + 1
+            onSkipped?.invoke(first, last, no)
             done.clear(); recent.clear(); groupDeadline = -1; bestScore = 0f
             return null
         }

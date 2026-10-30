@@ -75,7 +75,7 @@ class MainActivity : Activity() {
     }
     private var tts: TextToSpeech? = null
     private var mode = Mode.IDLE
-    private var previewing = false        // the camera on with only the screen's picture, before Start
+    @Volatile private var previewing = false        // the camera on with only the screen's picture, before Start
     private var resumed = false
     private enum class Mode { IDLE, LIVE, REPLAY }
 
@@ -208,12 +208,12 @@ class MainActivity : Activity() {
         val holder = preview.holder
         holder.setFixedSize(c.size.width, c.size.height)
         fitPreview(c.size.width, c.size.height)
-        camera.allToPreview = false
         val go = Runnable {
             if (!previewing || mode != Mode.IDLE) return@Runnable
-            camera.start(c, listOf(holder.surface), camHandler,
-                onError = { msg -> main.post { if (previewing) { log("camera", "preview: $msg"); previewing = false; camera.stop() } } },
-                onRunning = { main.post { log("camera", "preview running") } })
+            // on the camera's thread: after any close still waiting there
+            camHandler.post { if (previewing) camera.startPreview(c, holder.surface, camHandler,
+                onError = { msg -> main.post { if (previewing) { log("camera", "preview: $msg"); stopPreview() } } },
+                onRunning = { main.post { log("camera", "preview running") } }) }
         }
         if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
         else holder.addCallback(object : SurfaceHolder.Callback {
@@ -225,15 +225,25 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun stopPreview() {
-        if (!previewing) return
+    private fun stopPreview(then: (() -> Unit)? = null) {
+        if (!previewing) { then?.invoke(); return }
         previewing = false
-        camera.stop()
+        camera.stopOn(camHandler) { if (then != null) main.post(then) }
     }
+
+    private var starting = false
 
     private fun startLive() {
         val c = cfg ?: return
-        stopPreview()
+        // the setup preview closes first, off this thread; then the slow-motion session opens
+        if (previewing) {
+            if (starting) return
+            starting = true
+            state("Starting…")
+            stopPreview { starting = false; if (mode == Mode.IDLE && resumed) startLive() }
+            return
+        }
+        if (starting) return
         val rec = ClipRecorder(c)
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec

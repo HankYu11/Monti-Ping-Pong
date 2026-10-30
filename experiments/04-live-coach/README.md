@@ -368,6 +368,14 @@ mode (same size, same field of view), with only the screen fed (30 frames a seco
 closes it and opens the full session; Stop, a finished replay and coming back to the app open
 it again. A camera that finishes opening after it was stopped is closed at once.
 
+## 0.7.9: Start froze with the setup preview (0.7.7)
+
+"It kept saying ANR after starting." 0.7.7's preview was the slow-motion session with only the
+screen fed (240 frames a second to it), closed on the main thread when Start was pressed. Now
+the preview is an ordinary 30-a-second session at the same size, it is closed on the camera's
+thread, and the slow-motion session opens only after that close is done (Start shows
+"Starting…" meanwhile). 0.7.8 logged "preview running"; still there.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

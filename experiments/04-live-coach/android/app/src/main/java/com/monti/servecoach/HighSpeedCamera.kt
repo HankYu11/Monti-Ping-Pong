@@ -34,8 +34,8 @@ class HighSpeedCamera(private val context: Context) {
     )
 
     private val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-    private var device: CameraDevice? = null
-    private var session: CameraConstrainedHighSpeedCaptureSession? = null
+    @Volatile private var device: CameraDevice? = null
+    @Volatile private var session: CameraCaptureSession? = null
 
     /** Everything the phone offers for slow motion, for the report. */
     fun probe(): JSONObject {
@@ -154,6 +154,41 @@ class HighSpeedCamera(private val context: Context) {
         }, handler)
     }
 
+    /**
+     * Only the screen, at 30 frames a second, for setting the phone up before Start: an ordinary
+     * session (0.7.7 ran the slow-motion one with only the screen fed, 240 frames a second to it,
+     * and the app froze when Start closed it). Same size, so the same part of the sensor.
+     */
+    @SuppressLint("MissingPermission")
+    fun startPreview(cfg: Config, surface: Surface, handler: Handler, onError: (String) -> Unit, onRunning: () -> Unit) {
+        val executor = Executor { handler.post(it) }
+        val gen = ++generation
+        manager.openCamera(cfg.cameraId, object : CameraDevice.StateCallback() {
+            override fun onOpened(d: CameraDevice) {
+                if (gen != generation) { d.close(); return }
+                device = d
+                val sc = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, listOf(OutputConfiguration(surface)), executor,
+                    object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(s: CameraCaptureSession) {
+                            if (gen != generation) { s.close(); return }
+                            session = s
+                            try {
+                                val b = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                                b.addTarget(surface)
+                                b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(30, 30))
+                                s.setRepeatingRequest(b.build(), null, handler)
+                                onRunning()
+                            } catch (e: Exception) { onError("preview request: ${e.message}") }
+                        }
+                        override fun onConfigureFailed(s: CameraCaptureSession) { onError("the camera refused the preview") }
+                    })
+                try { d.createCaptureSession(sc) } catch (e: Exception) { onError("preview session: ${e.message}") }
+            }
+            override fun onDisconnected(d: CameraDevice) { d.close(); if (device === d) device = null }
+            override fun onError(d: CameraDevice, error: Int) { d.close(); if (device === d) device = null; if (gen == generation) onError("camera error $error") }
+        }, handler)
+    }
+
     /** send every frame to the preview stream too (else 1 in 8), and whether that was taken */
     var allToPreview = false
     @Volatile var everyFrameToPreview = false; private set
@@ -168,5 +203,18 @@ class HighSpeedCamera(private val context: Context) {
         try { session?.close() } catch (_: Exception) {}
         session = null
         device?.close(); device = null
+    }
+
+    /** [stop] on the camera's thread (closing can take a while), then [then] there */
+    fun stopOn(handler: Handler, then: () -> Unit) {
+        generation++
+        val s = session; val d = device
+        session = null; device = null
+        handler.post {
+            try { s?.stopRepeating() } catch (_: Exception) {}
+            try { s?.close() } catch (_: Exception) {}
+            try { d?.close() } catch (_: Exception) {}
+            then()
+        }
     }
 }

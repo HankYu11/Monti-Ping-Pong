@@ -303,7 +303,12 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (i - done.minOf { it.first()[0] } < 1.5 * fps && active.any { it.pts.size >= minLen && judge(it) == null }) return null
         // the best track is the serve; with it the tracks of nearly its quality close in time (the
         // flight after the bounce), and a toss track that ended just before it, near its start
-        val best = done.maxByOrNull { it.score }!!
+        // the best track, unless it doesn't fly like a ball (0.8.0, K2: the ball rolling back along
+        // the table, 140 frames, slow, and the serve went with it as "a body"); then the best of
+        // those that do and cross the picture (P31: not a short drop beside a walking body)
+        fun ballLike(tr: Track) = notABall(speeds(tr.pts), median(tr.pts.map { it[3] }), floatArrayOf(0f, 0f)) == null
+        val top = done.maxByOrNull { it.score }!!
+        val best = if (ballLike(top)) top else done.filter { ballLike(it) && !falls(it) }.maxByOrNull { it.score } ?: top
         // only falling tracks (Q2: the toss coming down, its flight unseen): no serve. A real serve
         // has a flight across the picture too, though its falling toss may be the best track (N4)
         if (done.all { falls(it) }) {

@@ -388,6 +388,19 @@ movement the last checks turn down ("slow (a body?)", "too big (a body?)", "pict
 measured). Every serve's toss can show up among them; the point is to see which check takes
 real serves. Labelled clips: the same serves as before.
 
+## 0.8.1: a ball rolling back took the serve with it
+
+0.8.0 at the club: 7 captures, 6 read (31-47 rev/s), and its skipped clips showed what went
+missing. Of 8 groups turned down, 5 were bodies (walking past the phone, K1, K3, K4, K5, K8) and
+3 were serves (K2, K6, K7, one into the net). The group was judged by its best track by score
+(frames x ball size), and in those it was the ball rolling back along the table: 140 frames,
+slow, so the whole group went as "slow (a body?)". Now, when the best track doesn't fly like a
+ball, the best of the tracks that do (and cross the picture rather than drop: P31, a short fall
+beside a walking body) is taken instead; if there is none the group is turned down as before.
+`desktop selftest` builds that case from made-up tracks (the old rule skips it, the new keeps it).
+All clips: the same serves as before; K2, K6, K7 read 50.1, 40.2, 43.0 rev/s; the bodies and
+the 0.7.4 walking clips still give none.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

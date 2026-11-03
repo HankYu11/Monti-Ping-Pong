@@ -21,6 +21,23 @@ fun main(args: Array<String>) {
         val f = com.monti.servecoach.core.ColourFit.fit(a, b, 0, n)
         println("gain %.4f offset %.2f rms %.2f".format(f.gain, f.offset, f.rms)); return
     }
+    // selftest: the tracker on made-up candidates (0.8.0, K2: a serve followed by the ball rolling
+    // back, slow and long, which out-scored the serve and took it down as "a body")
+    if (args[0] == "selftest") {
+        val tr = ServeTracker(480, 270, 120)
+        val skipped = ArrayList<String>()
+        tr.onSkipped = { _, _, why -> skipped.add(why) }
+        var got: ServeTracker.Serve? = null
+        for (i in 0L until 400L) {
+            val c = ArrayList<FloatArray>()
+            if (i in 20..55) c.add(floatArrayOf(100f + (i - 20) * 8.5f, 150f + (i - 20) * 0.5f, 3.2f))     // the serve
+            if (i in 60..170) c.add(floatArrayOf(400f - (i - 60) * 2.3f, 180f, 3.0f))                    // rolling back
+            tr.pushFound(i, c)?.let { got = it }
+        }
+        val s = got
+        println(if (s != null && s.track.first()[0].toInt() == 20) "selftest: ok (the serve, ${s.why})" else "selftest: FAILED (serve ${s?.why}, skipped $skipped)")
+        return
+    }
     val clip = File(args[0]); val outDir = File(args[1]).apply { mkdirs() }
     val (W, H) = probe(clip)
     // as the app: the tracker sees every 2nd frame (120 a second), the capture all of them

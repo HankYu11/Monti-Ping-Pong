@@ -338,6 +338,7 @@ class MainActivity : Activity() {
             clipDir = if (blocking) null else cacheDir,
             onSkippedClip = if (blocking) null else { n, why, f -> main.post { log("skipped", "not a serve ($why): clip kept"); saveClip("skipped${n}_${why.replace(Regex("[^a-z]+"), "-").trim('-')}", f) } },
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
+            onCaptureStarted = { info -> main.post { onCaptureStarted(info) } },
             onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
 
     private fun fitPreview(w: Int, h: Int) {
@@ -410,16 +411,24 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ a serve was spotted
-    private fun onCaptured(info: Capture.Info, clip: File?) {
-        log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
+    /** a capture started being written: measured from now on, its frames read as they are cut (0.8.2) */
+    private fun onCaptureStarted(info: Capture.Info) {
         waiting.addLast(info)
         // serves waiting to be measured: up to 12 (0.5.4 kept 3 and lost 3 of 15 to slow readings), and
         // 1.5 GB of frames (a capture is up to ~350 MB); the oldest go first, their clips are saved
         fun bytes() = waiting.sumOf { it.n.toLong() * it.frameBytes }
         while (waiting.size > (if (mode == Mode.LIVE) 12 else 30) || (waiting.size > 1 && bytes() > 1_500_000_000L))
             waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete(); log("skipped", "#${it.id}: too many serves waiting to be measured") }
-        if (mode == Mode.LIVE) { if (clip != null) saveClip("${info.id}", clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
         next()
+    }
+
+    private val writeMsOf = HashMap<Int, Long>()
+    private val spottedAt = HashMap<Int, Long>()
+
+    private fun onCaptured(info: Capture.Info, clip: File?) {
+        log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
+        writeMsOf[info.id] = info.writeMs
+        if (mode == Mode.LIVE) { if (clip != null) saveClip("${info.id}", clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
     }
 
     private fun next() {
@@ -476,10 +485,15 @@ class MainActivity : Activity() {
     /** /capture/<id>/head: the header; /capture/<id>/<k>: frame k's bytes */
     private fun captureResponse(rest: String): WebResourceResponse {
         val (id, what) = rest.split("/", limit = 2)
+        // a capture still being written (0.8.2): a read waits for its frames, up to 20 s
+        val w = id.toIntOrNull()?.let { LivePipeline.writing[it] }
         if (what == "head") return WebResourceResponse("application/json", "utf-8", File(capDir, "cap_$id.json").inputStream())
+        if (what == "head/final") { w?.awaitDone(20_000); return WebResourceResponse("application/json", "utf-8", File(capDir, "cap_$id.json").inputStream()) }
+        if (what == "all") w?.awaitDone(20_000)
         if (what == "all") return WebResourceResponse("application/octet-stream", null, File(capDir, "cap_$id.bin").inputStream().buffered(1 shl 20))
         if (what.startsWith("frames/")) {                   // frames/<from>/<count>: a chunk of them
             val (from, count) = what.removePrefix("frames/").split("/").map { it.toLong() }
+            w?.await((from + count).toInt(), 20_000)
             val head = JSONObject(File(capDir, "cap_$id.json").readText())
             val r = head.getJSONArray("rect")
             val per = r.getInt(2).toLong() * r.getInt(3) + 2L * (r.getInt(2) / 2) * (r.getInt(3) / 2)
@@ -489,6 +503,7 @@ class MainActivity : Activity() {
             f.use { it.seek(from * per); it.readFully(bytes) }
             return WebResourceResponse("application/octet-stream", null, ByteArrayInputStream(bytes))
         }
+        w?.await(what.toInt() + 1, 20_000)
         val head = JSONObject(File(capDir, "cap_$id.json").readText())
         val rect = head.getJSONArray("rect")
         val per = rect.getInt(2) * rect.getInt(3) + 2 * (rect.getInt(2) / 2) * (rect.getInt(3) / 2)
@@ -511,8 +526,12 @@ class MainActivity : Activity() {
             val info = measuring; measuring = null
             val r = try { JSONObject(json) } catch (e: Exception) { JSONObject().put("error", "bad result") }
             r.put("capture", id).put("wallMs", SystemClock.uptimeMillis() - started)
-            info?.let { r.put("captureFrames", it.n).put("writeMs", it.writeMs) }
+            info?.let { r.put("captureFrames", it.n) }
+            writeMsOf.remove(id)?.let { r.put("writeMs", it) }
+            // from "Got it" to the answer: the wait the player has
+            spottedAt.remove(id)?.let { r.put("answerMs", SystemClock.uptimeMillis() - it) }
             results.put(r)
+            LivePipeline.writing.remove(id)
             File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)
             next()
@@ -542,6 +561,7 @@ class MainActivity : Activity() {
     private fun onSpotted(id: Int) {
         if (mode != Mode.LIVE) return
         turnId = id
+        spottedAt[id] = SystemClock.uptimeMillis()
         stateText.setTextColor(Color.rgb(255, 190, 80))
         state("Got it: measuring serve #$id…")
         say("Got it.")

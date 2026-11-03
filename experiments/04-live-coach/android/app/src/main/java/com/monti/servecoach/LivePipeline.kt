@@ -31,6 +31,8 @@ class LivePipeline(
     /** live: a clip of a movement turned down as not a serve (its number, why, the file) */
     private val onSkippedClip: ((Int, String, File) -> Unit)? = null,
     private val onCapture: (Capture.Info, File?) -> Unit,
+    /** a capture's frames have started to be written (its first header: the frame count estimated, n): it can be measured now */
+    private val onCaptureStarted: ((Capture.Info) -> Unit)? = null,
     private val onError: (String) -> Unit,
     /** the player's pose, to tell walking from serving (null: not used) */
     private val pose: PoseWatcher? = null,
@@ -117,7 +119,11 @@ class LivePipeline(
     // the time of each decoded frame, by its order: the tracker counts frames, the store keeps times
     private val ptsRing = LongArray(8192)
 
-    private companion object { val END = EncodedFrame(-1, false, ByteArray(0)) }
+    companion object {
+        private val END = EncodedFrame(-1, false, ByteArray(0))
+        /** the captures being written or measured, by number (the engine's reads wait on them) */
+        val writing = java.util.concurrent.ConcurrentHashMap<Int, Writing>()
+    }
 
     private fun run() {
         var dec: FrameDecoder? = null
@@ -479,15 +485,19 @@ class LivePipeline(
             val frames = store.between(fromUs, toUs)
             val fmt = store.outputFormat ?: return
             if (frames.isEmpty()) { onError("capture #$id: its frames were no longer in memory"); return }
-            // the clip from these same frames, now: the store keeps only the last few seconds
-            // (0.3 cut it after the capture was written, by when they were gone)
-            var clip: File? = null
-            if (clipDir != null) try {
-                val f = File(clipDir, "clip_$id.mp4")
-                // with half a second more before (the toss) and a little after, for replaying it
-                if (writeMp4(store.between(fromUs - 500_000, toUs + 300_000), fmt, toUs + 300_000, f) > 0) clip = f
-            } catch (e: Exception) { onError("clip #$id: ${e.message}") }
+            // the clip's frames, now: the store keeps only the last few seconds (0.3 cut it after the
+            // capture was written, by when they were gone). Written after the capture (0.8.2), so the
+            // engine can start on the capture sooner; the list is a copy, its frames don't change.
+            val clipFrames = if (clipDir != null) store.between(fromUs - 500_000, toUs + 300_000) else null
             val bin = File(captureDir, "cap_$id.bin")
+            // 0.8.2: the engine reads the frames while they are cut (it waited for all of them, then
+            // fetched them: 0.5-1.9 s more a serve). A first header now, with the count estimated;
+            // the last one, with the decoder's colour range, when all are written.
+            val per = rect[2] * rect[3] + 2 * (rect[2] / 2) * (rect[3] / 2)
+            val prog = Writing(per).also { writing[id] = it }
+            val nGuess = frames.count { it.ptsUs in fromUs..toUs }
+            writeHead(id, Capture(w, h, rect, false, captureFps).header(""","id":$id,"partial":true""", nGuess))
+            onCaptureStarted?.invoke(Capture.Info(id, nGuess, per, "", 0, fromUs, toUs))
             var cap: Capture? = null
             var n = 0
             // on the graphics chip (CaptureGl), else the frames copied out by the processor
@@ -495,7 +505,7 @@ class LivePipeline(
                 val t1 = SystemClock.elapsedRealtime()
                 val reference = if (CaptureGl.calib == null) firstDecoded(frames, fmt, fromUs, toUs, rect, w, h) else null
                 val refMs = SystemClock.elapsedRealtime() - t1
-                val r = FileOutputStream(bin).buffered(1 shl 20).use { out -> CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, out, reference?.let { it.first to it.second }) }
+                val r = FrameCountingOut(bin, prog).use { out -> CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, out, reference?.let { it.first to it.second }) }
                 if (r.frames > 0) {
                     cap = Capture(w, h, rect, reference?.third ?: r.fullRange, captureFps)
                     n = r.frames
@@ -511,7 +521,9 @@ class LivePipeline(
             }
             if (cap == null) {
                 val dec = FrameDecoder(fmt)
-                FileOutputStream(bin).buffered(1 shl 20).use { out ->
+                // (a failure on the chip part way: the engine may have read its first frames already;
+                // the processor's copy of the rest matches them to within the fit, rms under 3)
+                FrameCountingOut(bin, prog).use { out ->
                     var k = 0
                     while (!dec.ended) {
                         if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
@@ -527,8 +539,51 @@ class LivePipeline(
             }
             val c = cap ?: return
             val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), serve.first * step), n)
-            File(captureDir, "cap_$id.json").writeText(head)
-            onCapture(Capture.Info(id, n, c.frameBytes, head, SystemClock.elapsedRealtime() - t0, fromUs, toUs), clip)
+            writeHead(id, head)
+            prog.finish()
+            val writeMs = SystemClock.elapsedRealtime() - t0
+            var clip: File? = null
+            if (clipFrames != null) try {
+                val f = File(clipDir, "clip_$id.mp4")
+                // with half a second more before (the toss) and a little after, for replaying it
+                if (writeMp4(clipFrames, fmt, toUs + 300_000, f) > 0) clip = f
+            } catch (e: Exception) { onError("clip #$id: ${e.message}") }
+            onCapture(Capture.Info(id, n, c.frameBytes, head, writeMs, fromUs, toUs), clip)
         } catch (e: Exception) { onError("capture: ${e.message}") }
+        finally { writing[id]?.finish() }
     }
+
+    /** the header, swapped in whole (the engine may be reading the old one) */
+    private fun writeHead(id: Int, head: String) {
+        val tmp = File(captureDir, "cap_$id.json.tmp")
+        tmp.writeText(head)
+        tmp.renameTo(File(captureDir, "cap_$id.json"))
+    }
+
+    /** A capture being written: how many whole frames are on disk, and whether it is done. */
+    class Writing(val per: Int) {
+        private val lock = Object()
+        @Volatile var frames = 0; private set
+        @Volatile var done = false; private set
+        fun wrote(n: Int) = synchronized(lock) { if (n > frames) { frames = n; lock.notifyAll() } }
+        fun finish() = synchronized(lock) { done = true; lock.notifyAll() }
+        /** until [upto] frames are written or the capture is done (or [timeoutMs] passes) */
+        fun await(upto: Int, timeoutMs: Long) = synchronized(lock) {
+            val end = SystemClock.elapsedRealtime() + timeoutMs
+            while (!done && frames < upto) { val left = end - SystemClock.elapsedRealtime(); if (left <= 0) break; lock.wait(left) }
+        }
+        fun awaitDone(timeoutMs: Long) = await(Int.MAX_VALUE, timeoutMs)
+    }
+
+    /** writes a capture's frames, each one flushed to disk as it is complete, and counts them */
+    private class FrameCountingOut(file: File, private val w: Writing) : java.io.OutputStream() {
+        private val out = FileOutputStream(file).buffered(1 shl 20)
+        private var bytes = 0L
+        override fun write(b: Int) { out.write(b); bytes++; check() }
+        override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); bytes += len; check() }
+        private fun check() { val f = (bytes / w.per).toInt(); if (f > w.frames) { out.flush(); w.wrote(f) } }
+        override fun flush() = out.flush()
+        override fun close() = out.close()
+    }
+
 }

@@ -36,18 +36,29 @@
   async function analyseCapture(base, id) {
     const t0 = performance.now();
     try {
-      const head = await (await fetch(`${base}/head`)).json();
+      // The first header (the frame count estimated) comes as soon as the capture starts being cut;
+      // the frames are read while they are cut (each read waits for its frames), then the last
+      // header (its count and colour range). 0.8.2: before, all were cut first, then read.
+      let head = await (await fetch(`${base}/head`)).json();
       // All the frames in memory, fetched in chunks of 24 (one request each). Before 0.6.2 a capture
       // over 160 MB was read a frame at a time, again on every pass: 13-15 s instead of 2-6.
       const [, , cw, ch] = head.rect, per = cw * ch + 2 * (cw >> 1) * (ch >> 1);
       let frames = null, frame = null;
       if (per * head.n <= 600e6) {
         frames = [];
-        for (let k = 0; k < head.n; k += 24) {
+        const chunk = async (k) => {
           const buf = await (await fetch(`${base}/frames/${k}/24`)).arrayBuffer();
           for (let j = 0; (j + 1) * per <= buf.byteLength; j++) frames.push(new Uint8Array(buf, j * per, per));
-        }
-      } else frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
+          return buf.byteLength;
+        };
+        for (let k = 0; k < head.n; k += 24) if (!(await chunk(k))) break;
+        head = await (await fetch(`${base}/head/final`)).json();
+        while (frames.length < head.n && frames.length % 24 === 0 && (await chunk(frames.length))) {}
+      } else {
+        head = await (await fetch(`${base}/head/final`)).json();
+        frame = async (k) => new Uint8Array(await (await fetch(`${base}/${k}`)).arrayBuffer());
+      }
+      if (frames && frames.length > head.n) frames.length = head.n;
       const tFetch = performance.now() - t0;
       const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
         // the engine's own search in the crop: measuring along the live tracker's tracks instead was

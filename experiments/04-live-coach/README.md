@@ -401,6 +401,22 @@ beside a walking body) is taken instead; if there is none the group is turned do
 All clips: the same serves as before; K2, K6, K7 read 50.1, 40.2, 43.0 rev/s; the bodies and
 the 0.7.4 walking clips still give none.
 
+## 0.8.2: the engine reads a capture while it is cut
+
+Each serve had to wait for: cutting its frames on the chip (1.3-2.3 s, the saved clip written
+first), then the engine fetching them all (0.5-1.9 s), then the engine (1.5-3.9 s), one after the
+other. Now the capture is announced as it starts (a first header, its frame count estimated
+from the encoded frames), the engine's reads of 24-frame chunks wait for those frames to be
+written (each frame flushed as it is done), then it takes the last header (count, colour range);
+the saved clip is written after the capture. The same bytes reach the engine, so the readings
+can't change: a stand-in for the app's reads (frames arriving while read, the estimate right,
+low and high) gives the engine exactly the frames of the finished file. The report's results
+gain `answerMs`, from "Got it" to the answer.
+
+Profile of the engine (desktop, one thread): the search for the ball is about 80% (scanFrame
+28%, the background's medians 12%, deflicker 10%, morphology 9%, halving 11%); the spin itself
+about 2%. On the phone the per-frame scan already runs on up to 7 worker threads.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

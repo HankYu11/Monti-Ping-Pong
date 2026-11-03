@@ -417,6 +417,17 @@ Profile of the engine (desktop, one thread): the search for the ball is about 80
 28%, the background's medians 12%, deflicker 10%, morphology 9%, halving 11%); the spin itself
 about 2%. On the phone the per-frame scan already runs on up to 7 worker threads.
 
+## 0.8.3: each session's data in one folder, sent in one share
+
+For the spin model (research/spin_ai.md: spin from the flight and bounce, trained on the marked
+balls' readings), every serve is kept as training data without anything to do by hand. Each
+session (Start to Stop) gets `Download/ServeCoach/Session_<time>/`, with `serveNN.mp4` (the clip),
+`serveNN.json` (the reading, each measured stretch with the ball's position and size in every
+frame, the flight's launch speed and direction, the tracker's header and tracks: about 2 KB),
+`skippedNN_<reason>.mp4`, and `report.json` at Stop (the report, this session's results only;
+the per-stretch data stays in the serve files). At Stop, once the last answer is in, the app
+offers to send the folder: one share (Drive, any folder) instead of picking files one by one.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

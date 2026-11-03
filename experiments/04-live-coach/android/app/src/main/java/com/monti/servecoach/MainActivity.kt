@@ -298,6 +298,7 @@ class MainActivity : Activity() {
             }
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
+        newSession()
         mode = Mode.LIVE
         setStartButton(true)
         stateText.setTextColor(Color.rgb(140, 200, 255))
@@ -350,6 +351,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopAll() {
+        val wasLive = mode == Mode.LIVE
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
@@ -369,6 +371,7 @@ class MainActivity : Activity() {
         setStartButton(false)
         stateText.setTextColor(Color.rgb(140, 200, 255))
         state("Stopped")
+        if (wasLive) finishSession()
         main.post { startPreview() }          // unless something started meanwhile (a restart)
     }
 
@@ -428,7 +431,7 @@ class MainActivity : Activity() {
     private fun onCaptured(info: Capture.Info, clip: File?) {
         log("capture", "#${info.id}: ${info.n} frames, ${info.frameBytes / 1024} KB each, written in ${info.writeMs} ms")
         writeMsOf[info.id] = info.writeMs
-        if (mode == Mode.LIVE) { if (clip != null) saveClip("${info.id}", clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
+        if (mode == Mode.LIVE) { if (clip != null) saveClip("serve%02d".format(info.id), clip) else log("error", "#${info.id}: no clip saved (too few frames)") }
     }
 
     private fun next() {
@@ -442,22 +445,87 @@ class MainActivity : Activity() {
     }
 
     /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
-    private fun saveClip(label: String, tmp: File) {
+    // ------------------------------------------------------------------ the session's files (0.8.3)
+    // Download/ServeCoach/<session>/: each serve's clip and data, the skipped movements' clips, the
+    // report; at Stop, all of them can go to Drive in one share (training data for the spin model).
+    private var session = ""
+    private var sessionFrom = 0                         // results before this session
+    private val sessionFiles = ArrayList<android.net.Uri>()
+    private var sessionBytes = 0L
+
+    private fun newSession() {
+        session = "Session_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
+        sessionFrom = results.length()
+        synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0 }
+    }
+
+    /** a file into this session's folder (on its own thread), then logged */
+    private fun saveToSession(name: String, mime: String, write: (java.io.OutputStream) -> Unit) {
+        val folder = session
         Thread {
             try {
-                val name = "ServeCoach_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())}_$label.mp4"
                 val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, name); put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ServeCoach")
+                    put(MediaStore.Downloads.DISPLAY_NAME, name); put(MediaStore.Downloads.MIME_TYPE, mime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
                 }
-                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: throw IllegalStateException("the phone's video library refused a new file")
-                contentResolver.openOutputStream(uri)?.use { out -> tmp.inputStream().use { it.copyTo(out) } }
-                    ?: throw IllegalStateException("couldn't open the new video file")
-                tmp.delete()
-                main.post { log("saved", "Movies/ServeCoach/$name") }
-            } catch (e: Exception) { main.post { log("error", "save: ${e.message}") } }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IllegalStateException("the phone's storage refused a new file")
+                var n = 0L
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    val counting = object : java.io.FilterOutputStream(out) {
+                        override fun write(b: ByteArray, off: Int, len: Int) { out.write(b, off, len); n += len }
+                        override fun write(b: Int) { out.write(b); n++ }
+                    }
+                    write(counting); counting.flush()
+                } ?: throw IllegalStateException("couldn't open the new file")
+                synchronized(sessionFiles) { sessionFiles.add(uri); sessionBytes += n }
+                if (mime == "video/mp4") main.post { log("saved", "Download/ServeCoach/$folder/$name") }
+            } catch (e: Exception) { main.post { log("error", "save $name: ${e.message}") } }
         }.start()
+    }
+
+    private fun saveClip(label: String, tmp: File) =
+        saveToSession("$label.mp4", "video/mp4") { out -> tmp.inputStream().use { it.copyTo(out) }; tmp.delete() }
+
+    /** a serve's data: the reading with each measured stretch (the ball's path, the flight), and the tracker's header */
+    private fun saveServeData(id: Int, r: JSONObject, data: Any?) {
+        val head = try { JSONObject(File(capDir, "cap_$id.json").readText()) } catch (e: Exception) { null }
+        val rec = JSONObject().put("app", BuildConfig.VERSION_NAME).put("session", session).put("serve", id)
+            .put("clip", "serve%02d.mp4".format(id)).put("time", System.currentTimeMillis())
+            .put("capture", head ?: JSONObject.NULL).put("result", r).put("data", data ?: JSONObject.NULL)
+        saveToSession("serve%02d.json".format(id), "application/json") { it.write(rec.toString().toByteArray()) }
+    }
+
+    /** at Stop: the report into the session's folder, then offer to send the whole folder on */
+    private fun finishSession(tries: Int = 0) {
+        if (session.isEmpty()) return
+        // a serve still being measured: its answer (and data) first, up to 30 s
+        if ((measuring != null || waiting.isNotEmpty()) && tries < 60) { main.postDelayed({ finishSession(tries + 1) }, 500); return }
+        report.put("events", events).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
+        val text = report.toString(1)
+        saveToSession("report.json", "application/json") { it.write(text.toByteArray()) }
+        val name = session
+        // once the clips still being written are in (they go on their own threads)
+        main.postDelayed({
+            val (uris, bytes) = synchronized(sessionFiles) { ArrayList(sessionFiles) to sessionBytes }
+            if (uris.size <= 1 || isFinishing) return@postDelayed
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Send this session?")
+                .setMessage("${uris.size} files (${bytes / 1_000_000} MB) in Download/ServeCoach/$name. Send them to Drive, into the shared folder, to train the spin model.")
+                .setPositiveButton("Send") { _, _ -> shareSession(uris) }
+                .setNegativeButton("Not now", null)
+                .show()
+        }, 1500)
+    }
+
+    private fun shareSession(uris: ArrayList<android.net.Uri>) {
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            clipData = ClipData.newRawUri(session, uris[0]).also { c -> uris.drop(1).forEach { c.addItem(ClipData.Item(it)) } }
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(send, "Send the session"))
     }
 
     // ------------------------------------------------------------------ the engine
@@ -525,12 +593,14 @@ class MainActivity : Activity() {
             engineBusy = false
             val info = measuring; measuring = null
             val r = try { JSONObject(json) } catch (e: Exception) { JSONObject().put("error", "bad result") }
+            val data = r.remove("data")                     // the serve's data file only, not the report
             r.put("capture", id).put("wallMs", SystemClock.uptimeMillis() - started)
             info?.let { r.put("captureFrames", it.n) }
             writeMsOf.remove(id)?.let { r.put("writeMs", it) }
             // from "Got it" to the answer: the wait the player has
             spottedAt.remove(id)?.let { r.put("answerMs", SystemClock.uptimeMillis() - it) }
             results.put(r)
+            if (session.isNotEmpty() && mode != Mode.REPLAY) saveServeData(id, r, data)
             LivePipeline.writing.remove(id)
             File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)

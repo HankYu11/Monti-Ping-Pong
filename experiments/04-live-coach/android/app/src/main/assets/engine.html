@@ -11,6 +11,16 @@
     lift: r.lift, fit: r.fit, speed: r.flight && r.flight.launchSpeed, toward: r.flight && r.flight.towardCameraDeg,
     frames: r.nFrames, issues: (r.issues || []).map((i) => i.text), ballPx: r.ballRadiusPx ? 2 * r.ballRadiusPx : undefined,
   };
+  // For the training data (0.8.3): each measured stretch in full, without the ball images. The
+  // search's track is the ball in every frame ([frame, x, y, r] at half size in the crop).
+  const round = (v, d = 3) => (typeof v === "number" ? +v.toFixed(d) : Array.isArray(v) ? v.map((x) => round(x, d)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, round(x, d)])) : v);
+  const dataOf = (r) => r && round({
+    phase: r.phase, error: r.error || null, rps: r.rps, type: r.spinType, reliable: !!r.reliable, fit: r.fit, runnerUp: r.runnerUp,
+    plusMinusRps: r.plusMinusRps, turns: r.turns, marking: r.marking, axis: r.axis, camAxis: r.camAxis,
+    lift: r.lift, curve: r.curve, gyro: r.gyro, tilt: r.tilt, flight: r.flight, ballRadiusPx: r.ballRadiusPx, nFrames: r.nFrames,
+    segment: r.segment && { kind: r.segment.kind, start: r.segment.start, end: r.segment.end, hit: r.segment.hit, roi: r.segment.roi,
+      track: r.segment.track, toss: r.segment.toss },
+  });
   async function analyse(url, id) {
     const t0 = performance.now();
     try {
@@ -72,7 +82,8 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), usedTrack: false, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
+        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch),
+        data: sv ? { phases: (sv.phases || []).map(dataOf), notes: (sv.notes || []).map((n) => n.text) } : null, usedTrack: false, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
       }));
     } catch (e) {
       Android.onResult(id, JSON.stringify({ ms: performance.now() - t0, error: "engine: " + (e && e.message ? e.message : e) }));

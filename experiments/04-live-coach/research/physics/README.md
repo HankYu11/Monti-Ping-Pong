@@ -29,3 +29,20 @@ was off by hundreds of percent. Sidespin turns the ball toward or away from a ca
 table: seen only through the ball's size, too weak. Next: fit the stretches before and after the
 bounce together, the bounce on the table's plane (z = ball radius) pinning the depth; then the
 whole flight in one piece, with a bounce model.
+
+## Second test: both stretches through the bounce (`joint.py`), and a made-up serve (`synth.py`)
+
+`joint.py`: the stretches before and after the bounce fitted together, meeting on the table
+(z = ball radius) at one point and moment. Worse on the club serves: backspin part right in 10/15,
+median error 24.8 rev/s, sidespin 57.5. The bounce points are sensible (0.5-1.0 m from the end
+line), and the ball's size reads 4-13% big for its fitted distance (blur, edge glow): not enough to
+explain it; the real bounce (a skid, the stretches cut a few frames either side) fits an
+instantaneous meeting point badly, and short stretches before it (8-27 frames) bend to suit.
+
+`synth.py`: serves with known spin, through camera S, 0.7 px and 5% size noise, 47-59 frames before
+the bounce and 37 after. Backspin part recovered within 5-10 rev/s by either fit; sidespin off by
+10-40 rev/s by both: from beside the table its bend is toward or away from the camera, seen only in
+the ball's size. A limit of the view, not of the fit.
+
+So, from one phone beside the table, the flight gives the backspin/topspin part to about 10 rev/s
+on long stretches (the separate fits, full-size positions), its sign reliably, and not the sidespin.

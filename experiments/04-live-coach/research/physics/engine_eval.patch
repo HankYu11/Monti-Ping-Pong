@@ -1,0 +1,2 @@
+1702a1703
+>       ballsFull: balls.map((b, k) => b && [seg.start + k, b[0] + rx, b[1] + ry, b[2], b.length > 4 ? b[4] : b[2]]),

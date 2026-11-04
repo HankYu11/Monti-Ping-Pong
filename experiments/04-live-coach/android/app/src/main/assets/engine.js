@@ -1831,6 +1831,8 @@
         if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
         serves.push(one);
       }
+      // the time measuring took (after the search), for the live app's report
+      DBG.time = Object.assign(DBG.time || {}, { measure: +((performance.now() - tFound) / 1000).toFixed(2) });
       progress("Done", 1);
       // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
       // a ball sent back to the server goes the other way, which only the user can tell us

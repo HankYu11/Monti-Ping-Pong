@@ -428,6 +428,15 @@ frame, the flight's launch speed and direction, the tracker's header and tracks:
 the per-stretch data stays in the serve files). At Stop, once the last answer is in, the app
 offers to send the folder: one share (Drive, any folder) instead of picking files one by one.
 
+## 0.8.4: the measuring step timed
+
+After the physics test (research/physics: from one phone beside the table, the flight gives the
+backspin/topspin part to about 10 rev/s and not the sidespin), the work stays with marked balls:
+speed and reliability. The engine's report now has `time.measure` (seconds measuring the spin,
+after the search) next to `background` and `search`, so a live report shows where each serve's
+wait goes: `writeMs` (cutting), `fetchMs` (now overlapping the cut), `time`, `answerMs` (from
+"Got it" to the answer).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

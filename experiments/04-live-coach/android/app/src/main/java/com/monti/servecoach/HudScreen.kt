@@ -1,0 +1,110 @@
+package com.monti.servecoach
+
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.text.SpannableString
+import android.text.style.RelativeSizeSpan
+import android.view.Gravity
+import android.view.SurfaceView
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import java.util.Locale
+import kotlin.math.roundToInt
+
+/**
+ * The live screen (0.9, the cockpit HUD): the camera view full height with cyan line art over it,
+ * the state top left, the reading on the right with the spin-strength scale under it, the last
+ * serves, Start/Stop bottom right, the tools bottom left. Its own class, so a test can draw it.
+ */
+class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit) {
+    private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
+    private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
+    private fun tv(size: Float, face: Typeface, color: Int = Hud.CYAN, spacing: Float = 0f) = TextView(ctx).apply {
+        textSize = size; typeface = face; setTextColor(color); letterSpacing = spacing; includeFontPadding = false
+    }
+
+    val root = FrameLayout(ctx).apply { setBackgroundColor(Color.BLACK) }
+    val preview = SurfaceView(ctx)
+    val frame = HudFrame(ctx)
+    val stateText = tv(12.5f, monoMed, Hud.CYAN, 0.12f).apply { text = "● STARTING…" }
+    val serveLabel = tv(11f, mono, Hud.DIM, 0.2f).apply { text = "SPIN RATE" }
+    val bigText = tv(64f, Hud.display(ctx, 300), Hud.CYAN).apply { text = "----"; setShadowLayer(dp(14).toFloat(), 0f, 0f, Color.argb(150, 95, 242, 255)) }
+    val typeText = tv(16f, Hud.display(ctx, 700), Hud.WHITE, 0.12f).apply { gravity = Gravity.END }
+    val scale = SpinScale(ctx)
+    val coachText = tv(12f, mono, Color.argb(220, 225, 245, 250)).apply {
+        gravity = Gravity.END
+        text = "Put the phone beside the table, landscape, side-on, 1–1.5 m from the ball's path. The ball should fly across the picture, over the table. Then press Start and serve."
+    }
+    val historyText = tv(11.5f, mono, Color.argb(210, 95, 242, 255)).apply { setLineSpacing(0f, 1.25f) }
+    val statsText = tv(9.5f, mono, Hud.DIM)
+    val startFace = HexDrawable(ctx.resources.displayMetrics.density)
+    val startBtn = Button(ctx).apply {
+        text = "START"; isAllCaps = false; textSize = 15f; typeface = Hud.display(ctx, 700); letterSpacing = 0.3f
+        setTextColor(Hud.CYAN); background = startFace; stateListAnimator = null
+        setOnClickListener { onStart() }
+    }
+    private val history = ArrayDeque<String>()
+
+    init {
+        root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(stateText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { leftMargin = dp(52); topMargin = dp(18) })
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END; setPadding(dp(8), dp(34), dp(46), dp(84)) }
+        col.addView(serveLabel); col.addView(bigText); col.addView(typeText)
+        col.addView(scale, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        col.addView(coachText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        val scroll = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(historyText, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) })
+        root.addView(col, FrameLayout.LayoutParams(dp(330), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46); bottomMargin = dp(26) })
+        fun small(label: String, onTap: () -> Unit) = TextView(ctx).apply {
+            text = label; textSize = 11f; typeface = monoMed; letterSpacing = 0.14f; setTextColor(Hud.CYAN)
+            setPadding(dp(16), dp(8), dp(16), dp(8)); background = HexDrawable(ctx.resources.displayMetrics.density).apply { color = Hud.DIM }
+            setOnClickListener { onTap() }
+        }
+        val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        tools.addView(small("TEST WITH A VIDEO", onTest))
+        tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        val bottomLeft = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(statsText); addView(tools, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        }
+        root.addView(bottomLeft, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(52); bottomMargin = dp(26) })
+    }
+
+    fun state(s: String) { stateText.text = "● " + s.uppercase(Locale.US) }
+    /** the HUD's colour for what is happening: cyan ready, amber measuring, red a problem */
+    fun tone(c: Int) { stateText.setTextColor(c); frame.color = c }
+    fun running(on: Boolean) {
+        startBtn.text = if (on) "STOP" else "START"
+        val c = if (on) Hud.RED else Hud.CYAN
+        startFace.color = c; startBtn.setTextColor(c)
+    }
+
+    /** a serve read: its number, RPM (to 10), spin type and the coaching lines */
+    fun reading(serve: Int, rpm: Int, type: String, coach: String) {
+        val level = SpinLevel.of(rpm)
+        serveLabel.text = "SERVE %02d · SPIN RATE".format(serve)
+        bigText.text = SpannableString("$rpm RPM").apply { setSpan(RelativeSizeSpan(0.3f), "$rpm".length, length, 0) }
+        typeText.text = "${SpinLevel.NAMES[level]} · ${type.uppercase(Locale.US)}"
+        scale.rpm = rpm
+        coachText.text = coach
+        remember("%02d  %4d  %s".format(serve, rpm, type.uppercase(Locale.US)))
+    }
+    /** a serve that couldn't be read, and why */
+    fun noRead(serve: Int, why: String) {
+        serveLabel.text = "SERVE %02d · NO READ".format(serve)
+        bigText.text = "----"; typeText.text = ""; scale.rpm = null
+        coachText.text = "Couldn't read it: $why"
+        remember("%02d  ----  NO READ".format(serve))
+    }
+    private fun remember(line: String) {
+        history.addFirst(line); while (history.size > 8) history.removeLast()
+        historyText.text = history.joinToString("\n")
+    }
+}

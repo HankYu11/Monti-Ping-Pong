@@ -82,7 +82,6 @@ class MainActivity : Activity() {
     private var engineReady = false
     private var engineBusy = false
     private val waiting = ArrayDeque<Capture.Info>()       // serves spotted, waiting for the engine
-    private val history = ArrayDeque<String>()
     private var unclear = 0
     private var measuring: Capture.Info? = null
     private var started = 0L
@@ -122,51 +121,24 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ screen
+    // 0.9: the cockpit HUD (HudScreen), built in its own class so a test can draw it without a phone
+    private lateinit var screen: HudScreen
+
     private fun buildUi() {
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
-        preview = SurfaceView(this)
-        root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(215, 12, 18, 28)); setPadding(dp(16), dp(12), dp(16), dp(12))
-        }
-        fun tv(size: Float, bold: Boolean = false, color: Int = Color.WHITE) = TextView(this).apply {
-            textSize = size; setTextColor(color); if (bold) typeface = Typeface.DEFAULT_BOLD
-        }
-        stateText = tv(14f, true, Color.rgb(140, 200, 255)).apply { text = "Starting…" }
-        bigText = tv(30f, true).apply { text = "" }
-        coachText = tv(15f).apply { text = "Put the phone beside the table: landscape, side-on, 1–1.5 m from the ball's path. Check the picture: the ball should fly across it, over the table. Then press Start and serve." }
-        historyText = tv(13f, color = Color.rgb(200, 210, 225))
-        statsText = tv(11f, color = Color.rgb(130, 145, 165))
-        panel.addView(stateText); panel.addView(bigText); panel.addView(coachText)
-        val scroll = ScrollView(this).apply {
-            addView(LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; addView(historyText); addView(statsText) })
-        }
-        panel.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(8) })
-        startBtn = Button(this).apply {
-            text = "Start"; isAllCaps = false; textSize = 20f; setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { setColor(Color.rgb(30, 120, 70)); cornerRadius = dp(10).toFloat() }
-            setOnClickListener { if (mode == Mode.IDLE) startLive() else stopAll() }
-        }
-        panel.addView(startBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply { topMargin = dp(8) })
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun small(label: String, onTap: () -> Unit) = Button(this).apply { text = label; isAllCaps = false; textSize = 13f; setOnClickListener { onTap() } }
-        row.addView(small("Test with a video") { pickVideo() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(small("Report") { copyReport() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        panel.addView(row)
-        root.addView(panel, FrameLayout.LayoutParams(dp(340), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() })
+        preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
+        historyText = screen.historyText; statsText = screen.statsText; startBtn = screen.startBtn
         web = WebView(this)
-        root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
-        setContentView(root)
+        screen.root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
+        setContentView(screen.root)
     }
+
+    private fun tone(c: Int) = screen.tone(c)
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
-    private fun state(s: String) { stateText.text = s }
+    private fun state(s: String) = screen.state(s)
 
-    private fun setStartButton(running: Boolean) {
-        startBtn.text = if (running) "Stop" else "Start"
-        (startBtn.background as GradientDrawable).setColor(if (running) Color.rgb(160, 50, 40) else Color.rgb(30, 120, 70))
-    }
+    private fun setStartButton(running: Boolean) = screen.running(running)
 
     private fun updateStats() {
         val p = pipeline
@@ -284,7 +256,7 @@ class MainActivity : Activity() {
                         camera.burstNote.let { if (it.isEmpty()) "" else " ($it)" })
                     if (t != null) calibrateSoon(p, 0)
                     if (viaRecording) main.postDelayed({
-                        if (tap === t && t.queued == 0L) { log("error", "no frames from the camera's recording stream after 3 s; stop and send the report"); state("No frames from the camera: stop and send the report") }
+                        if (tap === t && t.queued == 0L) { log("error", "no frames from the camera's recording stream after 3 s; stop and send the report"); state("No frames from the camera: stop and send the report"); tone(Hud.RED) }
                     }, 3000)
                 } })
             if (t != null && !viaRecording) t.showOn(holder.surface)
@@ -301,7 +273,7 @@ class MainActivity : Activity() {
         newSession()
         mode = Mode.LIVE
         setStartButton(true)
-        stateText.setTextColor(Color.rgb(140, 200, 255))
+        tone(Hud.CYAN)
         state("Starting: wait for Ready…")
         say("Wait for ready, then serve. One at a time: after each, wait for the answer and ready.")
     }
@@ -346,7 +318,7 @@ class MainActivity : Activity() {
         preview.post {
             val parent = preview.parent as View
             val ph = parent.height
-            preview.layoutParams = FrameLayout.LayoutParams((ph * w / h.toFloat()).roundToInt(), ph, Gravity.START or Gravity.CENTER_VERTICAL)
+            preview.layoutParams = FrameLayout.LayoutParams((ph * w / h.toFloat()).roundToInt(), ph, Gravity.CENTER)
         }
     }
 
@@ -369,7 +341,7 @@ class MainActivity : Activity() {
         mode = Mode.IDLE
         turnId = 0
         setStartButton(false)
-        stateText.setTextColor(Color.rgb(140, 200, 255))
+        tone(Hud.CYAN)
         state("Stopped")
         if (wasLive) finishSession()
         main.post { startPreview() }          // unless something started meanwhile (a restart)
@@ -624,7 +596,7 @@ class MainActivity : Activity() {
     private fun setReady(spoken: String?) {
         pipeline?.resume()
         turnId = 0
-        stateText.setTextColor(Color.rgb(110, 220, 130))
+        tone(Hud.CYAN)
         state("Ready: serve")
         if (spoken != null) say(spoken, queue = true)
     }
@@ -632,7 +604,7 @@ class MainActivity : Activity() {
         if (mode != Mode.LIVE) return
         turnId = id
         spottedAt[id] = SystemClock.uptimeMillis()
-        stateText.setTextColor(Color.rgb(255, 190, 80))
+        tone(Hud.AMBER)
         state("Got it: measuring serve #$id…")
         say("Got it.")
         // never stuck waiting: if no answer comes in 30 s (a capture that failed), ready again
@@ -652,8 +624,7 @@ class MainActivity : Activity() {
             // a JSON null reads as "null" through optString
             val why = (if (r.isNull("error")) "" else r.optString("error")).ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
             log("unclear", "#${r.optInt("capture")}: $why")
-            bigText.text = "—"
-            coachText.text = "Couldn't read serve #${r.optInt("capture")}: $why"
+            screen.noRead(r.optInt("capture"), why)
             if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
             return
         }
@@ -687,12 +658,8 @@ class MainActivity : Activity() {
         }
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
-        bigText.text = "$rpm RPM"
-        coachText.text = "$type\n$tip\n$numbers$closer"
-        history.addFirst("#${r.optInt("capture")}  $rpm RPM $type" + (if (t != null) " · ${t.first}" else ""))
-        while (history.size > 8) history.removeLast()
-        historyText.text = history.joinToString("\n")
-        turnDone("$rpm RPM, $type. ${t?.first ?: ""}")
+        screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"))
+        turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}")
     }
 
     private fun say(text: String, queue: Boolean = false) { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "r") }

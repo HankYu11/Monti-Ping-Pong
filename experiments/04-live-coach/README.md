@@ -437,6 +437,23 @@ after the search) next to `background` and `search`, so a live report shows wher
 wait goes: `writeMs` (cutting), `fetchMs` (now overlapping the cut), `time`, `answerMs` (from
 "Got it" to the answer).
 
+## 0.9.0: the cockpit HUD, and how strong a spin is
+
+The look chosen from six mocked directions: the camera view full height with cyan line art over
+it (corner brackets, the state as a status line, amber while measuring, red on a problem), the
+reading on the right in light wide numerals (Oxanium), labels and lists in IBM Plex Mono (both
+OFL, in `assets/fonts`), Start/Stop as a cut-corner button. `HudScreen.kt` builds it; `Hud.kt`
+draws the frame, the scale and the button.
+
+Under each reading, a reference: four bands, no spin (under 600 RPM), weak (600-1,500), medium
+(1,500-2,400), strong (2,400 and up), with marks at the world-class average and fastest serve
+(2009 World Championships quarterfinals, Tamaki et al.: men 46 rev/s on average, about 2,760 RPM;
+fastest 62.5 rev/s, 3,750 RPM), and this serve's marker. The voice says the band too ("2450 RPM,
+strong spin, backspin").
+
+Without a phone: `gradle :app:recordPaparazziDebug` draws the screen on the desktop (Paparazzi,
+a Pixel 8 in landscape) in its states; `app/src/test/snapshots/images/` holds them.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

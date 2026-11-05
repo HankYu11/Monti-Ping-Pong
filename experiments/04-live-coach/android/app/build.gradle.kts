@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("app.cash.paparazzi") version "1.3.5"
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }       // the native part is built for it only
-        versionCode = 36
-        versionName = "0.8.4"
+        versionCode = 37
+        versionName = "0.9.0"
     }
     buildTypes {
         release {

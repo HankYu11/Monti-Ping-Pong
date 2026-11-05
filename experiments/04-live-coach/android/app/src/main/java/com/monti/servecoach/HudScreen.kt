@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  * the state top left, the reading on the right with the spin-strength scale under it, the last
  * serves, Start/Stop bottom right, the tools bottom left. Its own class, so a test can draw it.
  */
-class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}) {
+class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}, onNext: () -> Unit = {}) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
     private fun tv(size: Float, face: Typeface, color: Int = Hud.CYAN, spacing: Float = 0f) = TextView(ctx).apply {
@@ -48,6 +48,13 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         setTextColor(Hud.CYAN); background = startFace; stateListAnimator = null
         setOnClickListener { onStart() }
     }
+    /** while a session runs: ready for the next serve now, without waiting for this one's answer (a helper's button) */
+    val nextFace = HexDrawable(ctx.resources.displayMetrics.density)
+    val nextBtn = Button(ctx).apply {
+        text = "NEXT SERVE"; isAllCaps = false; textSize = 13f; typeface = Hud.display(ctx, 700); letterSpacing = 0.2f
+        setTextColor(Hud.CYAN); background = nextFace; stateListAnimator = null; visibility = android.view.View.GONE
+        setOnClickListener { onNext() }
+    }
     private val history = ArrayDeque<String>()
     lateinit var aiButton: TextView; private set
     /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
@@ -65,13 +72,14 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) })
         root.addView(col, FrameLayout.LayoutParams(dp(330), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
         root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46); bottomMargin = dp(26) })
+        root.addView(nextBtn, FrameLayout.LayoutParams(dp(160), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46 + 176 + 14); bottomMargin = dp(26) })
         fun small(label: String, onTap: () -> Unit) = TextView(ctx).apply {
             text = label; textSize = 11f; typeface = monoMed; letterSpacing = 0.14f; setTextColor(Hud.CYAN)
             setPadding(dp(16), dp(8), dp(16), dp(8)); background = HexDrawable(ctx.resources.displayMetrics.density).apply { color = Hud.DIM }
             setOnClickListener { onTap() }
         }
         val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        tools.addView(small("TEST WITH A VIDEO", onTest))
+        tools.addView(small("TEST VIDEO", onTest))
         aiButton = small("AI COACH: OFF", onAi)
         tools.addView(aiButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
@@ -89,6 +97,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         startBtn.text = if (on) "STOP" else "START"
         val c = if (on) Hud.RED else Hud.CYAN
         startFace.color = c; startBtn.setTextColor(c)
+        nextBtn.visibility = if (on) android.view.View.VISIBLE else android.view.View.GONE
     }
 
     /** a serve read: its number, RPM (to 10), spin type and the coaching lines */

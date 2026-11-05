@@ -478,6 +478,14 @@ a Pixel 8 in landscape) in its states; `app/src/test/snapshots/images/` holds th
   server (`GeminiCoachTest`: setup message, frames, question, audio, transcript); not yet against
   Google's (the model is `gemini-3.8-live`, then `gemini-3.1-flash-live-preview` if refused).
 
+## 0.9.2: NEXT SERVE, and only the latest serve spoken
+
+With more than one ball and a helper at the phone: NEXT SERVE (beside STOP while a session runs)
+ends the turn now, ready for the next serve without waiting for this one's answer. A serve still
+being measured gets its answer on screen and in the list; it is spoken only if no serve came
+after it (only the latest serve is spoken), and it no longer sets "Ready" for a turn already
+ended. The tools are shorter (TEST VIDEO) to make room.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

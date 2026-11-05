@@ -125,7 +125,7 @@ class MainActivity : Activity() {
     private lateinit var screen: HudScreen
 
     private fun buildUi() {
-        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() })
+        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
         historyText = screen.historyText; statsText = screen.statsText; startBtn = screen.startBtn
         web = WebView(this)
@@ -367,6 +367,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         newSession()
+        latestSpotted = 0
         screen.source = "SERVE"
         mode = Mode.LIVE
         setStartButton(true)
@@ -481,7 +482,7 @@ class MainActivity : Activity() {
         if (requestCode != 7 || resultCode != RESULT_OK || uri == null) return
         stopPreview()
         mode = Mode.REPLAY
-        setStartButton(true)
+        setStartButton(true); screen.nextBtn.visibility = android.view.View.GONE
         val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "the video"
         screen.testStarted(name)
         tone(Hud.AMBER)
@@ -730,6 +731,7 @@ class MainActivity : Activity() {
     // take seconds, longer than between serves: without turns it wasn't clear which serve an
     // answer was about.
     private var turnId = 0
+    private var latestSpotted = 0                       // the newest serve spotted this session
     private fun setReady(spoken: String?) {
         pipeline?.resume()
         turnId = 0
@@ -739,7 +741,7 @@ class MainActivity : Activity() {
     }
     private fun onSpotted(id: Int) {
         if (mode != Mode.LIVE) return
-        turnId = id
+        turnId = id; latestSpotted = id
         spottedAt[id] = SystemClock.uptimeMillis()
         tone(Hud.AMBER)
         state("Got it: measuring serve #$id…")
@@ -748,8 +750,18 @@ class MainActivity : Activity() {
         main.postDelayed({ if (mode == Mode.LIVE && turnId == id) { log("error", "#$id: no answer in 30 s"); setReady("Ready.") } }, 30_000)
     }
     /** after an answer (or none) in live mode: the next turn */
-    private fun turnDone(spoken: String) {
-        if (mode == Mode.LIVE) setReady("$spoken Ready.") else say(spoken)
+    private fun turnDone(spoken: String, id: Int) {
+        // its own turn: then ready for the next. A turn already ended by NEXT SERVE: readiness left as
+        // it is, and its answer said only if no serve came after it (only the latest serve is spoken)
+        if (mode == Mode.LIVE && id == turnId) setReady("$spoken Ready.")
+        else if (mode != Mode.LIVE || id >= latestSpotted) say(spoken, queue = true)
+    }
+
+    /** NEXT SERVE (0.9.2): a helper ends the turn now; a serve being measured still gets its answer */
+    private fun forceReady() {
+        if (mode != Mode.LIVE || turnId == 0) return
+        log("turn", "#$turnId: ready for the next serve (button)")
+        setReady("Ready.")
     }
 
     private fun show(r: JSONObject) {
@@ -762,7 +774,7 @@ class MainActivity : Activity() {
             val why = (if (r.isNull("error")) "" else r.optString("error")).ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
             log("unclear", "#${r.optInt("capture")}: $why")
             screen.noRead(r.optInt("capture"), why)
-            if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
+            if (mode == Mode.LIVE) turnDone("Couldn't read that one.", r.optInt("capture"))
             return
         }
         // read only "after a bounce" and slowly turning: in the live tests that was other movement
@@ -773,7 +785,7 @@ class MainActivity : Activity() {
         if (!own && sv.optDouble("rps") < 10) {
             unclear++
             log("unclear", "#${r.optInt("capture")}: only read after a bounce (${(sv.optDouble("rps") * 60).roundToInt()} RPM ${sv.optString("type")}): not counted as a serve")
-            if (mode == Mode.LIVE) turnDone("Couldn't read that one.")
+            if (mode == Mode.LIVE) turnDone("Couldn't read that one.", r.optInt("capture"))
             return
         }
         val rps = sv.optDouble("rps")
@@ -796,7 +808,7 @@ class MainActivity : Activity() {
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"))
-        turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}")
+        turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
     }
 
     private fun say(text: String, queue: Boolean = false) { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "r") }

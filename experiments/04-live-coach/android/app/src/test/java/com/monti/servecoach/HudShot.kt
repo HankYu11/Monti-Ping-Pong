@@ -20,7 +20,22 @@ class HudShot {
         return s
     }
 
-    @Test fun idle() { val s = screen(); s.state("Ready"); paparazzi.snapshot(s.root) }
+    @Test fun idle() { val s = screen(); s.advice("looks good", "Looks good. Press Start when you're ready.", true); paparazzi.snapshot(s.root) }
+
+    @Test fun setupAdvice() { val s = screen(); s.advice("tilt down", "Tilt the phone down a little: more of the table should show.", false); paparazzi.snapshot(s.root) }
+
+    @Test fun aiCoach() {
+        val s = screen(); s.aiState(true); s.advice("move closer", "Move closer: the table looks small. About 1.5 m from the ball's path.", false)
+        s.aiText("Move the phone a step closer, "); s.aiText("and lower it to net height.")
+        paparazzi.snapshot(s.root)
+    }
+
+    @Test fun videoTestNone() {
+        val s = screen(); s.testStarted("ServeCoach_20261103_183540_skipped1_slow-a-body.mp4")
+        s.testFoundNone("What it saw instead: slow movements (a body?): 2; balls going up (tosses): 1. The ball has to fly across the picture, over the table, from a phone that stays still.")
+        s.state("Video test done: no serve found")
+        paparazzi.snapshot(s.root)
+    }
 
     @Test fun reading() {
         val s = screen(); s.running(true); s.state("Ready: serve")

@@ -21,6 +21,12 @@ fun main(args: Array<String>) {
         val f = com.monti.servecoach.core.ColourFit.fit(a, b, 0, n)
         println("gain %.4f offset %.2f rms %.2f".format(f.gain, f.offset, f.rms)); return
     }
+    // setup frame.yuv w h [tilt]: SetupCheck on a raw yuv444p picture (ffmpeg ... -pix_fmt yuv444p -f rawvideo)
+    if (args[0] == "setup") {
+        val w = args[2].toInt(); val h = args[3].toInt(); val b = File(args[1]).readBytes(); val n = w * h
+        val (a, t) = com.monti.servecoach.core.SetupCheck.advise(b.copyOfRange(0, n), b.copyOfRange(n, 2 * n), b.copyOfRange(2 * n, 3 * n), w, h, args.getOrNull(4)?.toFloat() ?: 0f)
+        println("${File(args[1]).name}: $a${t?.let { "  ($it)" } ?: ""}"); return
+    }
     // selftest: the tracker on made-up candidates (0.8.0, K2: a serve followed by the ball rolling
     // back, slow and long, which out-scored the serve and took it down as "a body")
     if (args[0] == "selftest") {

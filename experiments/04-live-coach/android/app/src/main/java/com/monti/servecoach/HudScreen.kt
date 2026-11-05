@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
  * the state top left, the reading on the right with the spin-strength scale under it, the last
  * serves, Start/Stop bottom right, the tools bottom left. Its own class, so a test can draw it.
  */
-class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit) {
+class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
     private fun tv(size: Float, face: Typeface, color: Int = Hud.CYAN, spacing: Float = 0f) = TextView(ctx).apply {
@@ -38,7 +38,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     val scale = SpinScale(ctx)
     val coachText = tv(12f, mono, Color.argb(220, 225, 245, 250)).apply {
         gravity = Gravity.END
-        text = "Put the phone beside the table, landscape, side-on, 1–1.5 m from the ball's path. The ball should fly across the picture, over the table. Then press Start and serve."
+        text = "Checking the setup…"
     }
     val historyText = tv(11.5f, mono, Color.argb(210, 95, 242, 255)).apply { setLineSpacing(0f, 1.25f) }
     val statsText = tv(9.5f, mono, Hud.DIM)
@@ -49,6 +49,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         setOnClickListener { onStart() }
     }
     private val history = ArrayDeque<String>()
+    lateinit var aiButton: TextView; private set
+    /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
+    var source = "SERVE"
 
     init {
         root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -69,6 +72,8 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         }
         val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         tools.addView(small("TEST WITH A VIDEO", onTest))
+        aiButton = small("AI COACH: OFF", onAi)
+        tools.addView(aiButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         val bottomLeft = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -89,7 +94,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     /** a serve read: its number, RPM (to 10), spin type and the coaching lines */
     fun reading(serve: Int, rpm: Int, type: String, coach: String) {
         val level = SpinLevel.of(rpm)
-        serveLabel.text = "SERVE %02d · SPIN RATE".format(serve)
+        serveLabel.text = "$source %02d · SPIN RATE".format(serve)
         bigText.text = SpannableString("$rpm RPM").apply { setSpan(RelativeSizeSpan(0.3f), "$rpm".length, length, 0) }
         typeText.text = "${SpinLevel.NAMES[level]} · ${type.uppercase(Locale.US)}"
         scale.rpm = rpm
@@ -98,10 +103,37 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
     /** a serve that couldn't be read, and why */
     fun noRead(serve: Int, why: String) {
-        serveLabel.text = "SERVE %02d · NO READ".format(serve)
+        serveLabel.text = "$source %02d · NO READ".format(serve)
         bigText.text = "----"; typeText.text = ""; scale.rpm = null
         coachText.text = "Couldn't read it: $why"
         remember("%02d  ----  NO READ".format(serve))
+    }
+    /** setting up (before Start): the on-device check's advice; the state line names it */
+    fun advice(short: String, text: String, good: Boolean) {
+        state("Setup · $short"); tone(if (good) Hud.CYAN else Hud.AMBER)
+        if (!aiTalking) coachText.text = text
+    }
+    private var aiLine = StringBuilder()
+    private var aiTalking = false
+    /** the AI coach's words as they come (a "\n" ends its turn) */
+    fun aiText(t: String) {
+        if (t == "\n") { aiTalking = false; aiLine = StringBuilder(); return }
+        aiTalking = true; aiLine.append(t); coachText.text = "AI COACH  ${aiLine.toString().trim()}"
+    }
+    fun aiState(on: Boolean) { aiButton.text = if (on) "AI COACH: ON" else "AI COACH: OFF"; if (!on) aiTalking = false }
+
+    /** a video test started: the file's name, while its frames are read */
+    fun testStarted(name: String) {
+        source = "VIDEO TEST · SERVE"
+        serveLabel.text = "VIDEO TEST"
+        bigText.text = "····"; typeText.text = "READING THE VIDEO"; scale.rpm = null
+        coachText.text = name
+    }
+    /** a video test that found no serve, and what it saw instead */
+    fun testFoundNone(why: String) {
+        serveLabel.text = "VIDEO TEST"
+        bigText.text = "NONE"; typeText.text = "NO SERVE FOUND"; scale.rpm = null
+        coachText.text = why
     }
     private fun remember(line: String) {
         history.addFirst(line); while (history.size > 8) history.removeLast()

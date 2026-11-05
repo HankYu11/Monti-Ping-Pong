@@ -454,6 +454,30 @@ strong spin, backspin").
 Without a phone: `gradle :app:recordPaparazziDebug` draws the screen on the desktop (Paparazzi,
 a Pixel 8 in landscape) in its states; `app/src/test/snapshots/images/` holds them.
 
+## 0.9.1: setup guidance, a video test that answers, no camera corners
+
+- The corner brackets are gone ("the phone is already a camera"); the HUD keeps its shading.
+- "Test with a video" shows its own states: reading the video (with progress), measuring N
+  serves, then "N of M read"; with no serve, a big NONE and what it saw instead (the tracker's
+  turned-down movements in words). Before, only the status line changed, and a timer kept
+  writing "Replaying…" over it.
+- Setting up, instead of a fixed paragraph: `SetupCheck` (core) on a small copy of the preview
+  (an extra 640x360 camera output, read a few times a second) with the phone's tilt and movement
+  (accelerometer, gyroscope): one piece of advice at a time, most important first (hold still,
+  too dark, level the phone, tilt down/up, move closer/back, face the side), shown and spoken
+  once it holds for 0.9 s, then "Looks good, press Start". The table is the largest blue patch;
+  the rules come from the clips that read well (club, angled: the table 11-28% of the picture,
+  its top at 38-54% of the height, 2.5-3.7 times as wide as high) and the net-post view that
+  didn't. `desktop setup frame.yuv 320 180 [tilt]` runs it on a picture: the club setups say
+  "looks good", Q2 "tilt down", reframed copies of them "move back", "move closer", "tilt up".
+  At home, with a plain wall and no table (which read well), it says so, without blocking.
+- Optional AI setup coach (`GeminiCoach`, the AI COACH button, the player's own Gemini API key,
+  kept on the phone): a Gemini Live session over its WebSocket while setting up only, a JPEG about
+  once a second and, when the on-device advice changes, a question with it; it answers by voice
+  (24 kHz PCM, played) with a transcript on screen. Closed at Start. Tested against a stand-in
+  server (`GeminiCoachTest`: setup message, frames, question, audio, transcript); not yet against
+  Google's (the model is `gemini-3.8-live`, then `gemini-3.1-flash-live-preview` if refused).
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

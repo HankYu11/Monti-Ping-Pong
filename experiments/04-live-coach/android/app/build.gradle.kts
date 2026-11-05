@@ -13,8 +13,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }       // the native part is built for it only
-        versionCode = 37
-        versionName = "0.9.0"
+        versionCode = 38
+        versionName = "0.9.1"
     }
     buildTypes {
         release {
@@ -33,4 +33,7 @@ android {
 dependencies {
     implementation(project(":core"))
     implementation("com.google.mediapipe:tasks-vision:0.10.35")   // the pose model (PoseWatcher)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")          // the AI setup coach's WebSocket (GeminiCoach)
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.json:json:20240303")
 }

@@ -54,28 +54,15 @@ object SpinLevel {
     fun spoken(rpm: Int) = arrayOf("almost no", "weak", "medium", "strong")[of(rpm)]
 }
 
-/** The frame over the camera view: corner brackets, and a dark fall-off on the right behind the readout. */
+/** The shading over the camera view: a dark fall-off on the right, behind the readout. (0.9.0 drew
+ * camera-style corner brackets too: "the phone is already a camera".) */
 class HudFrame(ctx: Context) : View(ctx) {
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Hud.CYAN }
     private val shade = Paint()
     var color: Int = Hud.CYAN
-        set(v) { field = v; invalidate() }
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         shade.shader = LinearGradient(w * 0.38f, 0f, w.toFloat(), 0f, Color.TRANSPARENT, Color.argb(200, 0, 8, 14), Shader.TileMode.CLAMP)
     }
-    override fun onDraw(c: Canvas) {
-        val w = width.toFloat(); val h = height.toFloat()
-        c.drawRect(0f, 0f, w, h, shade)
-        val d = resources.displayMetrics.density
-        val m = 14 * d; val s = 26 * d
-        line.color = color; line.strokeWidth = 2 * d
-        val p = Path()
-        p.moveTo(m, m + s); p.lineTo(m, m); p.lineTo(m + s, m)
-        p.moveTo(w - m - s, m); p.lineTo(w - m, m); p.lineTo(w - m, m + s)
-        p.moveTo(m, h - m - s); p.lineTo(m, h - m); p.lineTo(m + s, h - m)
-        p.moveTo(w - m - s, h - m); p.lineTo(w - m, h - m); p.lineTo(w - m, h - m - s)
-        c.drawPath(p, line)
-    }
+    override fun onDraw(c: Canvas) { c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), shade) }
 }
 
 /**

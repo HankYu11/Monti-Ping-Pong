@@ -160,21 +160,23 @@ class HighSpeedCamera(private val context: Context) {
      * and the app froze when Start closed it). Same size, so the same part of the sensor.
      */
     @SuppressLint("MissingPermission")
-    fun startPreview(cfg: Config, surface: Surface, handler: Handler, onError: (String) -> Unit, onRunning: () -> Unit) {
+    fun startPreview(cfg: Config, surface: Surface, handler: Handler, onError: (String) -> Unit, onRunning: () -> Unit, analysis: Surface? = null) {
         val executor = Executor { handler.post(it) }
         val gen = ++generation
         manager.openCamera(cfg.cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(d: CameraDevice) {
                 if (gen != generation) { d.close(); return }
                 device = d
-                val sc = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, listOf(OutputConfiguration(surface)), executor,
+                // the screen, and a small copy for checking the setup (SetupGuide)
+                val outs = listOfNotNull(surface, analysis)
+                val sc = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outs.map { OutputConfiguration(it) }, executor,
                     object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(s: CameraCaptureSession) {
                             if (gen != generation) { s.close(); return }
                             session = s
                             try {
                                 val b = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                                b.addTarget(surface)
+                                outs.forEach { b.addTarget(it) }
                                 b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(30, 30))
                                 s.setRepeatingRequest(b.build(), null, handler)
                                 onRunning()

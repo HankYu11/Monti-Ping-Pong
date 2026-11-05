@@ -125,12 +125,13 @@ class MainActivity : Activity() {
     private lateinit var screen: HudScreen
 
     private fun buildUi() {
-        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() })
+        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
         historyText = screen.historyText; statsText = screen.statsText; startBtn = screen.startBtn
         web = WebView(this)
         screen.root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
         setContentView(screen.root)
+        screen.aiState(aiOn)
     }
 
     private fun tone(c: Int) = screen.tone(c)
@@ -153,8 +154,6 @@ class MainActivity : Activity() {
         sb.append("Engine ${if (engineReady) "ready" else "loading"}" + (if (waiting.isNotEmpty()) " · ${waiting.size} waiting" else "") +
             (if (unclear > 0) " · $unclear movements weren't readable serves" else ""))
         statsText.text = sb.toString()
-        if (mode == Mode.REPLAY && measuring == null && waiting.isEmpty() && !stateText.text.startsWith("Replaying"))
-            state("Replaying…")
     }
 
     // ------------------------------------------------------------------ camera
@@ -183,9 +182,17 @@ class MainActivity : Activity() {
         val go = Runnable {
             if (!previewing || mode != Mode.IDLE) return@Runnable
             // on the camera's thread: after any close still waiting there
+            // the setup check's small copy of the picture, unless it failed once (then the preview alone)
+            // (reading from the start: a full reader would hold the camera's requests back, the screen's too)
+            val g = if (guideFailed) null else try { newGuide(c).also { it.start() } } catch (e: Exception) { log("error", "setup check: ${e.message}"); null }
+            guide = g
             camHandler.post { if (previewing) camera.startPreview(c, holder.surface, camHandler,
-                onError = { msg -> main.post { if (previewing) { log("camera", "preview: $msg"); stopPreview() } } },
-                onRunning = { main.post { log("camera", "preview running") } }) }
+                onError = { msg -> main.post { if (previewing) {
+                    log("camera", "preview: $msg")
+                    if (g != null && !guideFailed) { guideFailed = true; stopPreview { startPreview() } } else stopPreview()
+                } } },
+                onRunning = { main.post { log("camera", "preview running" + (if (g != null) ", setup check ${g.size.width}x${g.size.height}" else "")); if (aiOn) startCoach() } },
+                analysis = g?.surface) }
         }
         if (holder.surface.isValid && holder.surfaceFrame.width() == c.size.width) go.run()
         else holder.addCallback(object : SurfaceHolder.Callback {
@@ -197,9 +204,98 @@ class MainActivity : Activity() {
         })
     }
 
+    // ------------------------------------------------------------------ setting up (0.9.1)
+    private var guide: SetupGuide? = null
+    private var guideFailed = false
+    private var lastAdviceSaid = 0L
+
+    private fun newGuide(c: HighSpeedCamera.Config) = SetupGuide(this, c.cameraId, camHandler,
+        rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
+        onAdvice = { a -> main.post { showAdvice(a) } },
+        onJpeg = { j -> coach?.sendFrame(j) })
+
+    private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
+        if (mode != Mode.IDLE || !previewing) return
+        val short = when (a.kind) {
+            com.monti.servecoach.core.SetupCheck.Kind.GOOD -> "looks good"
+            com.monti.servecoach.core.SetupCheck.Kind.NO_TABLE -> "no table in view"
+            com.monti.servecoach.core.SetupCheck.Kind.MOVING -> "hold still"
+            com.monti.servecoach.core.SetupCheck.Kind.DARK -> "too dark"
+            com.monti.servecoach.core.SetupCheck.Kind.TILTED -> "level the phone"
+            com.monti.servecoach.core.SetupCheck.Kind.FAR -> "move closer"
+            com.monti.servecoach.core.SetupCheck.Kind.NEAR -> "move back"
+            com.monti.servecoach.core.SetupCheck.Kind.TABLE_HIGH -> "tilt up"
+            com.monti.servecoach.core.SetupCheck.Kind.TABLE_LOW -> "tilt down"
+            com.monti.servecoach.core.SetupCheck.Kind.END_ON -> "face the side"
+        }
+        screen.advice(short, a.text, a.ok)
+        log("setup", a.toString())
+        // spoken: by the AI coach when it's on (asked with this advice), else the phone's own voice,
+        // not "hold still" (it's said while the phone is being moved), and not more than every 4 s
+        val c = coach
+        if (c != null && c.ready) c.ask(a.text)
+        else if (a.kind != com.monti.servecoach.core.SetupCheck.Kind.MOVING && SystemClock.uptimeMillis() - lastAdviceSaid > 4000) {
+            lastAdviceSaid = SystemClock.uptimeMillis(); say(a.text)
+        }
+    }
+
+    // ------------------------------------------------------------------ the AI setup coach (Gemini Live, optional)
+    private val prefs by lazy { getSharedPreferences("coach", MODE_PRIVATE) }
+    private var aiOn: Boolean
+        get() = prefs.getBoolean("ai", false)
+        set(v) { prefs.edit().putBoolean("ai", v).apply() }
+    private var coach: GeminiCoach? = null
+    private var aiAudio: android.media.AudioTrack? = null
+
+    private fun toggleAi() {
+        if (aiOn) { aiOn = false; stopCoach(); screen.aiState(false); return }
+        val key = prefs.getString("key", null)
+        if (key.isNullOrBlank()) { askKey(); return }
+        aiOn = true; screen.aiState(true)
+        if (previewing && mode == Mode.IDLE) startCoach()
+    }
+
+    private fun askKey() {
+        val input = android.widget.EditText(this).apply { hint = "Gemini API key"; isSingleLine = true }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("AI setup coach")
+            .setMessage("While you set the phone up, it sends what the camera sees, about one picture a second, to Google's Gemini and plays its spoken advice. Nothing is sent once you press Start. It uses your own Gemini API key (aistudio.google.com/apikey), kept on this phone only.")
+            .setView(input)
+            .setPositiveButton("Turn on") { _, _ ->
+                val k = input.text.toString().trim()
+                if (k.isNotEmpty()) { prefs.edit().putString("key", k).apply(); toggleAi() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun startCoach() {
+        if (coach != null) return
+        val key = prefs.getString("key", null) ?: return
+        aiAudio = android.media.AudioTrack.Builder()
+            .setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_ASSISTANT).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(android.media.AudioFormat.Builder().setSampleRate(24000).setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+            .setTransferMode(android.media.AudioTrack.MODE_STREAM).build().also { it.play() }
+        tts?.stop()
+        coach = GeminiCoach(key,
+            onText = { t -> main.post { screen.aiText(t) } },
+            onAudio = { pcm -> aiAudio?.write(pcm, 0, pcm.size) },
+            onStatus = { msg -> main.post {
+                log("ai", msg)
+                if (msg.contains("refused")) { prefs.edit().remove("key").apply(); aiOn = false; screen.aiState(false); stopCoach(); Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+            } }).also { it.start() }
+    }
+
+    private fun stopCoach() {
+        coach?.stop(); coach = null
+        aiAudio?.let { try { it.stop(); it.release() } catch (_: Exception) {} }; aiAudio = null
+    }
+
     private fun stopPreview(then: (() -> Unit)? = null) {
         if (!previewing) { then?.invoke(); return }
         previewing = false
+        guide?.stop(); guide = null
+        stopCoach()
         camera.stopOn(camHandler) { if (then != null) main.post(then) }
     }
 
@@ -271,6 +367,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         newSession()
+        screen.source = "SERVE"
         mode = Mode.LIVE
         setStartButton(true)
         tone(Hud.CYAN)
@@ -357,6 +454,27 @@ class MainActivity : Activity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "video/*" }, 7)
     }
 
+    private var testSpotted = 0                          // a video test: serves found, and answers so far
+    private var testRead = 0
+    private var testGood = 0
+    /** once every serve the video test found has its answer: say how it went */
+    private fun finishTest() {
+        if (mode == Mode.REPLAY || testSpotted == 0 || testRead < testSpotted) return
+        tone(Hud.CYAN)
+        state("Video test done: $testGood of $testSpotted serve(s) read")
+        screen.source = "SERVE"
+    }
+
+    /** what the tracker saw in a video with no serve, in words (its counts of turned-down movements) */
+    private fun whyNoServe(rejected: Map<String, Int>): String {
+        val words = mapOf("slow (a body?)" to "slow movements (a body?)", "too big (a body?)" to "large moving shapes (a body?)",
+            "picture moving" to "moments with the picture moving", "toss only" to "tosses with no flight after",
+            "upward (toss)" to "balls going up (tosses)", "straight drop" to "balls dropping straight down", "short flight" to "flights too short to measure")
+        val seen = rejected.filterKeys { it in words }.entries.sortedByDescending { it.value }.take(3).map { "${words[it.key]}: ${it.value}" }
+        return (if (seen.isEmpty()) "Nothing moved like a ball in flight." else "What it saw instead: " + seen.joinToString("; ") + ".") +
+            " The ball has to fly across the picture, over the table, from a phone that stays still."
+    }
+
     @Deprecated("plain Activity result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         val uri = data?.data
@@ -364,7 +482,11 @@ class MainActivity : Activity() {
         stopPreview()
         mode = Mode.REPLAY
         setStartButton(true)
-        state("Replaying…")
+        val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "the video"
+        screen.testStarted(name)
+        tone(Hud.AMBER)
+        state("Video test: reading the video…")
+        testSpotted = 0; testRead = 0; testGood = 0
         Thread {
             try {
                 val ff = FileFrames(this, uri)
@@ -372,16 +494,27 @@ class MainActivity : Activity() {
                 val p = newPipeline(ff, blocking = true, fps = ff.captureFps)
                 p.prime(ff.frames)
                 p.start()
-                for (fr in ff.frames) { if (mode != Mode.REPLAY) break; p.offer(fr) }
+                var k = 0
+                for (fr in ff.frames) {
+                    if (mode != Mode.REPLAY) break
+                    p.offer(fr)
+                    if (++k % 60 == 0) { val pct = 100 * k / ff.frames.size; main.post { if (mode == Mode.REPLAY) state("Video test: looking for serves… $pct%") } }
+                }
                 if (mode == Mode.REPLAY) p.finish()
                 main.post {
                     if (mode == Mode.REPLAY) {
                         log("replay", "done: ${p.servesFound} serve(s) spotted, tracker ${"%.1f".format(p.trackMsAvg)} ms a frame")
+                        val why = whyNoServe(p.tracker?.rejected ?: emptyMap())
                         stopAll()
-                        state(if (p.servesFound == 0) "Replay done: no serve spotted" else "Replay done: ${p.servesFound} serve(s) spotted")
+                        testSpotted = p.servesFound
+                        if (p.servesFound == 0) {
+                            screen.testFoundNone(why); screen.source = "SERVE"
+                            tone(Hud.CYAN); state("Video test done: no serve found")
+                            say("No serve found in this video.")
+                        } else { tone(Hud.AMBER); state("Video test: measuring ${p.servesFound} serve(s)…"); finishTest() }
                     }
                 }
-            } catch (e: Exception) { main.post { log("error", "replay: ${e.message}"); stopAll() } }
+            } catch (e: Exception) { main.post { log("error", "replay: ${e.message}"); stopAll(); tone(Hud.RED); state("Video test failed: ${e.message}") } }
         }.start()
     }
 
@@ -576,6 +709,10 @@ class MainActivity : Activity() {
             LivePipeline.writing.remove(id)
             File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)
+            if (screen.source != "SERVE") {                 // a video test: its answers counted, then the summary
+                testRead++; if (r.optJSONObject("serve")?.optBoolean("clear") == true) testGood++
+                finishTest()
+            }
             next()
         }
     }

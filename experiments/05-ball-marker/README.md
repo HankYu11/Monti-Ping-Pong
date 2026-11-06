@@ -49,6 +49,12 @@ rests in the cup with its middle exactly at the rim (22.1 mm) and 0.3 mm clearan
 clears the ball by 0.3 mm; each hole's centre lands 10.0 mm from the line on the ball, 120 degrees
 apart. Not yet printed.
 
+Run the checks again after a change: `python check_parts.py` (needs `pip install trimesh rtree
+scipy`). Across the 40.0-40.6 mm range of real balls: the line sits within 0.1-0.2 mm of the ball's
+middle; the dots land 9.9-10.1 mm from the line, 120 degrees apart. A 40.6 mm ball is tight: 0.07 mm
+side gap in the cup at the rim, and it touches the stencil by 0.06 mm (the stencil rides up off the
+brim a hair). If your balls run large or your printer prints holes tight, raise `clear` to 0.4-0.5.
+
 ## Changing it
 
 `ball_marker.scad` (OpenSCAD) holds every size as a setting: the ball (`ball_d`, 40+ balls are

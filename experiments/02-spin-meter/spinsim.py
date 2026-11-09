@@ -18,9 +18,15 @@ Usage:
 """
 import argparse
 import json
+import shutil
+import subprocess
 
-import cv2
 import numpy as np
+
+try:
+    import cv2
+except ImportError:        # only needed for --writer cv2
+    cv2 = None
 
 
 def parse_args():
@@ -40,6 +46,20 @@ def parse_args():
     p.add_argument("--noise", type=float, default=4.0, help="Gaussian noise, grey levels")
     p.add_argument("--size", type=int, nargs=2, default=[640, 360], help="frame width height")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--writer", choices=["auto", "ffmpeg", "cv2"], default="auto",
+                   help="auto: ffmpeg (H.264) when available, else OpenCV (MPEG-4). The app's\n"
+                        "frames are H.264, and browser WebCodecs cannot decode OpenCV's mp4v,\n"
+                        "so the web engine needs ffmpeg output.")
+    p.add_argument("--range", choices=["pc", "tv"], default="pc", dest="rng_",
+                   help="colour range tagged on the file: pc = full (0-255, what phones write),\n"
+                        "tv = limited (16-235). Reading one as the other was a real 27%% error.")
+    p.add_argument("--crf", type=int, default=14, help="H.264 quality (lower = better)")
+    p.add_argument("--gain", type=float, default=1.0,
+                   help="multiply brightness before quantising: a brighter or dimmer room")
+    p.add_argument("--pedestal", type=float, default=0.0,
+                   help="add a constant brightness (a lifted black level, haze, or a\n"
+                        "limited-range pedestal). Spin must not depend on gain or pedestal.")
+    p.add_argument("--gamma", type=float, default=1.0, help="tone curve exponent applied before quantising")
     p.add_argument("--gravity", type=float, default=0.1,
                    help="downward acceleration in px/frame^2 (0.1 ~ 9.8 m/s^2 for a 25 px ball at 240 fps)")
     p.add_argument("--axis-near-pole", type=float, default=None, metavar="DEG",
@@ -102,6 +122,56 @@ def render(frame_size, centre, radius, R, kind, dots, light):
     return img
 
 
+
+class FfmpegWriter:
+    """Grey frames -> H.264 in an MP4, tagged with a colour range.
+
+    The phone records H.264 and tags it full range; the engine reads the tag. Writing the
+    same pixels under both tags is how the full/limited-range reading bug is tested.
+    """
+
+    def __init__(self, path, size, crf=14, rng="pc"):
+        W, H = size
+        self.proc = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{W}x{H}", "-r", "30", "-i", "-",
+             "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
+             "-pix_fmt", "yuv420p", "-color_range", rng,
+             "-x264-params", f"fullrange={1 if rng == 'pc' else 0}",
+             "-movflags", "+faststart", path],
+            stdin=subprocess.PIPE)
+
+    def write(self, img):
+        self.proc.stdin.write(np.ascontiguousarray(img, dtype=np.uint8).tobytes())
+
+    def close(self):
+        self.proc.stdin.close()
+        if self.proc.wait() != 0:
+            raise RuntimeError("ffmpeg failed")
+
+
+class Cv2Writer:
+    def __init__(self, path, size):
+        if cv2 is None:
+            raise RuntimeError("--writer cv2 needs opencv-python installed")
+        self.w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, size)
+
+    def write(self, img):
+        self.w.write(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
+
+    def close(self):
+        self.w.release()
+
+
+def open_writer(a, W, H):
+    use = a.writer
+    if use == "auto":
+        use = "ffmpeg" if shutil.which("ffmpeg") else "cv2"
+    if use == "ffmpeg":
+        return FfmpegWriter(a.out, (W, H), a.crf, a.rng_)
+    return Cv2Writer(a.out, (W, H))
+
+
 def main():
     a = parse_args()
     rng = np.random.default_rng(a.seed)
@@ -121,7 +191,7 @@ def main():
         d = np.radians(a.axis_near_pole)
         axis = np.cos(d) * e + np.sin(d) * u
 
-    writer = cv2.VideoWriter(a.out, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (W, H))
+    writer = open_writer(a, W, H)
     start = np.array([radius + 20.0, H * 0.55])
     vel = np.array([a.speed, -a.speed * 0.15 - a.gravity * a.frames / 2])   # rises, then falls
     centres = []
@@ -137,15 +207,24 @@ def main():
             R = rot_matrix(axis, omega * t) @ R0
             acc += render((W, H), c, radius, R, a.pattern, dots, light)
         img = acc / a.blur_samples + rng.normal(0, a.noise, (H, W))
+        # the camera's response: spin is geometry, so it must survive all of this
+        if a.gamma != 1.0:
+            img = 255.0 * np.clip(img / 255.0, 0, 1) ** a.gamma
+        if a.gain != 1.0 or a.pedestal:
+            img = a.gain * img + a.pedestal
         img = np.clip(img, 0, 255).astype(np.uint8)
-        writer.write(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
+        writer.write(img)
         fpos = i + a.exposure / 2
         centres.append((start + vel * fpos + np.array([0.0, 0.5 * a.gravity * fpos ** 2])).tolist())
-    writer.release()
+    writer.close()
 
-    truth = {"rps": a.rps, "rpm": a.rps * 60, "axis": axis.tolist(), "fps": a.fps,
+    # the track a perfect live tracker would hand the engine: [frame, x, y, radius].
+    # measureCapture(useTrack) measures along such a track instead of searching for the ball.
+    track = [[i, round(c[0], 2), round(c[1], 2), round(radius, 2)] for i, c in enumerate(centres)]
+    truth = {"rps": a.rps, "rpm": a.rps * 60, "axis": axis.tolist(), "fps": a.fps, "track": track,
              "diameter_px": a.diameter, "speed_px_per_frame": a.speed, "exposure": a.exposure,
              "pattern": a.pattern, "noise": a.noise, "frames": a.frames,
+             "colour_range": a.rng_, "gain": a.gain, "pedestal": a.pedestal, "gamma": a.gamma,
              "note": "file is written at 30 FPS playback; pass --fps to spinmeter.py"}
     with open(a.out.rsplit(".", 1)[0] + ".json", "w") as f:
         json.dump(truth, f, indent=2)

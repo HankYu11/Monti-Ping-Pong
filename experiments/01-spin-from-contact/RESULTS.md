@@ -66,7 +66,7 @@ here: a hand holding a paddle doesn't look like a hand to it. The body model doe
 and knuckles.
 
 **Contact frame.** On the 5 serves read by eye, the wrist-speed peak landed on the same frame for
-2, 1-2 frames off for 1 and 5 frames (20 ms) early for 2. So the arm finds the moment, even
+1, 1-2 frames off for 2 and 5 frames (20 ms) early for 2. So the arm finds the moment, even
 when the contact itself is hidden or between frames.
 
 **Tuned on the 5 eye-read serves** (T1, T2, T4, U2, V3): the palm sat 7-12 degrees flatter than the

@@ -71,9 +71,11 @@
       if (frames && frames.length > head.n) frames.length = head.n;
       const tFetch = performance.now() - t0;
       const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
-        // the engine's own search in the crop: measuring along the live tracker's tracks instead was
-        // 2-4x faster but less sure (live clip L1: it measured a hand; smoothing it lost V3)
-        useTrack: false,
+        // Measure along the live tracker's own tracks, skipping the engine's search of the crop.
+        // 0.5 turned this off because on clip L1 it measured a hand moving along the bottom.
+        // The engine now checks a handed-in track flies like a ball (gravity, a steady size)
+        // and searches for itself when it doesn't, so the worst case is the old behaviour.
+        useTrack: true,
         single: true, serveDir: "any", robust: true, onProgress: (step, frac) => Android.onProgress(id, String(step), +frac || 0),
       });
       const sv = (res.serves || [])[0];

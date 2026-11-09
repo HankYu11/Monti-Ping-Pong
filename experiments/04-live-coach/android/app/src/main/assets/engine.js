@@ -207,10 +207,18 @@
   }
 
   // ------------------------------------------------------------ image ops on gray frames
-  function medianFrames(frames, size) {       // per-pixel median across frames
-    const n = frames.length, out = new Float32Array(size), buf = new Float64Array(n);
+  function medianFrames(frames, size, maxN = 0) {   // per-pixel median across frames
+    // The background is what most frames show at a pixel, so a spread of frames gives the same
+    // picture as all of them: the ball is at any one pixel for only a frame or two of a flight.
+    // Taking every frame was the measuring step's largest cost (a quickselect per pixel).
+    let use = frames;
+    if (maxN && frames.length > maxN) {
+      use = new Array(maxN);
+      for (let k = 0; k < maxN; k++) use[k] = frames[Math.round(k * (frames.length - 1) / (maxN - 1))];
+    }
+    const n = use.length, out = new Float32Array(size), buf = new Float64Array(n);
     for (let p = 0; p < size; p++) {
-      for (let k = 0; k < n; k++) buf[k] = frames[k][p];
+      for (let k = 0; k < n; k++) buf[k] = use[k][p];
       out[p] = medianInPlace(buf, n);
     }
     return out;
@@ -768,6 +776,46 @@
     const growMid = part(0.625, 0.875) / Math.max(1e-6, part(0.125, 0.375));
     const steady = (g, lim) => g < lim && g > 1 / lim;
     if (dy > 2 * Math.abs(dx) && (steady(grow, 1.3) || steady(growMid, 1.15))) return "straight drop";
+    return null;
+  }
+
+  // A flying ball follows gravity: its sideways move is steady and its fall is a parabola. A
+  // hand, an arm or a paddle does not. This is the check that makes the live tracker's own
+  // track safe to measure along (`useTrack`): at 0.5 the track was trusted as given and on one
+  // clip the engine measured a hand moving along the bottom of the picture instead of the ball.
+  //
+  // It is scale-free. A ball is 40 mm across, so at 240 frames a second gravity is always about
+  // 0.0085 of the ball's radius per frame squared, whatever the camera or its distance.
+  function ballisticRule(tr, fps = 240, minLen = 8) {
+    if (!tr || tr.length < minLen) return null;        // too short to judge: the other rules decide
+    const rMed = median(tr.map((p) => p[3]));
+    if (!(rMed > 0)) return null;
+    // the ball merging with the paddle or the hand at the hit: its size jumps (clips N12, N15)
+    if (tr.filter((p) => p[3] > 1.6 * rMed).length > 0.25 * tr.length) return "size jumps (paddle?)";
+    // split where it bounces: y grows downward, so a bounce is a local maximum of y
+    const arcs = [], cut = [0];
+    for (let k = 3; k < tr.length - 3; k++)
+      if (tr[k][2] - tr[k - 3][2] > 2 && tr[k + 3][2] - tr[k][2] < -2) cut.push(k);
+    cut.push(tr.length);
+    for (let i = 0; i < cut.length - 1; i++) arcs.push(tr.slice(cut[i], cut[i + 1]));
+    const arc = arcs.reduce((a, b) => (b.length > a.length ? b : a), []);
+    if (arc.length < minLen) return null;
+    // least squares x(t), y(t) as quadratics, on time centred and scaled to [-1, 1]
+    const n = arc.length, t0 = arc[0][0], span = Math.max(1e-6, (arc[n - 1][0] - t0) / 2);
+    const T = arc.map((p) => (p[0] - t0) / span - 1);
+    const fit = (vals) => polyfit(T, vals, 2);                    // [c2, c1, c0], high -> low
+    const cx = fit(arc.map((p) => p[1])), cy = fit(arc.map((p) => p[2]));
+    const at = (c, u) => c[0] * u * u + c[1] * u + c[2];
+    let sq = 0;
+    for (let k = 0; k < n; k++)
+      sq += (arc[k][1] - at(cx, T[k])) ** 2 + (arc[k][2] - at(cy, T[k])) ** 2;
+    const rms = Math.sqrt(sq / Math.max(1, n - 3));
+    if (rms > Math.max(2.0, 0.5 * rMed)) return "not a ball's path";
+    // Gravity pulls down; nothing in free flight climbs harder and harder. In pixels per frame
+    // squared that is 0.0085 radii at 240 a second, falling with the square of the rate.
+    const gPx = 0.0085 * rMed * (240 / fps) ** 2;
+    const accY = 2 * cy[0] / (span * span);                              // px per frame^2, y down
+    if (accY < -0.5 * gPx) return "climbs (an arm?)";
     return null;
   }
 
@@ -1625,12 +1673,14 @@
     await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabColor(ctx, src, R.W, R.H, seg.roi); });
     for (let k = 0; k < frames.length; k++) if (!frames[k]) frames[k] = frames[k - 1] || frames.find(Boolean);
     const colour = frames.every((f) => f.u);
-    const bgU = colour ? medianFrames(frames.map((f) => f.u), rw * rh) : null;
-    const bgV = colour ? medianFrames(frames.map((f) => f.v), rw * rh) : null;
+    const BG_FRAMES = 15;                       // enough for a background; see medianFrames
+    const bgU = colour ? medianFrames(frames.map((f) => f.u), rw * rh, BG_FRAMES) : null;
+    const bgV = colour ? medianFrames(frames.map((f) => f.v), rw * rh, BG_FRAMES) : null;
     let gray = frames.map((f) => f.g);
-    let bg = medianFrames(gray, rw * rh);
-    gray = gray.map((g) => deflickerOne(g, bg, rw, rh, 1));
-    bg = medianFrames(gray, rw * rh);
+    let bg = medianFrames(gray, rw * rh, BG_FRAMES);
+    // the row ratio is smoothed over 9 rows afterwards, so every second pixel is as good
+    gray = gray.map((g) => deflickerOne(g, bg, rw, rh, 2));
+    bg = medianFrames(gray, rw * rh, BG_FRAMES);
     // where the flight search saw the ball, in this crop's pixels
     const seen = new Map((seg.track || []).map((p) => [p[0] - seg.start, [p[1] - rx, p[2] - ry, p[3]]]));
     const predict = (k) => {
@@ -1800,8 +1850,15 @@
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
     try {
-      const segs = opts.segments ? opts.segments(R) : await findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
+      const search = () => findFlights(R, progress, Object.assign({ serveGap: Math.round(0.5 * fps),
         onScene: (sc) => { checks.push(...sceneChecks(sc)); emit(); } }, opts));
+      // A handed-in track (the live tracker's own) is measured only when it looks like a ball
+      // in flight. When it doesn't, the engine searches for itself, as it always has: the speed
+      // on the common case, the engine's own judgement on the odd one. 0.5 dropped measuring
+      // along the track for want of this fallback, after one clip measured a moving hand.
+      let segs = opts.segments ? opts.segments(R) : null;
+      if (opts.segments && (!segs || !segs.length)) { DBG.trackRefused = true; segs = await search(); }
+      else if (!opts.segments) segs = await search();
       checks.push(flightCheck(segs)); emit();
       const tFound = performance.now();
       DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
@@ -1995,12 +2052,14 @@
       // something bigger was picked): the serve as the search would choose it, by its own rules
       const all = [cap.track, ...(cap.near || [])].map(half);
       o.segments = () => {
-        const built = all.filter((tr) => flightRule(tr) === null).map((tr) => build(tr, all)).filter(Boolean).sort((a, b) => b.score - a.score);
+        const fps = cap.fps || 240;
+        const built = all.filter((tr) => flightRule(tr) === null && ballisticRule(tr, fps) === null)
+          .map((tr) => build(tr, all)).filter(Boolean).sort((a, b) => b.score - a.score);
         return Object.assign(built.slice(0, 1), { ballFrames: Math.max(...all.map((t) => t.length)) });
       };
     }
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

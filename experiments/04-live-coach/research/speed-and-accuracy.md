@@ -143,7 +143,32 @@ Two changes, both on the track path only:
 So M6 now costs a search and should read 28.5. Captures whose tracks do cover the paddle stretch
 (M7 among them) are untouched.
 
-**The switch stays off until that is confirmed on the real captures.**
+**Confirmed on the real captures, and the switch is on.** M6 now refuses the track, searches, and
+reads 28.5 (paddle [52-68] clear, then bounce [70-132] clear) — identical to the old engine, for
+2.7 s. M7, which does have the stretch before the bounce, is untouched and does not refuse. No
+other capture pays a search: the five that take that path are L1, M6, N12, N15 and T4_2, and all
+five read what the search alone reads. 33.0 s for the 21 against 97.7 s before, about **3×**.
+
+### What to watch
+
+Three captures still differ a little from the old search's headline, and all three are paddle
+stretches that **start where the track starts, earlier than where the search starts them**:
+
+| | along the track | search | |
+|---|---|---|---|
+| M7 | 43.0 | 44.4 | −3%, [64-76] vs [67-76] |
+| M12 | 43.9 | 43.0 | +2% |
+| M14 | 51.8 | 51.0 | +1.6% |
+
+The other 16 are within 0.3 rev/s. Nothing here says which side is right — there is no ground
+truth for these — and all three are inside the meter's usual few-percent spread, so they are not
+blockers. But the direction is worth remembering: the engine skips `skipAfterContact` frames
+after the hit precisely because the paddle is still beside the ball there, and a stretch that
+starts earlier has more of those frames in it. If a bias shows up later, this is the first place
+to look.
+
+And all of it is **one phone's footage, 21 captures**. Frame delivery, the camera and the club's
+lighting are still only testable on a phone.
 
 **Why M6 mattered.** It was a *confident* wrong number — marked clear, from a track that passes
 every check — so no fallback could catch it. That breaks the promise the whole design rests on:

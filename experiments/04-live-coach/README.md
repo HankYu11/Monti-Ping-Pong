@@ -486,6 +486,42 @@ being measured gets its answer on screen and in the list; it is spoken only if n
 after it (only the latest serve is spoken), and it no longer sets "Ready" for a turn already
 ended. The tools are shorter (TEST VIDEO) to make room.
 
+## 0.9.3: the spin is measured along the tracker's own track
+
+The engine no longer searches the crop for a ball the live tracker has already found: it
+measures along the track it is handed. About **3x faster** over the 21 recorded captures
+(97.7 s to 33.0 s). 0.4 did this and 0.5 took it out again, because on clip L1 it measured a
+hand moving along the bottom of the picture. What was missing was a way to give up, and there
+are now three, each one added because a real capture needed it:
+
+- a track that doesn't fly like a ball is refused (`ballisticRule`: its size steady, its path a
+  parabola between bounces, its fall downward). It is scale-free, since a ball is 40 mm across
+  and gravity is then about 0.0085 of its radius per frame squared at 240 a second;
+- a tracked measurement that fails or reads unclear is abandoned (clip L1, which barely moves
+  and so passes every rule, then measures to nothing);
+- a tracked run that only ever sees the ball after the bounce is abandoned, because the serve's
+  own spin is the stretch off the paddle (capture M6, which read 23.3 rev/s against 28.5 and
+  called it clear). `serveBuilder` also looks backwards now, and marks such a stretch "bounce"
+  rather than "flight".
+
+Each one falls back to the engine's own search, so the worst case per serve is what the app did
+before. Five of the 21 captures take that path (L1, M6, N12, N15, T4_2) and all five then read
+what the search alone reads; the other 16 are unchanged. `report` carries `debug.trackRefused`
+for the serves that fell back.
+
+Measuring is faster too: it took four per-pixel medians across every frame of the flight and
+corrected flicker on every row, which a profile showed as a third of its time in quickselect.
+A spread of 15 frames gives the same background, and the row ratio is smoothed over 9 rows.
+
+Still to watch: M7, M12 and M14 differ from the search by -3% to +2%, all of them paddle
+stretches that start where the track starts, earlier than the search starts them, where the
+paddle is still beside the ball. No ground truth either way, and inside the meter's usual
+spread. And this is one phone's footage.
+
+New: `../02-spin-meter/web/test/` scores the engine against rendered serves with a known spin
+(`bench.mjs`, `capbench.mjs`, `guard.mjs`, `make_clips.sh`), and
+`research/speed-and-accuracy.md` records the review this came out of.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

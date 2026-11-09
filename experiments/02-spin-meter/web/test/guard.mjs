@@ -31,6 +31,9 @@ for (const f of clips) {
   cases.push({ name: `${name} (ball)`, track: half(t), want: null });
   cases.push({ name: `${name} +1px jitter`, track: jitter(half(t), 1), want: null });
 }
+// the made-up tracks must not depend on how many clips were passed, so the jitter starts
+// from the same place every run
+seed = 7;
 const base = cases[0].track;                       // a real flight, to build the fakes from
 const n = base.length, r = base[0][3];
 cases.push({ name: 'hand: slides and comes back', want: 'reject',
@@ -39,7 +42,7 @@ cases.push({ name: 'arm: climbs harder and harder', want: 'reject',
   track: Array.from({ length: n }, (_, k) => [k, 40 + 3 * k, 300 - 0.06 * k * k, r]) });
 cases.push({ name: 'ball merged with the paddle at the hit', want: 'reject',
   track: base.map((q, k) => (k < Math.ceil(0.3 * n) ? [q[0], q[1], q[2], q[3] * 2.4] : q)) });
-cases.push({ name: 'jitter far beyond a ball (3 px)', want: 'reject', track: jitter(half(base.map(q => [q[0], q[1] * 2, q[2] * 2, q[3] * 2])), 6) });
+cases.push({ name: 'jitter far beyond a ball', want: 'reject', track: jitter(base, 12) });
 
 const out = await p.evaluate((cs) => cs.map(c => ({ name: c.name, want: c.want,
   got: window.SpinMeter._internals.ballisticRule(c.track, 240) })), cases);

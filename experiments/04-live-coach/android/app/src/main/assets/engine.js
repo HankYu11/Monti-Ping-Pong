@@ -2077,6 +2077,7 @@
     // The live tracker's own track of the flight (whole-picture pixels, every few frames), so the
     // search can be skipped: in the crop at the search's half size, filled in for every frame.
     if (opts.useTrack && cap.track && cap.track.length >= 6) {
+      DBG.trackGiven = true;         // the report says whether it was then used or refused
       const [cx, cy] = cap.rect;
       const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60, true);
       const half = (t) => {

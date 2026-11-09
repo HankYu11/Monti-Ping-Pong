@@ -522,6 +522,14 @@ New: `../02-spin-meter/web/test/` scores the engine against rendered serves with
 (`bench.mjs`, `capbench.mjs`, `guard.mjs`, `make_clips.sh`), and
 `research/speed-and-accuracy.md` records the review this came out of.
 
+## 0.9.4: the report says whether the track was used
+
+0.9.3's report still said `usedTrack: false` for every serve, a leftover from 0.4, so there was
+no way to tell which serves measured along the tracker's track and which fell back to the
+engine's search. Now `usedTrack` says what happened and `trackRefused` says the track was
+handed in and turned down. That is the number to watch at the table: it was 5 of 21 on the
+recorded captures, and how often it happens live decides how much of the speed is real.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

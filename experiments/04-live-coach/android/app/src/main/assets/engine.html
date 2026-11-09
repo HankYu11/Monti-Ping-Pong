@@ -87,7 +87,7 @@
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
         coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch),
-        data: sv ? { phases: (sv.phases || []).map(dataOf), notes: (sv.notes || []).map((n) => n.text) } : null, usedTrack: false, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
+        data: sv ? { phases: (sv.phases || []).map(dataOf), notes: (sv.notes || []).map((n) => n.text) } : null, usedTrack: !!(dbg.trackGiven && !dbg.trackRefused), trackRefused: !!dbg.trackRefused, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
       }));
     } catch (e) {
       Android.onResult(id, JSON.stringify({ ms: performance.now() - t0, error: "engine: " + (e && e.message ? e.message : e) }));

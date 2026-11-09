@@ -44,12 +44,46 @@ cases.push({ name: 'jitter far beyond a ball (3 px)', want: 'reject', track: jit
 const out = await p.evaluate((cs) => cs.map(c => ({ name: c.name, want: c.want,
   got: window.SpinMeter._internals.ballisticRule(c.track, 240) })), cases);
 
+// --- which stretch of the flight a handed-in track gets measured on -------------------
+// build() works on tracks alone, so this needs no pixels. A serve's own spin is the stretch
+// off the paddle; after the bounce the ball carries less. A capture whose tracks only begin
+// after the bounce must not put the after-bounce spin up as the serve's (real capture M6).
+const seg = await p.evaluate(() => {
+  const build = window.SpinMeter._internals.serveBuilder(480, 270, 4, 60, true);
+  const arc = (from, n, x0, y0, vx, vy, r = 6) =>
+    Array.from({ length: n }, (_, k) => [from + k, x0 + vx * k, y0 + vy * k + 0.004 * k * k, r]);
+  const kinds = (b) => (b ? b.parts.map((q) => q.kind) : null);
+  // a flight that bounces inside the track: off the paddle, then after the bounce
+  const withBounce = [...arc(60, 40, 100, 300, 6, 2), ...arc(100, 40, 340, 400, 6, -2)];
+  // the same flight, but the track only starts after the bounce (the M6 shape): a near track
+  // falls to the table at about frame 68 and comes back up, and the pick carries on from there
+  const nearBounce = [...arc(60, 9, 100, 622, 6, 4.5), ...arc(69, 24, 154, 656, 6, -3)];
+  const pickAfter = arc(90, 50, 330, 590, 6, -2);
+  // a flight with no bounce anywhere: it must stay a plain flight
+  const plain = arc(60, 55, 100, 260, 6, 1);
+  return {
+    withBounce: kinds(build(withBounce, [withBounce])),
+    afterBounce: kinds(build(pickAfter, [pickAfter, nearBounce])),
+    plain: kinds(build(plain, [plain])),
+  };
+});
+const segCases = [
+  { name: 'bounce inside the track', got: seg.withBounce, want: (k) => k && k[0] === 'paddle', expect: 'measured off the paddle' },
+  { name: 'track starts after the bounce', got: seg.afterBounce, want: (k) => k && k[0] === 'bounce', expect: 'marked after the bounce' },
+  { name: 'no bounce anywhere', got: seg.plain, want: (k) => k && k[0] === 'flight', expect: 'a plain flight' },
+];
 let bad = 0;
+for (const c of segCases) {
+  const pass = c.want(c.got);
+  if (!pass) bad++;
+  console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.expect} -> ${c.got ? c.got.join(', ') : 'nothing built'}`);
+}
 for (const c of out) {
   const pass = c.want === null ? c.got === null : c.got !== null;
   if (!pass) bad++;
   console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.want === null ? 'expect a ball' : 'expect rejected'} -> ${c.got === null ? 'ball' : '"' + c.got + '"'}`);
 }
-console.log(`\n${out.length - bad}/${out.length} as expected`);
+const total = out.length + segCases.length;
+console.log(`\n${total - bad}/${total} as expected`);
 await b.close(); srv.close();
 process.exit(bad ? 1 : 0);

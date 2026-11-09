@@ -121,16 +121,33 @@ So the fallback now also abandons a tracked measurement that **errors or comes b
 not only one that yields no segment. That covers L1, N12 and T4_2, and keeps the speed on the
 common case.
 
-**M6 is why the switch is still off.** It is a *confident* wrong number: 23.3 rev/s against the
-search's 28.5, marked clear, from a track that passes every check. No fallback can catch that,
-because nothing about it looks wrong. It breaks the promise the whole design rests on — that
-the worst case of measuring along the track is the behaviour we already have. `useTrack` is
-therefore `false` in `engine.html` until M6 is explained. Everything needed to turn it on is in
-place; it is one line.
+**M6, explained.** It is not another object, and not a worse measurement. The tracked run reads
+the stretch *after the bounce*, and it agrees with the search's own after-bounce reading
+(23.3 against 23.5). The bounce really does cut the spin; 23.x is right for that stretch and
+wrong as the serve's.
 
-Worth understanding first: its pick runs frames 90–154 with a near track at 60–92, and both
-pass. The likely shapes are that the track covers a different stretch of the flight than the
-search chooses, or that it spans the bounce where the search would split.
+The search finds two stretches — off the paddle [52-68], 28.5 clear, then after the bounce
+[70-132], 23.5 clear — and puts the paddle one up as the headline. With the track there is only
+one stretch, [94-154], and the engine labels it "flight", because labelling depends on whether a
+bounce *follows* inside the same track. Nothing follows, so it reads as a plain flight, and the
+headline logic prefers any non-bounce reading. The tracks hold only frames 60-68 before the
+bounce, too few to measure, and the search's paddle stretch starts at 52, before any track data.
+
+Two changes, both on the track path only:
+
+- `serveBuilder` now also looks *backwards*. When the tracks before a stretch show the ball
+  reaching its lowest point and coming back up, the stretch is marked `bounce`, not `flight`.
+- A tracked run whose only clear reading is after the bounce is abandoned, and the engine
+  searches — which can reach frames before the tracks begin, where the serve's own spin is.
+
+So M6 now costs a search and should read 28.5. Captures whose tracks do cover the paddle stretch
+(M7 among them) are untouched.
+
+**The switch stays off until that is confirmed on the real captures.**
+
+**Why M6 mattered.** It was a *confident* wrong number — marked clear, from a track that passes
+every check — so no fallback could catch it. That breaks the promise the whole design rests on:
+that the worst case of measuring along the track is the behaviour we already have.
 
 **A correction to the claim above.** "Readings within 0.05 rev/s" was measured on rendered
 clips only. On real captures the medians change moved M12 by 0.4 rev/s and N12 from an unclear

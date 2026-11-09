@@ -660,7 +660,7 @@
   // where the hit was, the stretch off the paddle and the one after the bounce, the toss, and
   // notes on what couldn't be measured; or null. sw, sh: the search frame's size. Used by the
   // flight search and by measureCapture (a track found by the live app).
-  function serveBuilder(sw, sh, skipAfter, maxFrames) {
+  function serveBuilder(sw, sh, skipAfter, maxFrames, markAfterBounce = false) {
     return function build(tr, all) {
       const whole = tr;
       // the moving part: split where the ball stops (held, caught, picked up)
@@ -679,6 +679,25 @@
       let s0 = 0;
       for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
       const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
+      // Did the ball already bounce before this stretch starts? Inside one track there is no way
+      // to tell: no bounce follows, so it reads as a plain flight. The tracks before it show the
+      // ball reaching its lowest point (y at its largest) and coming back up. What follows that
+      // is what the receiver faces, not the serve's own spin off the paddle, and calling it a
+      // flight would put the after-bounce spin up as the serve's (real capture M6: 23.3 against
+      // the paddle's 28.5, both clear).
+      const bouncedBefore = () => {
+        const f0 = first.pts[0][0], r = median(first.pts.map((p) => p[3])) || 1;
+        for (const o of all) {
+          const q = o.filter((p) => p[0] < f0 && p[0] >= f0 - 40);
+          if (q.length < 6) continue;
+          let lo = 0;
+          for (let k = 1; k < q.length; k++) if (q[k][2] > q[lo][2]) lo = k;
+          if (lo === 0 || lo === q.length - 1) continue;      // still falling, or never came back up
+          if (q[lo][2] - q[0][2] > 0.5 * r && q[lo][2] - q[q.length - 1][2] > 0.5 * r) return true;
+        }
+        return false;
+      };
+      const afterBounce = markAfterBounce && !sawBounce && bouncedBefore();
       const parts = [], notes = [];
       const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
       // the first frames after the hit still have the paddle next to the ball
@@ -701,7 +720,7 @@
       const toss = tossPts.length >= 3 ? { v: velocity(tossPts, 0, tossPts.length), r: median(tossPts.map((p) => p[3])), t: tossPts.reduce((s, p) => s + p[0], 0) / tossPts.length } : null;
       const hitAt = toss ? meetFrame(tossPts, toss.v, first.pts) : hitSeen ? first.pts[0][0] : null;
       if (toss && hitAt != null) toss.dt = hitAt - toss.t;      // frames from the toss's mean frame to the hit
-      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : "flight", off, hitAt), { toss }));
+      if (off.length >= 8) parts.push(Object.assign(makePart(sawBounce ? "paddle" : afterBounce ? "bounce" : "flight", off, hitAt), { toss }));
       else if (sawBounce) note("paddle", `Off the paddle: not measured. Only ${first.pts.length} frames from when ${from} to the bounce (needs ${skipAfter + 8}).`,
         edgeOf(first.pts[0]) ? "Turn the camera so the paddle is in the picture." :
           "The ball was hidden or blurred near the paddle, or the serve bounced very soon. Film from the side so the paddle doesn't cover the ball.", first.pts.length);
@@ -1945,7 +1964,12 @@
         const given = opts.segments(R);
         if (given && given.length) {
           out = await runSegs(given);
-          if (!out || out.error || !(out.serves || []).some((sv) => sv.clear)) out = null;
+          // Usable means a clear reading of the serve itself. A tracked run whose only clear
+          // reading is after the bounce has missed the stretch off the paddle, so the engine
+          // searches, which can reach frames before the tracks begin.
+          const usable = out && !out.error && (out.serves || []).some((sv) =>
+            (sv.phases || [sv]).some((r) => !r.error && r.reliable && r.phase !== "bounce"));
+          if (!usable) out = null;
         }
         if (!out) DBG.trackRefused = true;
       }
@@ -2054,7 +2078,7 @@
     // search can be skipped: in the crop at the search's half size, filled in for every frame.
     if (opts.useTrack && cap.track && cap.track.length >= 6) {
       const [cx, cy] = cap.rect;
-      const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60);
+      const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60, true);
       const half = (t) => {
         const q = t.map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]), out = [];
         for (let k = 0; k < q.length; k++) {
@@ -2077,5 +2101,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

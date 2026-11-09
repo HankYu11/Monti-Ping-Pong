@@ -71,11 +71,13 @@
       if (frames && frames.length > head.n) frames.length = head.n;
       const tFetch = performance.now() - t0;
       const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
-        // Measure along the live tracker's own tracks, skipping the engine's search of the crop.
-        // 0.5 turned this off because on clip L1 it measured a hand moving along the bottom.
-        // The engine now checks a handed-in track flies like a ball (gravity, a steady size)
-        // and searches for itself when it doesn't, so the worst case is the old behaviour.
-        useTrack: true,
+        // Measuring along the live tracker's own tracks skips the engine's search of the crop and
+        // is 3.9x faster over the 21 real captures. Still off: on capture M6 it read 23.3 rev/s
+        // against the search's 28.5 and called it clear, so no check catches it. The engine now
+        // refuses a track that doesn't fly like a ball, and abandons one that measures to nothing
+        // or to an unclear reading -- which covers L1, N12 and T4_2, but not a confident wrong
+        // number. Turn on once M6 is understood: see research/speed-and-accuracy.md.
+        useTrack: false,
         single: true, serveDir: "any", robust: true, onProgress: (step, frac) => Android.onProgress(id, String(step), +frac || 0),
       });
       const sv = (res.serves || [])[0];

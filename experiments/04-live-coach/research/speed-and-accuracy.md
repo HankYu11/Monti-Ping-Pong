@@ -83,3 +83,56 @@ here it is 1.1–1.5×. The 4× end is not there, because the search was never t
   count whole turns of the marking by eye across many frames of an existing 240 fps clip. Over
   10 turns even a quarter-frame error in reading the phase is about 0.4%, which is far better
   than the engine's own 5%.
+
+---
+
+# On real footage (Nov 2026, after the above)
+
+The session holding the recorded clips ran the change over **21 real captures** (`.cap` files
+from the desktop runner: the crop plus the live tracker's track and near tracks, the same thing
+the app hands `engine.html`), three ways — the engine before, the engine after with the track
+off, and the engine after with the track on.
+
+**It is much faster than the rendered clips suggested.** 97.7 s for the 21 captures before,
+**25.3 s measuring along the track: 3.9×.** The 1.5× measured here was an underestimate because
+a rendered flight is small and clean, so the search costs little; on a real capture the search
+is most of the work, as the original 80% profile said. The medians change showed no gain on real
+captures for the same reason — the search dominates, and it does not run the measuring step's
+medians.
+
+**17 of 21 agreed within 0.3–1.4 rev/s. Four did not, and they are the point.**
+
+| Capture | search | along the track | |
+|---|---|---|---|
+| L1 (the hand) | 23.0, clear | **no reading** | the hand's track passed every rule, then failed to measure |
+| N12 (paddle merge) | 39.7 | **no reading** | same: accepted, then "found in too few frames" |
+| N15 (paddle merge) | no reading | no reading | unchanged |
+| T4_2 | no reading | no reading | refused outright, as intended |
+| **M6** | 28.5 | **23.3, clear** | **−18%, and nothing catches it** |
+
+**What was wrong, and what is fixed.** The fallback only covered a track that produced *no
+segment at all*. A track that was accepted and then failed to measure fell through it and lost
+the reading. `ballisticRule` does not refuse L1's hand: it runs flat along the bottom of the
+picture, y 195 → 192 over frames 60–166, which is a straight enough path and a steady enough
+size to pass. The check was built to catch a hand that *moves like an arm*; this one barely
+moves at all, and `flightRule`'s own "too slow" test did not catch it either.
+
+So the fallback now also abandons a tracked measurement that **errors or comes back unclear**,
+not only one that yields no segment. That covers L1, N12 and T4_2, and keeps the speed on the
+common case.
+
+**M6 is why the switch is still off.** It is a *confident* wrong number: 23.3 rev/s against the
+search's 28.5, marked clear, from a track that passes every check. No fallback can catch that,
+because nothing about it looks wrong. It breaks the promise the whole design rests on — that
+the worst case of measuring along the track is the behaviour we already have. `useTrack` is
+therefore `false` in `engine.html` until M6 is explained. Everything needed to turn it on is in
+place; it is one line.
+
+Worth understanding first: its pick runs frames 90–154 with a near track at 60–92, and both
+pass. The likely shapes are that the track covers a different stretch of the flight than the
+search chooses, or that it spans the bounce where the search would split.
+
+**A correction to the claim above.** "Readings within 0.05 rev/s" was measured on rendered
+clips only. On real captures the medians change moved M12 by 0.4 rev/s and N12 from an unclear
+0.5 to 39.7. Neither is obviously wrong — N12 was never readable before — but 0.05 rev/s is the
+rendered figure, not the real one.

@@ -1856,85 +1856,101 @@
       // in flight. When it doesn't, the engine searches for itself, as it always has: the speed
       // on the common case, the engine's own judgement on the odd one. 0.5 dropped measuring
       // along the track for want of this fallback, after one clip measured a moving hand.
-      let segs = opts.segments ? opts.segments(R) : null;
-      if (opts.segments && (!segs || !segs.length)) { DBG.trackRefused = true; segs = await search(); }
-      else if (!opts.segments) segs = await search();
-      checks.push(flightCheck(segs)); emit();
-      const tFound = performance.now();
-      DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
-      const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
-      DBG.file = { name: fileInfo.name, size: fileInfo.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
-      const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
-        frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
-      if (!segs.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
-      const serves = [];
-      for (let k = 0; k < segs.length; k++) {
-        progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
-        const readings = [];
-        for (const part of segs[k].parts) {
-          const one = await measureSegment(R, part, fps, hfov);
-          readings.push(Object.assign(one, { phase: part.kind }));
+      // Measuring a handed-in track has to be able to give up. It is refused outright when it
+      // doesn't fly like a ball, and abandoned afterwards when it yields no clear reading: on
+      // real clip L1 the hand's track passed every rule, then failed to measure ("found in too
+      // few frames"), losing a reading the engine's own search gets (23.0 rev/s, clear).
+      const baseChecks = checks.length;
+      const runSegs = async (segs) => {
+        checks.length = baseChecks;             // a second pass must not repeat the first's checks
+        checks.push(flightCheck(segs)); emit();
+        const tFound = performance.now();
+        DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
+        const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
+        DBG.file = { name: fileInfo.name, size: fileInfo.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
+        const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
+          frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
+        if (!segs.length) return { error: "No serve flight found. Keep the phone still, with the ball's flight over the table in view.", serves: [], checks, meta: timing() };
+        const serves = [];
+        for (let k = 0; k < segs.length; k++) {
+          progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
+          const readings = [];
+          for (const part of segs[k].parts) {
+            const one = await measureSegment(R, part, fps, hfov);
+            readings.push(Object.assign(one, { phase: part.kind }));
+          }
+          crossCheck(readings);
+          mirrorCheck(readings);
+          // the headline: off the paddle when it reads clearly, else the clearest stretch
+          const ok = readings.filter((r) => !r.error);
+          const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
+            ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
+          const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
+          // something that isn't a ball for most of its frames, or a short stretch that can't be read,
+          // is most likely not a serve (a ball rolling, picked up, a hand)
+          const notBall = one.error && /found in too few/.test(one.error);
+          if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
+          serves.push(one);
         }
-        crossCheck(readings);
-        mirrorCheck(readings);
-        // the headline: off the paddle when it reads clearly, else the clearest stretch
-        const ok = readings.filter((r) => !r.error);
-        const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
-          ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
-        const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
-        // something that isn't a ball for most of its frames, or a short stretch that can't be read,
-        // is most likely not a serve (a ball rolling, picked up, a hand)
-        const notBall = one.error && /found in too few/.test(one.error);
-        if (one.error && segs.length > 1 && (notBall || segs[k].end - segs[k].start < 20)) continue;
-        serves.push(one);
-      }
-      // the time measuring took (after the search), for the live app's report
-      DBG.time = Object.assign(DBG.time || {}, { measure: +((performance.now() - tFound) / 1000).toFixed(2) });
-      progress("Done", 1);
-      // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
-      // a ball sent back to the server goes the other way, which only the user can tell us
-      // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
-      // stretch with the most frames; a short stretch's direction and speed are unreliable.
-      const skipped = { slow: 0, way: 0 };
-      const wayOk = {
-        // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
-        any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
-      }[opts.serveDir || "any"] || (() => true);
-      const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
-      for (let k = serves.length - 1; k >= 0; k--) {
-        const m = motion(serves[k]);
-        if (!m) continue;
-        if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
-        else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
-      }
-      // With a clear serve in the video, a short unclear stretch with no bounce is something else
-      // that moved (a hand, a ball being picked up), not a serve.
-      if (serves.some((sv) => sv.clear))
+        // the time measuring took (after the search), for the live app's report
+        DBG.time = Object.assign(DBG.time || {}, { measure: +((performance.now() - tFound) / 1000).toFixed(2) });
+        progress("Done", 1);
+        // Not every ball movement is a serve. A ball bounced on the table before serving is slow;
+        // a ball sent back to the server goes the other way, which only the user can tell us
+        // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
+        // stretch with the most frames; a short stretch's direction and speed are unreliable.
+        const skipped = { slow: 0, way: 0 };
+        const wayOk = {
+          // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
+          any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
+        }[opts.serveDir || "any"] || (() => true);
+        const motion = (sv) => (sv.phases || [sv]).filter((r) => !r.error && r.flight).sort((x, y) => y.nFrames - x.nFrames)[0] || null;
         for (let k = serves.length - 1; k >= 0; k--) {
-          const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
-          if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
+          const m = motion(serves[k]);
+          if (!m) continue;
+          if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
+          else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
         }
-      // One serve per video (the default): keep the best one, a clear reading first, then the
-      // one with the most frames; the rest count as other ball movements.
-      if (opts.single !== false && serves.length > 1) {
-        const frames = (sv) => (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
-        const best = serves.slice().sort((a, b) => (b.clear - a.clear) || (frames(b) - frames(a)))[0];
-        skipped.other = (skipped.other || 0) + serves.length - 1;
-        serves.splice(0, serves.length, best);
+        // With a clear serve in the video, a short unclear stretch with no bounce is something else
+        // that moved (a hand, a ball being picked up), not a serve.
+        if (serves.some((sv) => sv.clear))
+          for (let k = serves.length - 1; k >= 0; k--) {
+            const sv = serves[k], n = (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+            if (!sv.clear && n < 25 && (sv.phases || [sv]).every((r) => r.phase === "flight")) serves.splice(k, 1);
+          }
+        // One serve per video (the default): keep the best one, a clear reading first, then the
+        // one with the most frames; the rest count as other ball movements.
+        if (opts.single !== false && serves.length > 1) {
+          const frames = (sv) => (sv.phases || [sv]).reduce((t, r) => t + (r.nFrames || 0), 0);
+          const best = serves.slice().sort((a, b) => (b.clear - a.clear) || (frames(b) - frames(a)))[0];
+          skipped.other = (skipped.other || 0) + serves.length - 1;
+          serves.splice(0, serves.length, best);
+        }
+        if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
+          const fc = checks.findIndex((c) => c.key === "flight");
+          if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
+        }
+        if (!serves.length) {
+          const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
+          const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
+          return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
+        }
+        const first = serves.find((s) => !s.error);
+        const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
+          skipped };
+        return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
+      };
+      let out = null;
+      if (opts.segments) {
+        const given = opts.segments(R);
+        if (given && given.length) {
+          out = await runSegs(given);
+          if (!out || out.error || !(out.serves || []).some((sv) => sv.clear)) out = null;
+        }
+        if (!out) DBG.trackRefused = true;
       }
-      if (serves.length !== segs.length) {      // dropped stretches: count only the serves shown
-        const fc = checks.findIndex((c) => c.key === "flight");
-        if (fc >= 0) checks[fc] = flightCheck(Object.assign(serves.map((s) => s.segment), { ballFrames: segs.ballFrames }));
-      }
-      if (!serves.length) {
-        const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
-        const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
-        return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
-      }
-      const first = serves.find((s) => !s.error);
-      const base = { serves, fps, captureFpsDetected: !!meta.captureFps, checks, meta: timing(),
-        skipped };
-      return first ? Object.assign({}, first, base) : Object.assign({ error: serves[0].error, segment: serves[0].segment }, base);
+      if (!out) out = await runSegs(await search());
+      return out;
     } finally {
       R.close();
     }

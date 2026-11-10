@@ -54,8 +54,24 @@ const real = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(imp
 const netOut = await p.evaluate((cases) => cases.map((c) => ({
   name: c.name, isServe: c.isServe,
   fell: window.SpinMeter._internals.stoppedAndFell({ segment: { track: c.track }, flight: c.flight }),
-})), Object.entries(real).filter(([k]) => !k.startsWith('_')).map(([k, v]) => ({ name: k, ...v })));
-let netBad = 0;
+})), Object.entries(real).filter(([k, v]) => !k.startsWith('_') && v && v.track).map(([k, v]) => ({ name: k, ...v })));
+// and the decision boundary against every stretch the engine measured on the two phones:
+// 32 real serve stretches (home side-on and club head-on) and the one net ball
+const margins = await p.evaluate((rows) => rows.map((r) => {
+  const n = 12, tr = Array.from({ length: n }, (_, k) =>
+    [k, (r.dx * k) / (n - 1), (r.dy * k) / (n - 1), 6]);     // the test reads the ends, the count and nothing else
+  return { ...r, fell: window.SpinMeter._internals.stoppedAndFell({ segment: { track: tr }, flight: { speed: 4 } }) };
+}), real.margins);
+const wrong = margins.filter((r) => (r.isServe ? r.fell : !r.fell));
+const ratio = (r) => (r.dy > 0 ? r.dy / Math.abs(r.dx) : 0);
+const steepest = margins.filter((r) => r.isServe).sort((a, b) => ratio(b) - ratio(a))[0];
+const net = margins.find((r) => !r.isServe);
+console.log(`${wrong.length ? 'FAIL' : 'ok  '}  ${'every measured stretch'.padEnd(38)} ` +
+  `${String(margins.length - 1) + ' serves must not fire, 1 net ball must'}`.padEnd(30) +
+  ` -> ${wrong.length ? wrong.map((r) => r.name).join(', ') : 'all as expected'}`);
+console.log(`      steepest serve ${steepest.name} falls ${ratio(steepest).toFixed(2)}x its travel;` +
+  ` the net ball ${ratio(net).toFixed(2)}x; the line is at 3`);
+let netBad = wrong.length;
 for (const c of netOut) {
   const pass = c.isServe ? !c.fell : c.fell;
   if (!pass) netBad++;
@@ -141,7 +157,7 @@ for (const c of out) {
   if (!pass) bad++;
   console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.want === null ? 'expect a ball' : 'expect rejected'} -> ${c.got === null ? 'ball' : '"' + c.got + '"'}`);
 }
-const total = out.length + segCases.length + 1 + netOut.length;
+const total = out.length + segCases.length + 2 + netOut.length;
 bad += netBad;
 if (seg.droppedPoints !== 1) bad++;
 console.log(`\n${total - bad}/${total} as expected`);

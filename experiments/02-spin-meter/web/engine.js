@@ -796,20 +796,20 @@
   // drops back toward the camera. Measured, that fall gives a confident spin that is not the
   // serve's (real capture serve 6: 40.9 rev/s, "clear", off the ball coming back off the net).
   //
-  // It is not the same as a ball flying at a camera placed head-on, which the club clips are
-  // (the ball comes in at 45-62 degrees there): that is fast, and it does not fall the whole way
-  // while standing still across the picture. So the test is all three together, and the caller
-  // adds a fourth: no bounce was seen, because a ball that bounced went somewhere.
-  const NET = { across: 0.35, speed: 3.0, minFrames: 10 };
+  // It is the shape that gives it away, not the speed. Measured over 31 captures: the net ball
+  // falls 8.8 times further than it travels across the picture, while the steepest real stretch
+  // is 0.69 (a club serve filmed head-on, where the ball does come at the camera and does fall).
+  // Speed separates nothing — the net ball is 2.44 m/s and real home serves run 2.54 to 2.85 —
+  // so it is not part of the test. The caller adds the one condition the shape can't carry: no
+  // bounce was seen, because a ball that bounced went somewhere.
+  const NET = { fallsTimesFurther: 3, minFrames: 10 };
   function stoppedAndFell(reading, lim = NET) {
     const tr = reading && reading.segment && reading.segment.track;
-    if (!tr || tr.length < lim.minFrames || !reading.flight) return false;
+    if (!tr || tr.length < lim.minFrames) return false;
     const a = tr[0], b = tr[tr.length - 1];
     const dx = Math.abs(b[1] - a[1]), dy = b[2] - a[2];        // y grows downward
     if (dy <= 0) return false;                                  // it rose: not a ball dropping
-    if (dx > lim.across * dy) return false;                     // it crossed the picture
-    if (!(reading.flight.speed < lim.speed)) return false;      // too fast for a ball just falling
-    return true;
+    return dy > lim.fallsTimesFurther * dx;                     // down far more than across
   }
 
   function flightRule(tr, minLen = 12) {

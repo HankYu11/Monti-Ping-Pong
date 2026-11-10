@@ -291,3 +291,41 @@ searching every one.** Kept serves take 0.2–1.4 s against 1.2–5.1 s. A refus
 except where a rule refuses before measuring, which is free. On the phone, from its own 3.5 s
 (track) and 6.8 s (refused) and a 7/3 split, expect a mean near **4.5 s** against the 6.4 s it
 actually did. Only a session settles it.
+
+
+## The net ball: the shape gives it away, not the speed
+
+Measured over every capture held — 14 home side-on, 4 club head-on (the M series, filmed with
+the ball flying at the camera at 45–62°) and the 10 of the field session — comparing how far each
+measured stretch travelled across the picture against how far it fell:
+
+| | falls ÷ travels |
+|---|---|
+| the net ball (field serve 6) | **8.82** |
+| steepest real stretch (M7, head-on, off the paddle) | 0.69 |
+| next: M12 and T1 | 0.49 |
+| everything else | under 0.46 |
+
+The line sits at **3**: 4.3× above the steepest real serve and 2.9× below the net ball.
+
+**Three things that look like signals and are not.** `towardCameraDeg`: the net ball is 58.6°,
+but field serve 9 is a real serve at 51.2° and the whole head-on setup lives at 45–62°. **Speed**:
+the net ball is 2.44 m/s and real home serves run 2.54, 2.78, 2.84, 2.85 — no threshold separates
+them, and the first version of this check used speed and would have cut real serves while missing
+any faster net ball. **Size growth**: the net ball grows 1.35× as it drops toward the camera,
+inside the serves' range of 0.54–1.61.
+
+What survives is the geometry alone, plus one condition the shape cannot carry: no bounce was
+seen, because a ball that bounced went somewhere.
+
+**It still rests on one net ball.** 32 real stretches say where the line is safe from above;
+nothing says where it is safe from below. A handful of deliberate net serves in the next session
+would settle it and cost nothing.
+
+### Two other things the captures turned up
+
+- **N12** reads as a serve off the paddle at 39.7 rev/s with a flight speed of 20.6 m/s, 61° off
+  the camera, on a ball about 39 px across. That is not a serve — it looks like a ball bounced on
+  the paddle near the body. Nothing currently rejects it.
+- **N15**'s capture file is truncated and holds no pixels, so its "no reading" in every run so far
+  meant nothing at all. It should be left out of counts.

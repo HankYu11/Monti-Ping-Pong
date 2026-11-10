@@ -178,3 +178,50 @@ that the worst case of measuring along the track is the behaviour we already hav
 clips only. On real captures the medians change moved M12 by 0.4 rev/s and N12 from an unclear
 0.5 to 39.7. Neither is obviously wrong — N12 was never readable before — but 0.05 rev/s is the
 rendered figure, not the real one.
+
+---
+
+# At the table (10 Nov 2026): the track is refused nine times in ten
+
+First session on a phone with the change live: 0.9.4, Pixel 8, 10 serves measured.
+
+**Frame delivery was perfect**, which is the risk that could have invalidated everything else:
+`watchingBy` "graphics chip, recording stream" — the good path, not one of the two lossy
+fallbacks — with **0 dropped and 0 skipped** of 52,990 frames encoded.
+
+**But the speed is not there.** The track was used on **1 of 10** serves; the other 9 refused it
+and searched. Offline it was 5 of 21. On the one serve that used it the answer came in 3.5 s
+against a 6.8 s mean for the nine that didn't, so the gain is real when it happens — it just
+almost never happens.
+
+| | |
+|---|---|
+| serves measured | 10 |
+| track used | 1 |
+| track refused | 9 (90%) |
+| answer, track used | 3.5 s |
+| answer, track refused | 6.8 s mean |
+| engine search time when refused | 3.1 s mean |
+
+**It is not the ball-in-flight rules.** Serve 3's capture was reconstructed from `serve03.json`
+and its track run through the real `flightRule` and `ballisticRule`: the tracker's pick passes
+both (93 points after filling in every frame, median radius 7.5). So the track is being accepted
+and then put aside afterwards, by the test added for M6: *a tracked run is kept only if it has a
+clear reading of a stretch that is not after the bounce.*
+
+That test is almost certainly too strict. On serve 3 the engine's own search read the stretch
+off the paddle at fit **0.752**, where 0.75 is the line between clear and unclear. A reading
+that marginal flips to unclear on any small difference in which frames are measured — and the
+tracked run measures a slightly different set. So the test meant to catch M6 (*no* pre-bounce
+stretch at all) is instead firing on *marginal* pre-bounce stretches, which are common.
+
+Whether that is really what happened on all nine is not recorded: `trackRefused` was a plain
+true. It now carries the reason — "no track flies like a ball", "measured to nothing", "only
+after the bounce", or "the serve's own stretch read unclear" — which separates the structural
+case (M6, worth refusing) from the quality case (probably not worth refusing, since the engine
+would then be searching to turn an unclear reading into a marginal one).
+
+**The next step costs no table time.** Each `serveNN.json` carries the capture's rect, frame
+count and the tracker's track and near tracks, and the clips are beside them, so all 10 can be
+re-measured on a desktop with the instrumented engine. The counts per reason decide whether the
+test should be narrowed to the structural case alone.

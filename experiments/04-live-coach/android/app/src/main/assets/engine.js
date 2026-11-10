@@ -1962,16 +1962,23 @@
       let out = null;
       if (opts.segments) {
         const given = opts.segments(R);
-        if (given && given.length) {
+        // Why a handed-in track was put aside, in the report, so a session can say which of
+        // these actually happens rather than only that something did.
+        let why = null;
+        if (!given || !given.length) why = "no track flies like a ball";
+        else {
           out = await runSegs(given);
-          // Usable means a clear reading of the serve itself. A tracked run whose only clear
-          // reading is after the bounce has missed the stretch off the paddle, so the engine
-          // searches, which can reach frames before the tracks begin.
-          const usable = out && !out.error && (out.serves || []).some((sv) =>
-            (sv.phases || [sv]).some((r) => !r.error && r.reliable && r.phase !== "bounce"));
-          if (!usable) out = null;
+          if (!out || out.error) why = "measured to nothing";
+          else {
+            const read = (out.serves || []).flatMap((sv) => sv.phases || [sv]).filter((r) => !r.error);
+            // the serve's own spin is the stretch off the paddle; after the bounce the ball
+            // carries less, so a run that only ever saw that has missed the serve
+            if (!read.some((r) => r.phase !== "bounce")) why = "only after the bounce";
+            else if (!read.some((r) => r.reliable && r.phase !== "bounce")) why = "the serve's own stretch read unclear";
+          }
+          if (why) out = null;
         }
-        if (!out) DBG.trackRefused = true;
+        if (why) DBG.trackRefused = why;
       }
       if (!out) out = await runSegs(await search());
       return out;

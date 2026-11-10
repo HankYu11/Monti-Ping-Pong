@@ -530,6 +530,36 @@ engine's search. Now `usedTrack` says what happened and `trackRefused` says the 
 handed in and turned down. That is the number to watch at the table: it was 5 of 21 on the
 recorded captures, and how often it happens live decides how much of the speed is real.
 
+## 0.9.5: the track is kept when the engine's own search has nothing better
+
+The first session with 0.9.4 at the table used the tracker's track on **1 serve in 10** and
+searched the crop on the other nine, so almost none of the speed arrived. Re-measuring those ten
+captures on a desktop (rebuilt from each `serveNN.json` against its clip) gave the reasons: six
+"only after the bounce", two "read unclear", one "no track flies like a ball".
+
+Six of the nine were a structure the M6 rule was never meant to catch. The bounce is *inside*
+the track, but the stretch between the hit and the bounce is under 8 frames, so only the
+after-bounce part is built. That is not M6, where the bounce came before the track began and
+only the other tracks showed it — there the engine's search can reach frames the track cannot.
+Here it cannot: on five of the six its own answer is also an after-bounce reading, and on one it
+finds nothing at all while the track reads 35.5 rev/s clear. So a stretch now carries *why* it
+was called after-bounce, and the reading is only given up when the bounce came first.
+
+And the hit itself was splitting the flight. The tracker's crop follows the ball, which merges
+with the paddle at the hit: that point is far too big and sits low, which reads as a lowest
+point followed by a rebound. Serve 3 measured the stretch off the paddle correctly (52.5 rev/s
+against the search's 53.4) and called it "bounce". Such points are dropped — before the frames
+between the tracker's points are filled in, since the fill drags their neighbours toward them
+and those come out ball-sized, where nothing later can see the problem.
+
+On that session's ten captures the track now carries seven. Engine time over them, one desktop
+thread: 14.9 s against 26.7 s searching every one; on the phone expect a mean near 4.5 s against
+the 6.4 s it did. The 21 club captures are unchanged, and M6 still refuses and still reads 28.5.
+
+**Known, and not from this change:** a ball that comes back off the net is read and spoken as
+the serve. One serve of the ten went into the net and was given as 40.9 rev/s, clear — that is
+the ball dropping back off the net toward the camera, and nothing in the reading says so.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

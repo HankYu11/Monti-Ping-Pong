@@ -225,3 +225,47 @@ would then be searching to turn an unclear reading into a marginal one).
 count and the tracker's track and near tracks, and the clips are beside them, so all 10 can be
 re-measured on a desktop with the instrumented engine. The counts per reason decide whether the
 test should be narrowed to the structural case alone.
+
+## Why it refused: not what I guessed
+
+The session's 10 captures were rebuilt from `serveNN.json` (the phone's own rect, frame count,
+track and near tracks) and re-measured on the desktop against the saved clips. The counts:
+
+| reason the track was put aside | serves |
+|---|---|
+| only after the bounce | 6 (1, 3, 5, 7, 9, 10) |
+| the serve's own stretch read unclear | 2 (4, 6) |
+| no track flies like a ball | 1 (8) |
+| *track used* | *1 (2)* |
+
+**The marginal-fit guess was wrong.** "Unclear" fired twice, and neither was marginal: serve 4
+reads 54.05 at fit 0.485 along the track against the search's 54.4 at 0.561 — both unclear, same
+answer, so the search buys nothing; serve 6 is a net ball (below).
+
+**The real cause was a second structure that looks the same from outside.** In all six, the
+bounce is *inside* the track and `bouncedBefore` never fires — the stretch between the hit and
+the bounce is simply under 8 frames, so only the after-bounce part gets built. That is not M6.
+In M6 the bounce happened *before* the track began and only the near tracks showed it, so the
+engine's own search could reach frames the track could not. Here the search has nothing better:
+on 5 of the 6 its own headline is also an after-bounce reading, and on serve 1 it finds nothing
+at all while the track reads 35.45 clear.
+
+So "only after the bounce" now refuses only when the label came from `bouncedBefore`, which is
+M6's case. A track that holds the bounce but too few frames before it keeps its reading.
+
+**And one mislabelling.** Serve 3 is the single capture where the search did find the stretch off
+the paddle (53.4, fit 0.817). The track measured the same stretch — 52.35, fit 0.833, the right
+number — but called it "bounce". Its first point is the ball merged with the paddle at the hit:
+radius 28 against a median of 13, sitting low, which reads as a lowest point followed by rising,
+so the flight was split as though it had already bounced. Points over 1.6× the median radius are
+now left out before the kinks are looked for, the same test `ballisticRule` already uses.
+
+Together these take the track from 1 of 10 to **7 of 10** on this session, by the re-run's count.
+
+## Open, and not from this work: a net ball reads as a serve
+
+Serve 6 went into the net. Capture frames 0–50 are the serve crossing to the net; frame 60 on is
+the ball dropping back off the net toward the camera. The tracker picked the after-net ball, and
+the engine's search read it 40.9 at fit 0.958 — clear — and the phone spoke it. That is not the
+serve's spin, and nothing in the reading says so. A ball that comes back off the net should
+probably give no reading at all.

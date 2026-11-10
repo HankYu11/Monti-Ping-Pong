@@ -660,8 +660,17 @@
   // where the hit was, the stretch off the paddle and the one after the bounce, the toss, and
   // notes on what couldn't be measured; or null. sw, sh: the search frame's size. Used by the
   // flight search and by measureCapture (a track found by the live app).
-  function serveBuilder(sw, sh, skipAfter, maxFrames, markAfterBounce = false) {
+  function serveBuilder(sw, sh, skipAfter, maxFrames, fromTracker = false) {
     return function build(tr, all) {
+      // The live tracker's crop follows the ball, and at the hit the ball merges with the paddle:
+      // that point is far too big and sits where the paddle was, which reads as a kink and splits
+      // the flight as if it had already bounced (real capture serve 3: the stretch off the paddle
+      // came out labelled "bounce"). Leave those points out before looking for the kinks.
+      if (fromTracker && tr.length >= 8) {
+        const rM = median(tr.map((p) => p[3]));
+        const kept = tr.filter((p) => p[3] <= 1.6 * rM);
+        if (kept.length >= 8) tr = kept;
+      }
       const whole = tr;
       // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
@@ -697,7 +706,7 @@
         }
         return false;
       };
-      const afterBounce = markAfterBounce && !sawBounce && bouncedBefore();
+      const afterBounce = fromTracker && !sawBounce && bouncedBefore();
       const parts = [], notes = [];
       const note = (phase, text, fix, frames) => notes.push({ phase, text, fix, frames });
       // the first frames after the hit still have the paddle next to the ball
@@ -736,7 +745,11 @@
       }
       if (!parts.length) return null;
       const frames = parts.reduce((n, q) => n + q.track.length, 0), size = median(parts[0].track.map((p) => p[3]));
-      return { start: parts[0].start, end: parts[parts.length - 1].end, parts, notes, score: frames * size };
+      // afterBounceOnly: the bounce happened before this track began and only the other tracks
+      // show it, so the stretch off the paddle is out of reach here (real capture M6). That is
+      // different from a track that holds the bounce but too few frames before it to measure,
+      // where the engine's own search has nothing better to offer.
+      return { start: parts[0].start, end: parts[parts.length - 1].end, parts, notes, score: frames * size, afterBounceOnly: afterBounce };
         };
     // The toss just before the flight began, when the kink wasn't seen in one track: a slow toss
     // gets cut from the moving part, or the paddle covered the ball and the toss is a track of its
@@ -1971,10 +1984,14 @@
           if (!out || out.error) why = "measured to nothing";
           else {
             const read = (out.serves || []).flatMap((sv) => sv.phases || [sv]).filter((r) => !r.error);
-            // the serve's own spin is the stretch off the paddle; after the bounce the ball
-            // carries less, so a run that only ever saw that has missed the serve
-            if (!read.some((r) => r.phase !== "bounce")) why = "only after the bounce";
-            else if (!read.some((r) => r.reliable && r.phase !== "bounce")) why = "the serve's own stretch read unclear";
+            // The serve's own spin is the stretch off the paddle. Giving up is only worth it
+            // when the engine's search could find that stretch and the track could not: the
+            // bounce came before the track began. When the track holds the bounce but too few
+            // frames before it, the search has nothing better in that footage, so keep the
+            // reading rather than spend a search to arrive at the same after-bounce number.
+            if (!read.some((r) => r.phase !== "bounce")) {
+              if (given[0] && given[0].afterBounceOnly) why = "only after the bounce";
+            } else if (!read.some((r) => r.reliable && r.phase !== "bounce")) why = "the serve's own stretch read unclear";
           }
           if (why) out = null;
         }

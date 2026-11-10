@@ -52,10 +52,11 @@ const out = await p.evaluate((cs) => cs.map(c => ({ name: c.name, want: c.want,
 // off the paddle; after the bounce the ball carries less. A capture whose tracks only begin
 // after the bounce must not put the after-bounce spin up as the serve's (real capture M6).
 const seg = await p.evaluate(() => {
-  const build = window.SpinMeter._internals.serveBuilder(480, 270, 4, 60, true);
+  const build = window.SpinMeter._internals.serveBuilder(480, 270, 4, 60, true);  // from the tracker
   const arc = (from, n, x0, y0, vx, vy, r = 6) =>
     Array.from({ length: n }, (_, k) => [from + k, x0 + vx * k, y0 + vy * k + 0.004 * k * k, r]);
   const kinds = (b) => (b ? b.parts.map((q) => q.kind) : null);
+  const out = (b) => (b ? { kinds: b.parts.map((q) => q.kind), afterOnly: !!b.afterBounceOnly } : null);
   // a flight that bounces inside the track: off the paddle, then after the bounce
   const withBounce = [...arc(60, 40, 100, 300, 6, 2), ...arc(100, 40, 340, 400, 6, -2)];
   // the same flight, but the track only starts after the bounce (the M6 shape): a near track
@@ -64,22 +65,39 @@ const seg = await p.evaluate(() => {
   const pickAfter = arc(90, 50, 330, 590, 6, -2);
   // a flight with no bounce anywhere: it must stay a plain flight
   const plain = arc(60, 55, 100, 260, 6, 1);
+  // the bounce is inside the track, but too few frames before it to measure: only the
+  // after-bounce stretch gets made. The engine's own search has nothing better in that
+  // footage, so this must NOT be marked as a track that missed the serve.
+  const shortBefore = [...arc(80, 5, 390, 282, 6, 2.2), ...arc(85, 35, 430, 295, 6, -1.6)];
+  // the ball merged with the paddle at the hit: one point far too big, low on the screen,
+  // which reads as a lowest point followed by rising and splits the flight as if it bounced
+  const cleanHit = [...arc(64, 21, 300, 250, 6, 2.2), ...arc(85, 35, 430, 295, 6, -1.6)];
+  const mergedHit = [[60, 280, 279, 14], ...cleanHit];
   return {
-    withBounce: kinds(build(withBounce, [withBounce])),
-    afterBounce: kinds(build(pickAfter, [pickAfter, nearBounce])),
-    plain: kinds(build(plain, [plain])),
+    withBounce: out(build(withBounce, [withBounce])),
+    afterBounce: out(build(pickAfter, [pickAfter, nearBounce])),
+    plain: out(build(plain, [plain])),
+    shortBefore: out(build(shortBefore, [shortBefore])),
+    mergedHit: out(build(mergedHit, [mergedHit])),
   };
 });
 const segCases = [
-  { name: 'bounce inside the track', got: seg.withBounce, want: (k) => k && k[0] === 'paddle', expect: 'measured off the paddle' },
-  { name: 'track starts after the bounce', got: seg.afterBounce, want: (k) => k && k[0] === 'bounce', expect: 'marked after the bounce' },
-  { name: 'no bounce anywhere', got: seg.plain, want: (k) => k && k[0] === 'flight', expect: 'a plain flight' },
+  { name: 'bounce inside the track', got: seg.withBounce, expect: 'off the paddle, not flagged',
+    want: (o) => o && o.kinds[0] === 'paddle' && !o.afterOnly },
+  { name: 'track starts after the bounce', got: seg.afterBounce, expect: 'after the bounce, FLAGGED',
+    want: (o) => o && o.kinds[0] === 'bounce' && o.afterOnly },
+  { name: 'no bounce anywhere', got: seg.plain, expect: 'a plain flight',
+    want: (o) => o && o.kinds[0] === 'flight' && !o.afterOnly },
+  { name: 'too few frames before the bounce', got: seg.shortBefore, expect: 'after the bounce, NOT flagged',
+    want: (o) => o && o.kinds[0] === 'bounce' && !o.afterOnly },
+  { name: 'ball merged with the paddle at the hit', got: seg.mergedHit, expect: 'off the paddle',
+    want: (o) => o && o.kinds[0] === 'paddle' },
 ];
 let bad = 0;
 for (const c of segCases) {
   const pass = c.want(c.got);
   if (!pass) bad++;
-  console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.expect} -> ${c.got ? c.got.join(', ') : 'nothing built'}`);
+  console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.expect.padEnd(30)} -> ${c.got ? c.got.kinds.join(', ') + (c.got.afterOnly ? '  [flagged]' : '') : 'nothing built'}`);
 }
 for (const c of out) {
   const pass = c.want === null ? c.got === null : c.got !== null;

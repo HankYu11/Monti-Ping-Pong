@@ -662,15 +662,6 @@
   // flight search and by measureCapture (a track found by the live app).
   function serveBuilder(sw, sh, skipAfter, maxFrames, fromTracker = false) {
     return function build(tr, all) {
-      // The live tracker's crop follows the ball, and at the hit the ball merges with the paddle:
-      // that point is far too big and sits where the paddle was, which reads as a kink and splits
-      // the flight as if it had already bounced (real capture serve 3: the stretch off the paddle
-      // came out labelled "bounce"). Leave those points out before looking for the kinks.
-      if (fromTracker && tr.length >= 8) {
-        const rM = median(tr.map((p) => p[3]));
-        const kept = tr.filter((p) => p[3] <= 1.6 * rM);
-        if (kept.length >= 8) tr = kept;
-      }
       const whole = tr;
       // the moving part: split where the ball stops (held, caught, picked up)
       const runs = []; let cur = [tr[0]];
@@ -788,6 +779,19 @@
   // Whether a track flies like a serve: null, or why not ("" for a track too short to count).
   // A flight may go across the picture, toward the camera or away from it. Not a flight: a
   // toss (mostly upward), a ball dropping straight down without coming closer, slow movers.
+  // The live tracker's crop follows the ball, and at the hit the ball merges with the paddle:
+  // that point is far too big and sits where the paddle was. It has to go before the frames
+  // between the tracker's points are filled in — the fill drags its neighbours toward it, and
+  // those neighbours are ball-sized, so a later check can't see anything wrong with them. Real
+  // capture serve 3: the point at frame 60 (radius 28 against a median of 13) made frames 62-63
+  // read as a lowest point and a rebound, and the stretch off the paddle came out as "bounce".
+  function dropMerged(tr, minLeft = 8) {
+    if (!tr || tr.length < minLeft) return tr;
+    const rM = median(tr.map((p) => p[3]));
+    const kept = tr.filter((p) => p[3] <= 1.6 * rM);
+    return kept.length >= minLeft ? kept : tr;
+  }
+
   function flightRule(tr, minLen = 12) {
     if (tr.length < minLen) return tr.length >= 6 ? "short" : "";
     const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
@@ -2105,7 +2109,7 @@
       const [cx, cy] = cap.rect;
       const build = serveBuilder(Math.floor(R.W / 2), Math.floor(R.H / 2), opts.skipAfterContact ?? 4, opts.maxFrames ?? 60, true);
       const half = (t) => {
-        const q = t.map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]), out = [];
+        const q = dropMerged(t).map((p) => [p[0], (p[1] - cx) * 0.5, (p[2] - cy) * 0.5, p[3] * 0.5]), out = [];
         for (let k = 0; k < q.length; k++) {
           out.push(q[k]);
           const a = q[k], b = q[k + 1];
@@ -2126,5 +2130,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

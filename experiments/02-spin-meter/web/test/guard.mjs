@@ -69,16 +69,33 @@ const seg = await p.evaluate(() => {
   // after-bounce stretch gets made. The engine's own search has nothing better in that
   // footage, so this must NOT be marked as a track that missed the serve.
   const shortBefore = [...arc(80, 5, 390, 282, 6, 2.2), ...arc(85, 35, 430, 295, 6, -1.6)];
-  // the ball merged with the paddle at the hit: one point far too big, low on the screen,
-  // which reads as a lowest point followed by rising and splits the flight as if it bounced
+  // The ball merged with the paddle at the hit: one point far too big, low on the screen, and
+  // four frames before the next one. It must go BEFORE the frames between are filled in — the
+  // fill drags its neighbours toward it and they are ball-sized, so nothing later can see the
+  // problem. So this case runs the real pipeline: drop, then fill, then build.
+  const I2 = window.SpinMeter._internals;
+  const fill = (t) => {              // what measureCapture does between the tracker's points
+    const o = [];
+    for (let k = 0; k < t.length; k++) {
+      o.push(t[k]);
+      const a = t[k], b = t[k + 1];
+      if (b) for (let f = a[0] + 1; f < b[0]; f++) { const u = (f - a[0]) / (b[0] - a[0]);
+        o.push([f, a[1] + u * (b[1] - a[1]), a[2] + u * (b[2] - a[2]), a[3] + u * (b[3] - a[3])]); }
+    }
+    return o;
+  };
   const cleanHit = [...arc(64, 21, 300, 250, 6, 2.2), ...arc(85, 35, 430, 295, 6, -1.6)];
-  const mergedHit = [[60, 280, 279, 14], ...cleanHit];
+  const mergedRaw = [[60, 280, 279, 14], ...cleanHit];      // the merge, 4 frames before the rest
+  const mergedHit = fill(I2.dropMerged(mergedRaw));
+  const mergedUnfixed = fill(mergedRaw);                     // what it did before: the fill drags 61-63
   return {
     withBounce: out(build(withBounce, [withBounce])),
     afterBounce: out(build(pickAfter, [pickAfter, nearBounce])),
     plain: out(build(plain, [plain])),
     shortBefore: out(build(shortBefore, [shortBefore])),
     mergedHit: out(build(mergedHit, [mergedHit])),
+    mergedUnfixed: out(build(mergedUnfixed, [mergedUnfixed])),
+    droppedPoints: mergedRaw.length - I2.dropMerged(mergedRaw).length,
   };
 });
 const segCases = [
@@ -93,6 +110,11 @@ const segCases = [
   { name: 'ball merged with the paddle at the hit', got: seg.mergedHit, expect: 'off the paddle',
     want: (o) => o && o.kinds[0] === 'paddle' },
 ];
+// the merge must be dropped from the tracker's own points, not after the fill
+if (seg.droppedPoints !== 1) { console.log(`FAIL  dropMerged removed ${seg.droppedPoints} points, expected 1`); }
+else console.log('ok    dropMerged removes the merged point      from the tracker\'s own points -> 1 dropped');
+if (seg.mergedUnfixed && seg.mergedUnfixed.kinds[0] === 'paddle')
+  console.log('note  dropping after the fill would also have worked on this case; it does not on real serve 3');
 let bad = 0;
 for (const c of segCases) {
   const pass = c.want(c.got);
@@ -104,7 +126,8 @@ for (const c of out) {
   if (!pass) bad++;
   console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.want === null ? 'expect a ball' : 'expect rejected'} -> ${c.got === null ? 'ball' : '"' + c.got + '"'}`);
 }
-const total = out.length + segCases.length;
+const total = out.length + segCases.length + 1;
+if (seg.droppedPoints !== 1) bad++;
 console.log(`\n${total - bad}/${total} as expected`);
 await b.close(); srv.close();
 process.exit(bad ? 1 : 0);

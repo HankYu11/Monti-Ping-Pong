@@ -258,7 +258,11 @@ the paddle (53.4, fit 0.817). The track measured the same stretch — 52.35, fit
 number — but called it "bounce". Its first point is the ball merged with the paddle at the hit:
 radius 28 against a median of 13, sitting low, which reads as a lowest point followed by rising,
 so the flight was split as though it had already bounced. Points over 1.6× the median radius are
-now left out before the kinks are looked for, the same test `ballisticRule` already uses.
+now left out, the same test `ballisticRule` already uses — and they have to go *before* the
+frames between the tracker's points are filled in. Dropping them later does nothing: the fill
+drags the neighbouring frames toward the merged point, and those are ball-sized, so no later
+check can see anything wrong. The first attempt dropped them after the fill and serve 3 stayed
+mislabelled.
 
 Together these take the track from 1 of 10 to **7 of 10** on this session, by the re-run's count.
 
@@ -269,3 +273,21 @@ the ball dropping back off the net toward the camera. The tracker picked the aft
 the engine's search read it 40.9 at fit 0.958 — clear — and the phone spoke it. That is not the
 serve's spin, and nothing in the reading says so. A ball that comes back off the net should
 probably give no reading at all.
+
+
+## Where it stands after the re-run (2bba171 + the drop moved earlier)
+
+7 of the 10 field captures keep the track (1, 2, 3, 5, 7, 9, 10), against 1 before. The 21
+`cap8` captures are unchanged, M6 still refuses and still reads 28.5.
+
+**The one that matters most is serve 1**: the track reads 35.5 rev/s at fit 0.803, clear, where
+the engine's own search finds nothing and the phone gave an error. That turns a serve the app
+fails on into one it answers — worth more than the speed. It is an after-bounce reading and
+labelled as such, so what is spoken is the receiver's spin, not the spin off the paddle.
+
+Engine time over the 10, one thread on a desktop: **14.9 s with the track against 26.7 s
+searching every one.** Kept serves take 0.2–1.4 s against 1.2–5.1 s. A refusal now costs about
+1.1–1.3 s on top of the search, since the tracked attempt is made first and then dropped —
+except where a rule refuses before measuring, which is free. On the phone, from its own 3.5 s
+(track) and 6.8 s (refused) and a 7/3 split, expect a mean near **4.5 s** against the 6.4 s it
+actually did. Only a session settles it.

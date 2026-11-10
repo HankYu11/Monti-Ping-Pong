@@ -47,6 +47,21 @@ cases.push({ name: 'jitter far beyond a ball', want: 'reject', track: jitter(bas
 const out = await p.evaluate((cs) => cs.map(c => ({ name: c.name, want: c.want,
   got: window.SpinMeter._internals.ballisticRule(c.track, 240) })), cases);
 
+// --- a serve into the net ------------------------------------------------------------
+// On stretches the engine really measured on the phone, not shapes made up here: the net ball
+// is the one the app spoke as a clear 40.9 rev/s.
+const real = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/real-segments.json'), 'utf8'));
+const netOut = await p.evaluate((cases) => cases.map((c) => ({
+  name: c.name, isServe: c.isServe,
+  fell: window.SpinMeter._internals.stoppedAndFell({ segment: { track: c.track }, flight: c.flight }),
+})), Object.entries(real).filter(([k]) => !k.startsWith('_')).map(([k, v]) => ({ name: k, ...v })));
+let netBad = 0;
+for (const c of netOut) {
+  const pass = c.isServe ? !c.fell : c.fell;
+  if (!pass) netBad++;
+  console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${(c.isServe ? 'a real serve' : 'into the net').padEnd(30)} -> ${c.fell ? 'stopped and fell' : 'a flight'}`);
+}
+
 // --- which stretch of the flight a handed-in track gets measured on -------------------
 // build() works on tracks alone, so this needs no pixels. A serve's own spin is the stretch
 // off the paddle; after the bounce the ball carries less. A capture whose tracks only begin
@@ -126,7 +141,8 @@ for (const c of out) {
   if (!pass) bad++;
   console.log(`${pass ? 'ok  ' : 'FAIL'}  ${c.name.padEnd(38)} ${c.want === null ? 'expect a ball' : 'expect rejected'} -> ${c.got === null ? 'ball' : '"' + c.got + '"'}`);
 }
-const total = out.length + segCases.length + 1;
+const total = out.length + segCases.length + 1 + netOut.length;
+bad += netBad;
 if (seg.droppedPoints !== 1) bad++;
 console.log(`\n${total - bad}/${total} as expected`);
 await b.close(); srv.close();

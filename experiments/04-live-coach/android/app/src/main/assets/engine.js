@@ -792,6 +792,26 @@
     return kept.length >= minLeft ? kept : tr;
   }
 
+  // A serve into the net: the ball stops going forward and simply falls, often growing as it
+  // drops back toward the camera. Measured, that fall gives a confident spin that is not the
+  // serve's (real capture serve 6: 40.9 rev/s, "clear", off the ball coming back off the net).
+  //
+  // It is not the same as a ball flying at a camera placed head-on, which the club clips are
+  // (the ball comes in at 45-62 degrees there): that is fast, and it does not fall the whole way
+  // while standing still across the picture. So the test is all three together, and the caller
+  // adds a fourth: no bounce was seen, because a ball that bounced went somewhere.
+  const NET = { across: 0.35, speed: 3.0, minFrames: 10 };
+  function stoppedAndFell(reading, lim = NET) {
+    const tr = reading && reading.segment && reading.segment.track;
+    if (!tr || tr.length < lim.minFrames || !reading.flight) return false;
+    const a = tr[0], b = tr[tr.length - 1];
+    const dx = Math.abs(b[1] - a[1]), dy = b[2] - a[2];        // y grows downward
+    if (dy <= 0) return false;                                  // it rose: not a ball dropping
+    if (dx > lim.across * dy) return false;                     // it crossed the picture
+    if (!(reading.flight.speed < lim.speed)) return false;      // too fast for a ball just falling
+    return true;
+  }
+
   function flightRule(tr, minLen = 12) {
     if (tr.length < minLen) return tr.length >= 6 ? "short" : "";
     const a = tr[0], b = tr[tr.length - 1], dx = b[1] - a[1], dy = b[2] - a[2];
@@ -1935,7 +1955,7 @@
         // a ball sent back to the server goes the other way, which only the user can tell us
         // (opts.serveDir: "any", "toward", "away", "ltr", "rtl"). Direction is taken from the
         // stretch with the most frames; a short stretch's direction and speed are unreliable.
-        const skipped = { slow: 0, way: 0 };
+        const skipped = { slow: 0, way: 0, net: 0 };
         const wayOk = {
           // serves toward the camera came in at 9-30 degrees, balls sent back went at -1 to -43
           any: () => true, toward: (f) => f[2] > 0.05, away: (f) => f[2] < -0.05, ltr: (f) => f[0] > 0.1, rtl: (f) => f[0] < -0.1,
@@ -1944,8 +1964,11 @@
         for (let k = serves.length - 1; k >= 0; k--) {
           const m = motion(serves[k]);
           if (!m) continue;
+          // a ball that bounced went somewhere; one that never did and only fell stopped at the net
+          const bounced = (serves[k].phases || [serves[k]]).some((r) => r.phase === "bounce" || r.phase === "paddle");
           if (m.flight.speed < 1.5) { skipped.slow++; serves.splice(k, 1); }
           else if (!wayOk(m.flight.dir)) { skipped.way++; serves.splice(k, 1); }
+          else if (!bounced && stoppedAndFell(m)) { skipped.net++; serves.splice(k, 1); }
         }
         // With a clear serve in the video, a short unclear stretch with no bounce is something else
         // that moved (a hand, a ball being picked up), not a serve.
@@ -1969,6 +1992,8 @@
         if (!serves.length) {
           const why = skipped.way ? ` ${skipped.way} ball${skipped.way > 1 ? "s" : ""} went the other way than set under Settings ("Serves go").` : "";
           const slow = skipped.slow ? ` ${skipped.slow} slow ball${skipped.slow > 1 ? "s" : ""} (under 1.5 m/s, like bouncing it on the table) didn't count.` : "";
+          // said plainly: this one is the player's answer, not a setup problem
+          if (skipped.net) return { error: "Into the net: the ball stopped and dropped without bouncing, so there is no serve to read.", net: true, serves: [], checks, skipped, meta: timing() };
           return { error: "No serve flight found." + why + slow + (why || slow ? "" : " Keep the phone still, with the ball's flight over the table in view."), serves: [], checks, skipped, meta: timing() };
         }
         const first = serves.find((s) => !s.error);
@@ -2130,5 +2155,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -86,7 +86,7 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch),
+        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), net: !!res.net, skipped: res.skipped || null,
         data: sv ? { phases: (sv.phases || []).map(dataOf), notes: (sv.notes || []).map((n) => n.text) } : null, usedTrack: !!(dbg.trackGiven && !dbg.trackRefused), trackRefused: dbg.trackRefused || false, engineSeconds: res.meta && res.meta.seconds, time: dbg.time, search: dbg.search && dbg.search.serves,
       }));
     } catch (e) {

@@ -767,6 +767,16 @@ class MainActivity : Activity() {
     private fun show(r: JSONObject) {
         val sv = r.optJSONObject("serve")
         val secs = r.optLong("wallMs") / 1000.0
+        // a serve that hit the net: the ball stopped and dropped without bouncing. The engine used
+        // to measure that drop and give it as the serve's spin (10 Nov session, serve 6: 40.9
+        // rev/s, clear). It is the player's answer, so it is said rather than passed over.
+        if (r.optBoolean("net")) {
+            unclear++
+            log("unclear", "#${r.optInt("capture")}: into the net")
+            screen.noRead(r.optInt("capture"), "Into the net")
+            if (mode == Mode.LIVE) turnDone("Into the net.", r.optInt("capture"))
+            return
+        }
         if (sv == null || !sv.optBoolean("clear")) {
             // a movement that wasn't a readable serve (a toss, a catch, someone walking by): not announced
             unclear++

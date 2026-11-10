@@ -318,6 +318,11 @@ inside the serves' range of 0.54–1.61.
 What survives is the geometry alone, plus one condition the shape cannot carry: no bounce was
 seen, because a ball that bounced went somewhere.
 
+**Checked on every capture.** Run over all 31 (14 home side-on, 4 club head-on, 10 field),
+`stoppedAndFell` fires on exactly one: the net ball. Every other reading, phase list and net
+flag is unchanged. Dropping the speed condition made nothing new fire — the four real serves
+that sat under the old 3.0 m/s line were only ever safe because of the geometry.
+
 **It still rests on one net ball.** 32 real stretches say where the line is safe from above;
 nothing says where it is safe from below. A handful of deliberate net serves in the next session
 would settle it and cost nothing.

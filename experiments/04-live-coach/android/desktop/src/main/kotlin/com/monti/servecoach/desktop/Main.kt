@@ -93,6 +93,18 @@ fun main(args: Array<String>) {
         val (s, c) = sc
         val file = File(outDir, "${clip.nameWithoutExtension}_${k + 1}.cap")
         c.write(file, ""","first":${s.first},"last":${s.last}""" + s.tracksJson(step, W.toFloat() / (W / 4), s.first))
+        // WINDOWS=3 also writes the capture as small windows round the ball: what the phone would
+        // send once it stops cutting the whole box. The same file, a fiftieth of the bytes.
+        System.getenv("WINDOWS")?.let { radii ->
+            val sc = W.toFloat() / (W / 4)
+            fun conv(t: List<FloatArray>) = t.map {
+                floatArrayOf((it[0] * step - s.first).toFloat(), it[1] * sc, it[2] * sc, it[3] * sc)
+            }
+            val wf = File(outDir, "${clip.nameWithoutExtension}_${k + 1}.win.cap")
+            val side = com.monti.servecoach.core.Windows.write(wf, c, listOf(conv(s.track)) + s.near.map { conv(it) },
+                ""","first":${s.first},"last":${s.last}""" + s.tracksJson(step, sc, s.first), radii.toDouble())
+            println("  windows ${side}x$side: ${wf.name} ${wf.length() / 1000} kB against ${file.length() / 1000} kB")
+        }
         println("""{"clip":"${clip.name}","serve":${k + 1},"frames":"${s.first}-${s.last}","rect":[${c.rect.joinToString(",")}],"ballR":${"%.1f".format(s.ballRadius * 4)},"tracks":${s.tracks},"why":"${s.why}","file":"${file.path}"}""")
     }
     println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}"}""")

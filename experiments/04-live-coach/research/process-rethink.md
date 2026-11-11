@@ -119,3 +119,50 @@ engine is unchanged. `test/windows.mjs` builds both forms from one clip and meas
 What is left is on the phone: write windows instead of the whole crop, compute the background
 frame and the row brightness once per capture, and keep the encoded frames long enough to cut a
 full capture when the engine asks for one.
+
+
+## Written and read, both sides
+
+`core/Windows.kt` writes a capture as windows: the background (the per-pixel median of up to 15
+frames), the row brightness for every frame, then one window a frame round every track handed in
+— the pick and the near ones. `windowsInto` in `engine.js` puts the frame back together before
+anything else sees it. `test/cap.mjs` measures a `.cap` of either form, which is also the first
+committed way to read one outside a phone.
+
+The desktop runner writes both with `WINDOWS=3`. On the rendered clips that produce a capture:
+
+| | whole crop | windows (94–96 px) | |
+|---|---|---|---|
+| bytes | 24.3 MB | 1.2 MB | **20× fewer** |
+| reading | 30.05 | 30.00 | 0.05 rev/s apart, the engine's own step |
+
+Three of five rendered clips get that far; the tracker turns the other two down as "tiny",
+which is its own threshold on a 25 px ball at quarter size and nothing to do with windows.
+
+## What the phone still needs
+
+1. **Write windows instead of the whole crop.** `CaptureGl` streams the cropped frames straight
+   out, so the window has to be taken as they pass, and the background and row brightness built
+   in the same pass rather than from frames held in memory as the desktop does.
+2. **Serve the background and the row brightness to the engine** alongside the frames.
+3. **Pin the encoded frames of a serve that is still pending**, so a refusal can still cut a full
+   capture. Not writing every full capture in the background: the cut is what costs the chip
+   1.3–2.3 s, and doing it for every serve competes with the next serve's capture, which is the
+   throughput being bought. Encoded frames are cheap — about 6 MB for 1.5 s — so a 10-second
+   rolling buffer plus whatever is pinned, capped at about four pending serves.
+4. **Answer out of order.** A refused serve's re-cut must not hold up the next serves' readings.
+
+One refusal is decided before any measuring — "no track flies like a ball" — so the engine can
+signal it from the header and the re-cut can start within milliseconds. The rest come after
+measuring, 0.2–1.5 s in.
+
+### M6, and why it needs the full capture
+
+The tracker was run on M6's clip to settle whether widening the windows would cover the stretch
+off the paddle at frames 52–59. It would not: the earliest track of any kind there starts at
+capture frame 60, and nothing covers the ball's position before it. The ball is coming off the
+paddle and merging with it and the hand, so the tracker genuinely never had it — at most a
+two-to-four point fragment, below the six it keeps. Extrapolating a track backwards would be a
+guess along the part of the flight that bends, and that stretch is where the engine is most
+fragile. So M6's shape — the serve's own stretch beginning before any track — is a fallback case,
+not a windowing case.

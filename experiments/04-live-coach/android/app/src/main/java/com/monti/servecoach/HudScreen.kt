@@ -166,7 +166,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         spinBall.show(spin.lift, spin.curve, spin.gyro, spin.dots)
         // without the dots the engine cannot tell front from back, so the ring is drawn without
         // its chevrons and we say so rather than pointing the wrong way
-        spinNote.text = if (spin.dots) "FROM BEHIND YOU\nSLOWED 55×" else "FROM BEHIND YOU\nDRILL WAY UNKNOWN"
+        spinNote.text = "FROM BEHIND YOU\n" +
+            (if (spin.afterBounce) "AFTER THE BOUNCE\n" else "OFF THE BAT\n") +
+            (if (spin.dots) "SLOWED 55×" else "DRILL WAY UNKNOWN")
     }
 
     private fun remember(line: String) {

@@ -21,8 +21,17 @@ import kotlin.math.sqrt
  * A serve's spin split, in rev/s, exactly as the engine reports it: [lift] positive for backspin
  * and negative for topspin, [curve] positive for a ball that bends right, [gyro] signed, positive
  * when the spin points away down the table. [dots] is whether the colour dots were read.
+ *
+ * [afterBounce] matters more than it looks. The three parts are measured against the ball's
+ * direction of travel, and the bounce turns that direction: the ball arrives going down and
+ * leaves going up. So the same unchanged spin splits differently either side of a bounce, and
+ * the gyro can genuinely swap sign without the ball doing anything new. Two club captures read
+ * -13.7 and -7.1 off the bat and +11.4 and +19.5 after the bounce, and their spin axes in the
+ * camera's own frame — which the bounce does not turn — agree to 13 and 16 degrees. Nothing
+ * mirrored; the frame moved. So the drawing has to say which stretch it is showing.
  */
-data class Spin(val lift: Double, val curve: Double, val gyro: Double, val dots: Boolean)
+data class Spin(val lift: Double, val curve: Double, val gyro: Double, val dots: Boolean,
+                val afterBounce: Boolean = false)
 
 /**
  * The drawing's arithmetic, with no Android in it, so a test can check it against the ball it

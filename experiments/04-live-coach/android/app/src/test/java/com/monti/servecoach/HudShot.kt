@@ -57,6 +57,15 @@ class HudShot {
         paparazzi.snapshot(s.root)
     }
 
+    /** read after the bounce: the same drawing, but it has to say which stretch it came from */
+    @Test fun spinAfterBounce() {
+        val s = screen(); s.running(true); s.state("Ready: serve")
+        s.reading(12, 2560, "side-topspin (curves right) + gyro",
+            "Read after the bounce, not off the bat.",
+            Spin(lift = -28.6, curve = 29.7, gyro = 11.4, dots = true, afterBounce = true))
+        paparazzi.snapshot(s.root)
+    }
+
     /** the same serve off a half-marked ball: the ring stays, the chevrons go, and we say why */
     @Test fun spinNoDots() {
         val s = screen(); s.running(true); s.state("Ready: serve")

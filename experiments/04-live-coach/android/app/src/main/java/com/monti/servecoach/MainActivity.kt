@@ -819,8 +819,11 @@ class MainActivity : Activity() {
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only
         // worth drawing when the colour dots were read (engine.js, mirrored()).
+        // afterBounce is not cosmetic: the split is measured against the direction of travel, and
+        // the bounce turns it, so the gyro's sign belongs to one stretch and not to the other.
         val spin = if (sv.has("lift")) Spin(sv.optDouble("lift", 0.0), sv.optDouble("curve", 0.0),
-            sv.optDouble("gyro", 0.0), sv.optString("marking") == "dots") else null
+            sv.optDouble("gyro", 0.0), sv.optString("marking") == "dots",
+            afterBounce = sv.optString("phase") == "bounce") else null
         screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"), spin)
         turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
     }

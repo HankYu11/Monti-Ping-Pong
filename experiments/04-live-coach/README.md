@@ -601,6 +601,60 @@ clip reads with the half marking — and the sign on a half-marked ball is exact
 engine says not to trust. The next session with the painted ball is what settles whether the
 direction the HUD draws is the direction the ball actually skids.
 
+## 0.9.7: what the clips said about the spin drawing
+
+0.9.6 shipped the drawing with one thing unproven: no real serve had been measured with the
+direction shown. The 29 real captures (21 club, 10 field, less N15 truncated and T4_2 not a
+serve) were run against it. Three findings, in order of how much they matter.
+
+**The colour dots are never read in the field.** Of 33 measured stretches, 8 read `dots` and 25
+read `half`, and the 10 Nov field session read `dots` on 0 of 9 — confirmed against the phone's
+own `serveNN.json`, so it is not an artefact of re-encoding. The dots are physically there (a red
+patch is visible on field serve 2) but the ball is 15–20 px in radius, smeared over two or three
+radii by motion blur, and over the blue table for much of the flight. `nMin = max(4, 0.006·π·r²)`
+and `edge = clamp(1 − 2.5/r, 0.75, 0.92)` both bite at that size, and the rim rejection exists
+precisely to discard the blue-ish patches a blue table bleeds into a white ball.
+
+Since the chevrons are drawn only on a `dots` reading, **the drill direction will not appear in
+the club setup at all.** It lives in the home side-on setup, where 5 of the dots readings are.
+Nothing has been retuned to chase this: loosening those thresholds without ground truth would
+manufacture dots rather than find them. The honest fixes are a phone closer to the ball, or a
+marking whose colours the table cannot eat.
+
+**Gyro is frame-relative, so the drawing has to say which stretch it is.** The three parts are
+measured against the ball's direction of travel, and the bounce turns that direction — the ball
+arrives going down and leaves going up. The same unchanged spin therefore splits differently
+either side of a bounce, and the gyro can swap sign with nothing new happening to the ball. The
+caption now names the stretch: FROM BEHIND YOU / OFF THE BAT or AFTER THE BOUNCE / SLOWED 55×.
+The chevrons stay on a bounce reading, because the direction is right for that frame and the ball
+heading to the receiver is worth knowing; it just has to say which frame it is.
+
+**A mirror was suspected and ruled out.** M12 and M14 read gyro −13.7 and −7.1 off the bat and
++11.4 and +19.5 after the bounce, with neither flagged `mirrored`, which looks like a
+front-to-back mirror that `mirrorCheck` missed — it compares the backspin/topspin words, not the
+gyro sign. It is not a mirror. Comparing the spin axis in the camera's own frame, which the
+bounce does not turn:
+
+| capture | paddle vs bounce axis | with the bounce axis's z negated |
+|---|---|---|
+| M7 (control, signs agree) | 9° | 115° |
+| M6 (control, signs agree) | 40° | 63° |
+| M12 (signs "disagree") | 13° | 58° |
+| M14 (signs "disagree") | 16° | 97° |
+
+The plain angle is smaller on every one, and the two that "disagree" agree *better* than the M6
+control. Their flight direction's y component goes +0.30 → −0.24 and +0.28 → −0.16 across the
+bounce while the axis carries a large y component, which is the whole of the effect. Adding a
+gyro-sign rule to `mirrorCheck` would have fired on two good readings, so it was not added.
+
+**Still unproven:** which way a real ball actually skids. The field clips are side views, so the
+skid is toward or away from the camera; the club clips are angled, so it is mixed with depth. The
+best available evidence is the engine's own flight direction before and after the bounce on three
+dots readings, and 3 of 3 agree with the convention — but sidespin curves the flight over the
+same stretch, so that is "not contradicted", not confirmed. Settling it needs a camera behind the
+server looking down the table, where the skid is left and right in the picture, and a handful of
+deliberate gyro serves both ways round with a dotted ball.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

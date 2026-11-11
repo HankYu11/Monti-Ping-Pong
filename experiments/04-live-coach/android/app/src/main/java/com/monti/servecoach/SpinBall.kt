@@ -50,12 +50,17 @@ internal object SpinMath {
     val INK = doubleArrayOf(20.0, 20.0, 20.0)
     val DOT_RGB = arrayOf(doubleArrayOf(208.0, 32.0, 42.0), doubleArrayOf(31.0, 71.0, 196.0), doubleArrayOf(30.0, 154.0, 60.0))
 
-    /** the three 8 mm dots, at thirds of the seam and a centimetre in from it */
+    // Three markers at thirds of the seam. They are placed like the painted ball's dots, but
+    // drawn bigger than the real 8 mm ones: this is a diagram of a measured spin, not a replay of
+    // the footage, so it should be read at arm's length on a phone rather than match the ball in
+    // the player's hand. Three distinguishable colours is the part that has to stay -- you need
+    // one feature you can follow to see which way the ball is going, and a single band or an
+    // unlabelled pattern is symmetric enough to turn one way and read as the other.
     val DOT_DIR = doubleArrayOf(0.0, 120.0, 240.0).map { deg ->
         val th = Math.toRadians(61.4); val ph = Math.toRadians(deg)
         doubleArrayOf(cos(th), sin(th) * cos(ph), sin(th) * sin(ph))
     }.toTypedArray()
-    val DOTCOS = cos(Math.toRadians(11.5))
+    val DOTCOS = cos(Math.toRadians(17.0))
     val LIGHT = unit(doubleArrayOf(-0.22, -0.3, 0.93))
     const val AMBIENT = 0.46
     /** the pose the ball starts in: the marked side turned toward you */
@@ -107,8 +112,8 @@ internal object SpinMath {
     fun chevronsClockwise(a: DoubleArray) = a[2] > 0
 
     /**
-     * The marked ball as a square of packed ARGB, [n] across, the ball filling it: one half inked
-     * to the seam, three dots at thirds of it, lit from in front. Outside the ball is clear.
+     * The ball as a square of packed ARGB, [n] across, filling it: one half inked to the seam,
+     * three markers at thirds of it, lit from in front. Outside the ball is clear.
      */
     fun sphere(a: DoubleArray, t: Double, n: Int, into: IntArray) {
         val m = matmul(rot(a, t), REST)

@@ -560,6 +560,47 @@ the 6.4 s it did. The 21 club captures are unchanged, and M6 still refuses and s
 the serve. One serve of the ten went into the net and was given as 40.9 rev/s, clear — that is
 the ball dropping back off the net toward the camera, and nothing in the reading says so.
 
+## 0.9.6: the spin is drawn, and the gyro keeps its direction
+
+Until now a serve was a number and a word: "3147 RPM, strong spin, topspin and gyro". That tells
+a player how hard the ball is spinning and almost nothing about what it will do. The HUD now
+draws the spin beside the number: a marked ball turning the way the serve really turned, seen
+from behind the server with the ball flying away down the table, slowed 55 times.
+
+Three marks, and only one of them is an arrow:
+
+| mark | what it is |
+|---|---|
+| solid arrow | the way the face you can see is travelling — what the bat did to the ball |
+| dashed line | the axis it turns about, drawn through the ball like an axle. A line in depth, so it shortens as the spin tips away down the table and vanishes on a pure gyro |
+| dashed ring | the gyro: the part turning about the line of flight. Nothing in the air, everything at the bounce. Its chevrons say which way round |
+
+**The gyro's direction was being thrown away.** `spinComponents` computes `gyro = spin · direction
+of travel`, which is signed, and the result then reported `Math.abs(c.gyro)`. That sign is the
+whole answer to whether the ball skids right or left when it lands, so a serve's most dangerous
+property was measured and discarded. It is now carried through to the app, and `test/gyrosign.mjs`
+renders each spin twice, once each way round, and checks the measured sign against the truth:
+6 of 6 drilled the way they were spun, magnitudes within 2.4 rev/s.
+
+**The chevrons only appear when the colour dots were read.** On a half-marked ball the engine
+cannot tell front from back (`mirrored()` in engine.js), and the gyro's sign goes with that
+misjudgement, so the ring is drawn bare and the caption says the drill direction is unknown
+rather than pointing the wrong way.
+
+The drawing's arithmetic is a port of the spin page's, and it is tested against its own pixels
+rather than against the reasoning behind it (`SpinBallTest`). That is not ceremony: the frame on
+screen is left handed, y points down, so a rotation built the usual way turns the *mirror* of
+what the right hand says. On the page the same arithmetic was worked out on paper, read as
+correct, and had the ball turning one way while the chevrons pointed the other. Tracking the
+painted dots through the renderer is what caught it, so that is the test: render the ball at two
+angles, find the red and green dots, and require the marks to agree with where the dots went.
+
+**Not shown yet, and the reason to be careful:** no real serve has been measured with the sign
+drawn. The synthetic clips cannot test the dots — spinsim renders one grey channel, so every
+clip reads with the half marking — and the sign on a half-marked ball is exactly the case the
+engine says not to trust. The next session with the painted ball is what settles whether the
+direction the HUD draws is the direction the ball actually skids.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

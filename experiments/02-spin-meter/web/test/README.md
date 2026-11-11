@@ -13,6 +13,9 @@ bash test/make_clips.sh /tmp/clips          # render the clips (needs ffmpeg)
 node test/bench.mjs      /tmp/clips/k_*.mp4 # a whole clip: reading vs truth, and the time
 node test/capbench.mjs   /tmp/clips/k_*.mp4 # a live capture: searching vs the tracker's track
 node test/guard.mjs      /tmp/clips/k_*.mp4 # what may be measured along a handed-in track
+
+bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which way they drill
+node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
 ```
 
 `make_clips.sh` writes `<clip>.json` beside each clip with the true spin, the axis and the
@@ -45,6 +48,21 @@ Runs `ballisticRule` over real tracks (from the rendered clips, with tracker-lik
 over made-up ones: a hand sliding back and forth, an arm climbing, a ball merged with the
 paddle, and a track too jittery to be a ball. Real ones must pass, the rest must not.
 Exits non-zero on any disagreement, so it can gate a change.
+
+## gyrosign.mjs — which way the ball drills
+
+The engine reports `gyro` signed: positive means the spin points along the flight, away down the
+table. That sign is the whole answer to whether the ball will skid right or left at the bounce,
+and until 0.9.6 it was thrown away (`gyro: Math.abs(c.gyro)`), so nothing downstream could have
+noticed it going wrong. This renders each spin twice, once each way round, and checks the
+measured sign against the truth — the true spin projected on the true flight direction, both from
+spinsim's own JSON. A sign dropped or flipped anywhere between the fit and the result shows up.
+
+It cannot check the colour-dot path. spinsim renders one grey channel, so every clip reads with
+the half marking, and on a half-marked ball the engine can misjudge front from back (`mirrored()`
+in engine.js) — the sign goes with that misjudgement. Only the dots settle it, and only real
+footage has them. So this proves the sign is carried, not that a half-marked reading's sign is
+right; the app draws the gyro's direction only when the dots were read.
 
 ## What these cannot tell you
 

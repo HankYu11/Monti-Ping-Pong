@@ -817,7 +817,11 @@ class MainActivity : Activity() {
         }
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
-        screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"))
+        // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only
+        // worth drawing when the colour dots were read (engine.js, mirrored()).
+        val spin = if (sv.has("lift")) Spin(sv.optDouble("lift", 0.0), sv.optDouble("curve", 0.0),
+            sv.optDouble("gyro", 0.0), sv.optString("marking") == "dots") else null
+        screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"), spin)
         turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
     }
 

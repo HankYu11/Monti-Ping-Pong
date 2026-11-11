@@ -502,7 +502,7 @@ td.empty { color: var(--muted); padding: 10px 0; white-space: normal; }
     const rows = [
       [res.lift >= 0 ? "Backspin" : "Topspin", Math.abs(res.lift), ""],
       ["Sidespin", res.sidespin, res.sideCurves !== "none" ? `curves ${res.sideCurves}` : ""],
-      ["Corkscrew", res.gyro, "no curve"],
+      ["Corkscrew", Math.abs(res.gyro), "no curve"],
     ];
     $("comp").innerHTML = rows.map(([name, v, sub]) => `
       <div class="comp-row">

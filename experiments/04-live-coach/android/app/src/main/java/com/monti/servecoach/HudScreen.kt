@@ -36,6 +36,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     val bigText = tv(64f, Hud.display(ctx, 300), Hud.CYAN).apply { text = "----"; setShadowLayer(dp(14).toFloat(), 0f, 0f, Color.argb(150, 95, 242, 255)) }
     val typeText = tv(16f, Hud.display(ctx, 700), Hud.WHITE, 0.12f).apply { gravity = Gravity.END }
     val scale = SpinScale(ctx)
+    val spinBall = SpinBall(ctx)
+    val spinNote = tv(9f, mono, Hud.DIM, 0.1f).apply { gravity = Gravity.CENTER_HORIZONTAL; text = "" }
+    private lateinit var spinBox: LinearLayout
     val coachText = tv(12f, mono, Color.argb(220, 225, 245, 250)).apply {
         gravity = Gravity.END
         text = "Checking the setup…"
@@ -67,10 +70,18 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END; setPadding(dp(8), dp(34), dp(46), dp(84)) }
         col.addView(serveLabel); col.addView(bigText); col.addView(typeText)
         col.addView(scale, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+
         col.addView(coachText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         val scroll = ScrollView(ctx).apply { isVerticalScrollBarEnabled = false; addView(historyText, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
         col.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(10) })
         root.addView(col, FrameLayout.LayoutParams(dp(330), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        spinBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            addView(spinBall, LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(spinNote, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) })
+            visibility = android.view.View.GONE
+        }
+        root.addView(spinBox, FrameLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { rightMargin = dp(336); topMargin = dp(44) })
         root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46); bottomMargin = dp(26) })
         root.addView(nextBtn, FrameLayout.LayoutParams(dp(160), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46 + 176 + 14); bottomMargin = dp(26) })
         fun small(label: String, onTap: () -> Unit) = TextView(ctx).apply {
@@ -100,20 +111,21 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         nextBtn.visibility = if (on) android.view.View.VISIBLE else android.view.View.GONE
     }
 
-    /** a serve read: its number, RPM (to 10), spin type and the coaching lines */
-    fun reading(serve: Int, rpm: Int, type: String, coach: String) {
+    /** a serve read: its number, RPM (to 10), spin type, the coaching lines and the spin to draw */
+    fun reading(serve: Int, rpm: Int, type: String, coach: String, spin: Spin? = null) {
         val level = SpinLevel.of(rpm)
         serveLabel.text = "$source %02d · SPIN RATE".format(serve)
         bigText.text = SpannableString("$rpm RPM").apply { setSpan(RelativeSizeSpan(0.3f), "$rpm".length, length, 0) }
         typeText.text = "${SpinLevel.NAMES[level]} · ${type.uppercase(Locale.US)}"
         scale.rpm = rpm
+        showSpin(spin)
         coachText.text = coach
         remember("%02d  %4d  %s".format(serve, rpm, type.uppercase(Locale.US)))
     }
     /** a serve that couldn't be read, and why */
     fun noRead(serve: Int, why: String) {
         serveLabel.text = "$source %02d · NO READ".format(serve)
-        bigText.text = "----"; typeText.text = ""; scale.rpm = null
+        bigText.text = "----"; typeText.text = ""; scale.rpm = null; showSpin(null)
         coachText.text = "Couldn't read it: $why"
         remember("%02d  ----  NO READ".format(serve))
     }
@@ -144,6 +156,19 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         bigText.text = "NONE"; typeText.text = "NO SERVE FOUND"; scale.rpm = null
         coachText.text = why
     }
+    /** the spin ball, and the one line that says how to read it */
+    private fun showSpin(spin: Spin?) {
+        if (spin == null) {
+            spinBall.clear(); spinBox.visibility = android.view.View.GONE; spinNote.text = ""
+            return
+        }
+        spinBox.visibility = android.view.View.VISIBLE
+        spinBall.show(spin.lift, spin.curve, spin.gyro, spin.dots)
+        // without the dots the engine cannot tell front from back, so the ring is drawn without
+        // its chevrons and we say so rather than pointing the wrong way
+        spinNote.text = if (spin.dots) "FROM BEHIND YOU\nSLOWED 55×" else "FROM BEHIND YOU\nDRILL WAY UNKNOWN"
+    }
+
     private fun remember(line: String) {
         history.addFirst(line); while (history.size > 8) history.removeLast()
         historyText.text = history.joinToString("\n")

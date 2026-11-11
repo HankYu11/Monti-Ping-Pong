@@ -39,10 +39,38 @@ class HudShot {
 
     @Test fun reading() {
         val s = screen(); s.running(true); s.state("Ready: serve")
-        s.reading(3, 1910, "backspin", "Strong backspin. Keep this contact.\nball 4.1 m/s · answer in 3.2 s")
+        s.reading(3, 1910, "backspin", "Strong backspin. Keep this contact.\nball 4.1 m/s · answer in 3.2 s",
+            Spin(lift = 29.9, curve = -3.1, gyro = 6.2, dots = true))
         s.noRead(4, "The ball turned only about 57% of a turn in this stretch, too little to tell the rate.")
         s.reading(5, 2770, "side-backspin (curves right)", "")
-        s.reading(6, 2450, "backspin", "Strong backspin. Keep this contact.\nball 4.7 m/s · answer in 2.1 s")
+        s.reading(6, 2450, "backspin", "Strong backspin. Keep this contact.\nball 4.7 m/s · answer in 2.1 s",
+            Spin(lift = 38.6, curve = 8.4, gyro = -11.0, dots = true))
+        paparazzi.snapshot(s.root)
+    }
+
+    /** serve 3 off the real phone: 52.5 rev/s, and 46 of it gyro, which does nothing in the air */
+    @Test fun spinGyro() {
+        val s = screen(); s.running(true); s.state("Ready: serve")
+        s.reading(3, 3150, "topspin (curves left) + gyro",
+            "Mostly gyro: it will look like a nothing ball and skid at the bounce.\nball 2.8 m/s · answer in 2.4 s",
+            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dots = true))
+        paparazzi.snapshot(s.root)
+    }
+
+    /** the same serve off a half-marked ball: the ring stays, the chevrons go, and we say why */
+    @Test fun spinNoDots() {
+        val s = screen(); s.running(true); s.state("Ready: serve")
+        s.reading(3, 3150, "topspin (curves left) + gyro",
+            "Mostly gyro: it will look like a nothing ball and skid at the bounce.",
+            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dots = false))
+        paparazzi.snapshot(s.root)
+    }
+
+    /** a plain backspin serve: the axle lies across the table and the face rolls down */
+    @Test fun spinBackspin() {
+        val s = screen(); s.running(true); s.state("Ready: serve")
+        s.reading(7, 2700, "backspin", "Strong backspin. Keep this contact.",
+            Spin(lift = 45.0, curve = 0.0, gyro = 0.0, dots = true))
         paparazzi.snapshot(s.root)
     }
 

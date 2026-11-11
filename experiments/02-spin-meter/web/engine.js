@@ -1795,7 +1795,11 @@
       rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
       backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
       sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
-      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt,
+      // gyro keeps its sign: positive means the spin points along the flight, away down the
+      // table, which is what decides whether the ball skids right or left off the bounce. The
+      // sign is only real when the colour dots were read (marking: "dots"); a half-marked ball
+      // cannot tell front from back, which is what mirrored() below is about.
+      gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
@@ -1846,7 +1850,7 @@
     const axis = [r.axis[0], r.axis[1], -r.axis[2]], c = spinComponents(r.rps, axis, r.flight.dir);
     Object.assign(r, { axis, spinType: spinLabel(r.rps, c), backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift),
       sidespin: Math.abs(c.curve), sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
-      gyro: Math.abs(c.gyro), lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true });
+      gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true });
   }
   function mirrorCheck(readings) {
     const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);

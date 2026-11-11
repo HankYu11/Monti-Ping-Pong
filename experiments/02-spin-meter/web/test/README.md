@@ -58,11 +58,33 @@ noticed it going wrong. This renders each spin twice, once each way round, and c
 measured sign against the truth — the true spin projected on the true flight direction, both from
 spinsim's own JSON. A sign dropped or flipped anywhere between the fit and the result shows up.
 
-It cannot check the colour-dot path. spinsim renders one grey channel, so every clip reads with
-the half marking, and on a half-marked ball the engine can misjudge front from back (`mirrored()`
-in engine.js) — the sign goes with that misjudgement. Only the dots settle it, and only real
-footage has them. So this proves the sign is carried, not that a half-marked reading's sign is
-right; the app draws the gyro's direction only when the dots were read.
+`make_gyro_clips.sh` renders them in two sets. The grey ones use the old marking and read as
+`half`. The colour ones use `--pattern half+dots` — the black half plus the three 8 mm dots the
+Serve Coach actually reads — and read as `dots`.
+
+That second set matters more than it looks. spinsim rendered one grey channel until 0.9.7, so
+every synthetic clip ever made read with the half marking, which meant **the colour-dot path had
+never once been checked against a known spin** — and it is the only path whose gyro sign the
+engine trusts, and the only one the app will draw a direction from. It now reads 8 of 8 signs
+right, magnitudes within 1 rev/s of truth, at 40 and 64 px.
+
+The second colour set separates the three suspects for why the club never reads dots:
+
+| clip | what it changes | marking read |
+|---|---|---|
+| `g_dots_small` | 30 px ball instead of 40 | dots |
+| `g_dots_blue` | a blue table behind the ball | dots |
+| `g_dots_blur` | exposure 0.9 instead of 0.25 | dots |
+| `g_dots_worst` | heavy blur **and** a blue table | **half** |
+
+So neither a small ball nor a blue background alone loses the dots; heavy motion blur is what
+tips it, and blur over a blue table is what falls back to half. Blur also drags the split while
+leaving the rate alone: `g_dots_blur` reads 30.1 rev/s against a true 30, but its gyro comes out
+18.3 against a true 25.3. The rate survives smearing; which way the axis points does not.
+
+What none of this reaches is a real ball. A rendered dot is a clean disc of known colour; a
+painted one is ink on gloss under club light. These clips prove the arithmetic and the detector
+agree with each other, not that a hand-painted ball reads the same way.
 
 ## What these cannot tell you
 

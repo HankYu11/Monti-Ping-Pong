@@ -41,8 +41,12 @@ def parse_args():
     p.add_argument("--exposure", type=float, default=0.25,
                    help="exposure as a fraction of the frame time (0.25 at 240 FPS ≈ 1/960 s)")
     p.add_argument("--blur-samples", type=int, default=6)
-    p.add_argument("--pattern", choices=["half", "line", "half+line", "half+line+dot", "dots"],
+    p.add_argument("--pattern", choices=["half", "line", "half+line", "half+line+dot", "dots", "half+dots"],
                    default="half+line+dot")
+    p.add_argument("--bg", type=float, nargs=3, default=None, metavar=("R", "G", "B"),
+                   help="background colour, 0-255, for the colour patterns. The club's table is\n"
+                        "blue behind the ball, which is what makes near-rim blue dots get thrown\n"
+                        "away as bleed; --bg 30 70 140 is roughly that table.")
     p.add_argument("--noise", type=float, default=4.0, help="Gaussian noise, grey levels")
     p.add_argument("--size", type=int, nargs=2, default=[640, 360], help="frame width height")
     p.add_argument("--seed", type=int, default=0)
@@ -76,6 +80,30 @@ def rot_matrix(axis, angle):
     return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
 
 
+# The ball the Serve Coach actually reads: one half inked to the seam, and three 8 mm dots at
+# thirds of the seam, a centimetre in from it. Everything else spinsim renders is one grey
+# channel, which is why the engine's colour-dot path had never been tested against a known spin:
+# every synthetic clip read with the half marking, the one case the engine says not to trust.
+# +x is the white pole, so the dots sit 61.4 degrees off it, 120 apart, 11.5 degrees across.
+BALL_WHITE = np.array([244, 244, 241]) / 255.0
+BALL_INK = np.array([20, 20, 20]) / 255.0
+DOT_RGB = np.array([[208, 32, 42], [31, 71, 196], [30, 154, 60]]) / 255.0
+_th, _phs = np.radians(61.4), np.radians([0.0, 120.0, 240.0])
+DOT_DIR = np.stack([np.full(3, np.cos(_th)), np.sin(_th) * np.cos(_phs), np.sin(_th) * np.sin(_phs)], axis=1)
+DOT_COS = np.cos(np.radians(11.5))
+COLOUR_PATTERNS = {"half+dots"}
+
+
+def pattern_colour(p, kind):
+    """RGB in 0..1 for unit surface points p (N x 3) in the ball frame."""
+    col = np.tile(BALL_WHITE, (len(p), 1))
+    col[p[:, 0] < 0] = BALL_INK                         # one hemisphere inked to the seam
+    if kind == "half+dots":
+        for k in range(3):
+            col[p @ DOT_DIR[k] > DOT_COS] = DOT_RGB[k]
+    return col
+
+
 def pattern_value(p, kind, dots):
     """Albedo (0 = black, 1 = white) for unit surface points p (N x 3) in the ball frame."""
     white = np.ones(len(p))
@@ -100,9 +128,14 @@ def pattern_value(p, kind, dots):
     return white
 
 
-def render(frame_size, centre, radius, R, kind, dots, light):
+def render(frame_size, centre, radius, R, kind, dots, light, bg=None):
     W, H = frame_size
-    img = np.full((H, W), 70.0)                         # plain grey background
+    colour = kind in COLOUR_PATTERNS
+    if colour:
+        img = np.empty((H, W, 3))
+        img[:] = np.asarray(bg if bg is not None else (70.0, 70.0, 70.0), float)
+    else:
+        img = np.full((H, W), 70.0)                     # plain grey background
     x0, x1 = int(centre[0] - radius - 2), int(centre[0] + radius + 3)
     y0, y1 = int(centre[1] - radius - 2), int(centre[1] + radius + 3)
     xs, ys = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
@@ -111,13 +144,17 @@ def render(frame_size, centre, radius, R, kind, dots, light):
     inside = r2 < 1.0
     n = np.stack([dx[inside], dy[inside], np.sqrt(1 - r2[inside])], axis=1)   # camera-frame normals
     p_body = n @ R                                      # R^T n for each row
-    albedo = pattern_value(p_body, kind, dots)
     shade = 0.35 + 0.65 * np.clip(n @ light, 0, 1)      # fixed light: shading does not rotate
     patch = img[y0:y1, x0:x1]
     vals = patch.copy()
-    vals[inside] = 235.0 * albedo * shade + 10
+    if colour:
+        vals[inside] = 235.0 * pattern_colour(p_body, kind) * shade[:, None] + 10
+    else:
+        vals[inside] = 235.0 * pattern_value(p_body, kind, dots) * shade + 10
     # anti-aliased edge
     edge = np.clip((1.0 - np.sqrt(r2)) * radius + 0.5, 0, 1)
+    if colour:
+        edge = edge[:, :, None]
     patch[:] = patch * (1 - edge) + vals * edge
     return img
 
@@ -130,11 +167,12 @@ class FfmpegWriter:
     same pixels under both tags is how the full/limited-range reading bug is tested.
     """
 
-    def __init__(self, path, size, crf=14, rng="pc"):
+    def __init__(self, path, size, crf=14, rng="pc", colour=False):
         W, H = size
         self.proc = subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-f", "rawvideo", "-pix_fmt", "gray", "-s", f"{W}x{H}", "-r", "30", "-i", "-",
+             "-f", "rawvideo", "-pix_fmt", "rgb24" if colour else "gray",
+             "-s", f"{W}x{H}", "-r", "30", "-i", "-",
              "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
              "-pix_fmt", "yuv420p", "-color_range", rng,
              "-x264-params", f"fullrange={1 if rng == 'pc' else 0}",
@@ -151,13 +189,14 @@ class FfmpegWriter:
 
 
 class Cv2Writer:
-    def __init__(self, path, size):
+    def __init__(self, path, size, colour=False):
         if cv2 is None:
             raise RuntimeError("--writer cv2 needs opencv-python installed")
+        self.colour = colour
         self.w = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 30.0, size)
 
     def write(self, img):
-        self.w.write(cv2.cvtColor(img, cv2.COLOR_GRAY2BGR))
+        self.w.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR if self.colour else cv2.COLOR_GRAY2BGR))
 
     def close(self):
         self.w.release()
@@ -167,9 +206,10 @@ def open_writer(a, W, H):
     use = a.writer
     if use == "auto":
         use = "ffmpeg" if shutil.which("ffmpeg") else "cv2"
+    colour = a.pattern in COLOUR_PATTERNS
     if use == "ffmpeg":
-        return FfmpegWriter(a.out, (W, H), a.crf, a.rng_)
-    return Cv2Writer(a.out, (W, H))
+        return FfmpegWriter(a.out, (W, H), a.crf, a.rng_, colour)
+    return Cv2Writer(a.out, (W, H), colour)
 
 
 def main():
@@ -199,14 +239,14 @@ def main():
     if a.frames > max_frames:
         a.frames = max_frames   # stop before the ball leaves the frame
     for i in range(a.frames):
-        acc = np.zeros((H, W))
+        acc = np.zeros((H, W, 3) if a.pattern in COLOUR_PATTERNS else (H, W))
         for s in range(a.blur_samples):
             t = (i + a.exposure * (s + 0.5) / a.blur_samples) / a.fps
             fpos = i + a.exposure * (s + 0.5) / a.blur_samples
             c = start + vel * fpos + np.array([0.0, 0.5 * a.gravity * fpos ** 2])
             R = rot_matrix(axis, omega * t) @ R0
-            acc += render((W, H), c, radius, R, a.pattern, dots, light)
-        img = acc / a.blur_samples + rng.normal(0, a.noise, (H, W))
+            acc += render((W, H), c, radius, R, a.pattern, dots, light, a.bg)
+        img = acc / a.blur_samples + rng.normal(0, a.noise, acc.shape)
         # the camera's response: spin is geometry, so it must survive all of this
         if a.gamma != 1.0:
             img = 255.0 * np.clip(img / 255.0, 0, 1) ** a.gamma

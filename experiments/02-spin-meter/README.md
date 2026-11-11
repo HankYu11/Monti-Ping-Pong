@@ -35,8 +35,8 @@ project: before coaching anything, the app must know how much spin a serve reall
 
 ## Synthetic test (`spinsim.py`, `sweep.py`)
 
-`spinsim.py` renders a 240 FPS clip of a marked ball (default: one half black, one black
-line and one dot; see [Marking the ball](#marking-the-ball)) flying across the frame with a known spin, with motion blur, sensor noise and
+`spinsim.py` renders a 240 FPS clip of a marked ball (its own pattern: one half black, one black
+line and one dot — the older marking, kept because the sweep below was measured on it) flying across the frame with a known spin, with motion blur, sensor noise and
 lossy MP4 compression. `sweep.py` varies one condition at a time.
 
 Baseline: 30 rps, axis straight at the camera, 40 px ball, 8 px/frame flight, exposure
@@ -87,20 +87,33 @@ rolling shutter, phone slow-motion encoding, and spin changing during the clip.
 
 ## Marking the ball
 
-![How to mark a ball](docs/ball-marking.png)
+A black half and three colour dots. The black half shows the spin when the ball turns a full
+turn in view; the dots show it from a quarter turn, and catch spins the black half alone
+misses. The dots are optional — a ball with only the black half reads exactly as it always did.
+
+You need 3–5 plain white balls, a black permanent marker, and red, blue and green ones.
 
 1. **Find the seam:** a faint line all the way round where the two halves were joined.
    It's the equator.
-2. **Colour one half completely black** with a permanent marker, edge on the seam, two
-   coats.
-3. **Draw one line about 5 mm wide** over the white half, seam to seam, crossing the seam at
-   right angles. A rubber band makes a good guide.
-4. **Add one dot about 8 mm across** on the white half, between the line and the seam, on
-   one side of the line only. Without it, the pattern looks the same after a half turn
-   about the white pole. The meter still copes (it fits one rotation across all frames),
-   but the dot removes the ambiguity.
+2. **Colour one half completely black**, edge exactly on the seam, two coats so no white
+   shows through.
+3. **Mark thirds of the seam.** Wrap a paper strip round the seam and mark where it overlaps:
+   once round is about 12.6 cm. Fold it in three, wrap it back on, and tick the white side at
+   each fold — three ticks, 4.2 cm apart.
+4. **Go 1 cm in from each tick**, toward the middle of the white half. Looking at the white
+   half straight on, the seam is its rim and the ticks sit at 12, 4 and 8 o'clock.
+5. **Draw the three dots** there, about 8 mm across: red, blue, green, one of each. Two coats.
+   Keep a few millimetres of white between a dot and the black half.
 
-Make 3–5 balls and re-ink them when the marks wear off.
+Avoid pale, neon or metallic markers, and pink, orange or purple instead of the three colours:
+they wash out or get mixed up. Dots under 6 mm are too few pixels at 1–1.5 m.
+
+Re-ink the marks when they wear off. With only two colours, put them on opposite sides of the
+seam instead of in thirds.
+
+> The illustrated version of this, with drawings of each step, is the **Marking the spin ball**
+> page. An older diagram in `docs/` showed a black line and a single black dot across the white
+> half; that marking is no longer used and the file has been removed.
 
 ## Recording: no table needed
 

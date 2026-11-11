@@ -2108,6 +2108,42 @@
   //   cap.fps             frames per second (240)
   //   cap.track           optional, with opts.useTrack: [[frame, x, y, radius], ...] in whole-picture
   //                       pixels, used instead of the search (the app's own track)
+  // A capture can arrive as a small window per frame instead of the whole crop: the pixels round
+  // the ball, one background frame (the per-pixel median of a spread of frames) and, per frame,
+  // how bright each row was. For a real serve that is 1.3 MB against 242 MB. The frame is put
+  // back together here, so everything after this point sees an ordinary capture.
+  //
+  // All three parts are needed. Blanking the rest outright fails on every capture: the background
+  // median then reads black wherever the window went, the whole window counts as foreground, and
+  // there is no ball to separate out. A single background frame fails where the player moves, and
+  // without the row brightness the rows outside the window stop flickering with the light, which
+  // throws the flicker correction inside it.
+  function windowsInto(cap, cw, ch, ySize, cSize) {
+    const cw2 = cw >> 1, bg = cap.background, wW = cap.winW, wH = cap.winH;
+    const wW2 = wW >> 1, wH2 = wH >> 1, wY = wW * wH, wC = wW2 * wH2;
+    const out = new Uint8Array(ySize + 2 * cSize);       // reused: the callers copy what they keep
+    return (i, buf) => {
+      const rows = cap.rowBright && cap.rowBright[i];
+      for (let y = 0; y < ch; y++) {
+        const o = y * cw, sc = rows ? rows[y] : 1;
+        if (sc === 1) out.set(bg.subarray(o, o + cw), o);
+        else for (let x = 0; x < cw; x++) { const v = bg[o + x] * sc; out[o + x] = v > 255 ? 255 : v; }
+      }
+      out.set(bg.subarray(ySize, ySize + 2 * cSize), ySize);
+      const w = cap.windows[i];
+      if (w && buf) {
+        const x0 = w[0], y0 = w[1], cx0 = x0 >> 1, cy0 = y0 >> 1;
+        for (let y = 0; y < wH; y++) out.set(buf.subarray(y * wW, y * wW + wW), (y0 + y) * cw + x0);
+        for (let y = 0; y < wH2; y++) {
+          const du = ySize + (cy0 + y) * cw2 + cx0, su = wY + y * wW2;
+          out.set(buf.subarray(su, su + wW2), du);
+          out.set(buf.subarray(wY + wC + y * wW2, wY + wC + y * wW2 + wW2), du + cSize);
+        }
+      }
+      return out;
+    };
+  }
+
   function captureReader(cap) {
     const [cx, cy, cw, ch] = cap.rect, cw2 = cw >> 1, ch2 = ch >> 1, ySize = cw * ch, cSize = cw2 * ch2;
     const plane = (buf) => ({
@@ -2115,7 +2151,9 @@
       u: { offset: ySize, stride: cw2, step: 1 }, v: { offset: ySize + cSize, stride: cw2, step: 1 },
     });
     const n = cap.frames ? cap.frames.length : cap.n;
-    const get = cap.frames ? async (i) => cap.frames[i] : cap.frame;
+    const raw = cap.frames ? async (i) => cap.frames[i] : cap.frame;
+    const rebuild = cap.windows ? windowsInto(cap, cw, ch, ySize, cSize) : null;
+    const get = rebuild ? async (i) => rebuild(i, await raw(i)) : raw;
     return {
       kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy,
       async run(a, b, cb) { for (let i = Math.max(0, a); i < Math.min(b, n); i++) await cb(i, { capturePlanes: plane(await get(i)) }); },
@@ -2155,5 +2193,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
 })(typeof window !== "undefined" ? window : globalThis);

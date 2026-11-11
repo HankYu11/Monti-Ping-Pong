@@ -66,3 +66,56 @@ decides whether a basket of marked balls is worth selling.
 
 Latency matters only in that the answer should arrive before the player has stopped caring —
 which is at the end of the burst, not two seconds after each serve.
+
+---
+
+## The capture can be windows, and what it costs
+
+Tested on all 29 captures either phone has produced (the 21 club and home ones, plus the 10 of
+the field session, less a truncated file and one non-serve). Each kept its rect, frame count and
+geometry; everything outside a square of k times the ball's radius round the tracker's ball was
+replaced, and the engine measured it with the track on.
+
+**A window alone is not enough.** Three things have to travel with it:
+
+| | why |
+|---|---|
+| windows round the pick **and the near tracks** | N4's measured stretch sits on a near track; with windows round the pick only it reads nothing |
+| one background frame — the per-pixel median of ~15 frames | blanking the rest outright fails on **every** capture: the background median reads black wherever the window went, the whole window counts as foreground, and there is no ball to separate out. A single frame-0 background fails where the player moves |
+| each frame's row brightness, one number a row | without it the rows outside the window stop flickering with the light, and the flicker correction inside the window goes wrong — V3 and T2 read nothing at 8r and 6r |
+
+With all three, **27 of 29 match the whole crop to a median of 0.2%**:
+
+| window | median error | worst | payload |
+|---|---|---|---|
+| 4r | 0.11% | 2.6% | 3.0 MB |
+| 3r | 0.23% | 2.6% | 1.7 MB |
+| 2r | 0.28% | **95.8%** — one serve doubles | 0.8 MB |
+
+Full captures run 30–786 MB, median 167. Serve 3 is **242 MB whole, 1.3 MB as windows at 3r**.
+3r is the smallest to trust; 4r for margin.
+
+## What windows cannot do: the fallback search
+
+The two that don't match are the two that depend on the engine searching for itself, and both
+fail the same way — the search can only see pixels some track pointed at.
+
+- **M6** reads 23.4 instead of 28.5 at every window size. Its track is refused, as designed, and
+  the search then wants frames 52–59, which no track covers, so it finds only the after-bounce
+  stretch. The guard added for M6 works only if the search sees the whole picture.
+- **The net ball** is worse. At 4r and 3r it reads "unclear"; at 2r the search splits the drop
+  into paddle and bounce, the net rule's "no bounce seen" condition fails, and out comes a clear
+  41.3 rev/s. That is exactly the bug the net rule was written to stop, back again.
+
+So every refusal — "only after the bounce", "unclear", "no track flies like a ball", "measured to
+nothing" — still needs the whole picture. **Windows for the common case, full frames on demand.**
+In the field session that is 7 serves of 10 on windows and 3 that ask for more; over all 29 it is
+24 and 5.
+
+The engine side of this is built: a capture carrying `windows`, `winW`/`winH`, `background` and
+`rowBright` is put back together in `windowsInto` before anything else sees it, so the rest of the
+engine is unchanged. `test/windows.mjs` builds both forms from one clip and measures both.
+
+What is left is on the phone: write windows instead of the whole crop, compute the background
+frame and the row brightness once per capture, and keep the encoded frames long enough to cut a
+full capture when the engine asks for one.

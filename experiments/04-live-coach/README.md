@@ -647,6 +647,36 @@ control. Their flight direction's y component goes +0.30 → −0.24 and +0.28 �
 bounce while the axis carries a large y component, which is the whole of the effect. Adding a
 gyro-sign rule to `mirrorCheck` would have fired on two good readings, so it was not added.
 
+**The dots that were read rested on one colour each, and green was never seen at all.** Per-colour
+counts across the 13 stretches that have any, from `dots.seen`:
+
+| stretch | red | blue | green | frames with a dot |
+|---|---|---|---|---|
+| C1 (home) | 1 | 13 | 0 | 14 of 49 |
+| V3 (home) | 12 | 0 | 0 | 12 of 50 |
+| M14 bounce | 9 | 2 | 0 | 11 of 49 |
+| the 9 field stretches | 2 | 5 | 0 | 7 of 354 |
+
+Green was never detected once. The detector is not at fault: converting the marking's inks to
+chroma offsets, green lands at −109° (BT.601) or −120° (BT.709), mid-window in `DOT_HUES`'s
+`[−170, −80]`, with chroma magnitude 71 — the same as blue's, and blue reads fine on C1. Colour
+crops of C1 and V3 settle it: those balls carry a red dot, a blue dot and the inked half, and no
+green. They are the older marking, from before green was added. C1's ball tumbles through many
+orientations across 11 frames and a third dot 120° from the other two never appears.
+
+So nothing is broken, but every dots reading in the record rests on effectively a single colour —
+C1 on blue, V3 and M14 on red — with the rigid fit recovering a rotation from one point. It
+evidently works; V3 reads 45.5 rev/s clear. Whether it works *accurately* was not answerable from
+this footage, which is what prompted teaching spinsim to render colour.
+
+**This footage has since been deleted** at the user's request: the cap8 captures, the rebuilt
+10 Nov field captures, the `real*/` sources and everything derived from them. They were unpainted
+balls and red+blue balls, so nothing there could ever have exercised the current three-dot
+marking. The numbers above are now the only record of what they showed; the originals remain in
+the user's Drive. Any future real-footage check needs new clips shot with the correctly painted
+ball. `web/test/fixtures/real-segments.json` keeps the 33 measured tracks, which is what the
+track-measurement harnesses need, and those are unaffected.
+
 **Still unproven:** which way a real ball actually skids. The field clips are side views, so the
 skid is toward or away from the camera; the club clips are angled, so it is mixed with depth. The
 best available evidence is the engine's own flight direction before and after the bounce on three

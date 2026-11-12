@@ -723,6 +723,31 @@ mirror term to swamp. The rule is not a rubber stamp.
 **Still unproven, and unchanged by this:** which way a real ball actually skids. This widens when
 the direction is shown; it does not add evidence that the direction is right.
 
+## 0.9.10: two more gates on the drill direction, from reviewing 0.9.9 against the kept data
+
+0.9.9 was checked against the 33 measured stretches from the deleted footage, which is possible
+because `gyroDirKnown` is computable from stored fields: `axis`, `flight.dir`, `rps`, `marking`.
+It let 12 of 15 home stretches, 5 of 8 club and 4 of 10 field show the direction. Two of those
+four field rows should not have.
+
+**An unclear reading was carrying a direction.** Field serve 4 read UNCLEAR and still said known.
+`reliable` is only settled after `crossCheck` and `mirrorCheck` run, which is after a stretch is
+measured, so the flag was computed too early to see it. A stretch the engine will not stand
+behind now has its direction cleared at that point.
+
+**The mirror is not the only way the sign can be wrong.** It guards the front-to-back flip and
+nothing else; blur tilts the axis, and that error lands on gyro whole. Over the rendered clips
+the gyro misses the truth by 1.9 rev/s typically and 7.0 at worst -- `g_dots_blur`, a *clear*
+reading at 36 px with the shutter open four times as long. So a gyro of 5.7 rev/s on a smeared
+field ball has a sign the measurement cannot establish however side-on the camera is. The floor
+was 1 rev/s, which was nearly no floor at all; it is now `max(8, 0.2 x rps)`, a little above the
+worst error seen on clips that are cleaner than any real one.
+
+On the field rows that leaves 2 of 10 rather than 4: serve 3 off the paddle (+16.9 at 52.5 rev/s)
+and serve 8 (-21.9 at 65). The eight it declines, it declines for a reason that camera cannot
+argue with -- it views those serves 30 to 55 degrees head-on, where the mirror term swamps the
+gyro. Side-on is still the real unlock for the field, and no rule can substitute for it.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

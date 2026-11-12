@@ -1789,7 +1789,14 @@
     // the reading even without the dots; filmed down the table it is the first thing to go. This
     // asks spinComponents rather than doing the arithmetic here, so the two can't drift apart.
     const cMirror = spinComponents(r.rps, [axis[0], axis[1], -axis[2]], geo.f);
-    const gyroDirKnown = Math.abs(c.gyro) >= 1 &&
+    // The mirror is not the only way the direction can be wrong. Blur tilts the axis, and that
+    // error lands on gyro whole: over the rendered clips the gyro misses by 1.9 rev/s typically
+    // and by 7.0 at worst (test/make_gyro_clips.sh's g_dots_blur, a clear reading at 36 px with
+    // the shutter open four times as long). A gyro smaller than that has a sign the measurement
+    // cannot establish however side-on the camera is, so it is not claimed. Real balls are
+    // blurrier than rendered ones, hence a floor a little above the worst seen.
+    const gyroFloor = Math.max(8, 0.2 * r.rps);
+    const gyroDirKnown = Math.abs(c.gyro) >= gyroFloor &&
       (r.method === "dots" || Math.sign(cMirror.gyro) === Math.sign(c.gyro));
     // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
     // small (its shaded white side matched the wall) and so did every speed (synthetic test: up to
@@ -1861,7 +1868,8 @@
     Object.assign(r, { axis, spinType: spinLabel(r.rps, c), backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift),
       sidespin: Math.abs(c.curve), sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
       gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true,
-      gyroDirKnown: Math.abs(c.gyro) >= 1 && (r.marking === "dots" || Math.sign(back.gyro) === Math.sign(c.gyro)) });
+      gyroDirKnown: Math.abs(c.gyro) >= Math.max(8, 0.2 * r.rps) &&
+        (r.marking === "dots" || Math.sign(back.gyro) === Math.sign(c.gyro)) });
   }
   function mirrorCheck(readings) {
     const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);
@@ -1952,6 +1960,9 @@
           }
           crossCheck(readings);
           mirrorCheck(readings);
+          // reliable is only settled here, and a stretch the engine won't stand behind must not
+          // carry a drill direction either: field serve 4 read unclear and still said "known".
+          for (const r of readings) if (!r.reliable) r.gyroDirKnown = false;
           // the headline: off the paddle when it reads clearly, else the clearest stretch
           const ok = readings.filter((r) => !r.error);
           const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||

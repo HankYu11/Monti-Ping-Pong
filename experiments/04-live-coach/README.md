@@ -795,6 +795,42 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.4: stop cutting frames nothing reads, and stop searching when searching cannot help
+
+The first session on a table with 0.10.3. Three serves the engine measured along the live track
+came in at 1.56, 2.81 and 3.33 s, against 3.27 to 4.05 the session before — and this one is the
+harder test, because a serve that bounces arcs, so the crops are taller. Per pixel measured the
+engine is 1.5 to 1.9 times quicker, which is what the harness said it would be.
+
+Two things that session showed, both cheap.
+
+**Half of every capture was never looked at.** The capture spans the serve the tracker reported;
+the engine, measuring along the tracks it is handed, builds its stretches out of those tracks and
+cannot look anywhere else. Over the five serves, 326 of 639 frames — 51% — lay outside every
+track, and each of them was decoded, cut, written, served and parsed for nothing. The capture is
+now trimmed to the tracks plus 0.05 s either side, which is ten times the furthest the engine has
+ever been seen to reach past a track's own points. 1.49x fewer frames over that session.
+
+**The search after an unclear reading was never worth it.** When the engine measures along the
+track and the reading comes out unclear, it used to throw that reading away and search the crop
+for the flight itself. The search reads the same pixels of the same capture and can only pick
+different frames inside them, and on both sessions where this fired that is exactly what it did:
+1.35 rev/s at fit 0.30 became 1.05 at 0.22, and 1.08 at 0.15 became 52.89 at 0.18. Neither
+became a reading the engine would stand behind, so the player waited 3.5 and 5.6 seconds of
+searching to be told the same thing. The reading is kept now and said sooner — 2868 ms to 1136,
+and 1510 to 381, on the rebuilt captures.
+
+A track that is not a flight at all is a different case and still searches, because there the
+stretch itself is wrong rather than the pixels. Asked that twice, the search came back with a
+clear reading both times (52.40 and 65.35 rev/s), so that path is untouched.
+
+The report also records what the track said before it was given up, so the next session can show
+whether a search that replaced it earned its seconds rather than leaving it to be argued.
+
+Expected on the same five serves: 2.68, 4.63, 2.09, 6.20 and 1.00 s, against 3.33, 5.34, 2.81,
+12.45 and 1.56. The two that still search are the two the engine refused as not flights, and the
+slower of them carries a 217 MB capture because its crop is 1344x804.
+
 ## 0.10.3: the engine measures a box round the ball
 
 A serve's wait was measured properly for the first time: six serves on a Pixel 8, every stage

@@ -2197,9 +2197,32 @@
             // reading rather than spend a search to arrive at the same after-bounce number.
             if (!read.some((r) => r.phase !== "bounce")) {
               if (given[0] && given[0].afterBounceOnly) why = "only after the bounce";
-            } else if (!read.some((r) => r.reliable && r.phase !== "bounce")) why = "the serve's own stretch read unclear";
+            } else if (!read.some((r) => r.reliable && r.phase !== "bounce")) {
+              // The stretch IS the flight and it read unclear. That used to be given up for a
+              // search, and the search is not worth it: it reads the same pixels of the same
+              // capture and can only pick different frames inside them. Measured on the two
+              // sessions where this fired, it replaced one unclear reading with another --
+              // 1.35 rev/s at fit 0.30 became 1.05 at 0.22, and 1.08 at 0.15 became 52.89 at
+              // 0.18 -- for 3.5 and 5.6 seconds of searching, on top of the measuring. Neither
+              // became a reading the engine would stand behind, so the player waited those
+              // seconds to be told the same thing. The reading is kept and said sooner.
+              //
+              // A track that is not a flight at all is a different case and still searches:
+              // there the stretch itself is wrong, not the pixels, and the search found a clear
+              // reading on both occasions it was asked.
+              DBG.trackUnclear = true;
+            }
           }
-          if (why) out = null;
+          // What the track said before it was given up, so a report can show whether the search
+          // that replaced it earned its seconds. On the two sessions measured so far it did when
+          // the track was not a flight, and did not when the track was a flight that read
+          // unclear -- there the search looks at the same pixels and arrives at the same place.
+          if (why) {
+            const sv = out && (out.serves || [])[0];
+            if (sv) DBG.trackSaid = { rps: +(sv.rps || 0).toFixed(2), fit: +(sv.fit || 0).toFixed(3),
+              clear: !!sv.reliable, type: sv.spinType, frames: sv.nFrames };
+            out = null;
+          }
         }
         if (why) DBG.trackRefused = why;
       }

@@ -398,6 +398,23 @@ class LivePipeline(
             if (paused) { ignoredWhileMeasuring++; onNote("a serve while the last one was being measured: ignored"); return }
             paused = true
         }
+        // Only the frames some track covers are worth cutting. Measuring along the live tracker's
+        // tracks, the engine builds its stretches out of those tracks and cannot look anywhere
+        // else; and when it refuses them and searches the crop instead, the flight it found was
+        // inside the same span every time it has been measured (four occasions over two
+        // sessions, the furthest 5 frames past the track's own last point). Everything else is
+        // decoded, cut, written, served and parsed for nothing: over session 20261112_194529
+        // that was 326 of 639 frames, 51% of every capture.
+        //
+        // 0.05 s either side, which is ten times the furthest the engine has been seen to reach.
+        run {
+            val fs = (listOf(serve.track) + serve.near).flatten().map { it[0].toLong() * step }
+            if (fs.isNotEmpty()) {
+                val margin = (captureFps / 20).toLong()
+                first = maxOf(first, fs.min() - margin)
+                last = minOf(last, fs.max() + margin)
+            }
+        }
         // at most 300 MB of frames (the engine takes up to 600 MB at once; over that, a frame at a
         // time: 29 s for one serve in 0.6.8): the run-up before the flight trimmed to 0.1 s first,
         // then the end

@@ -47,6 +47,9 @@ bg = np.median(Y[::20], axis=0)
 D = np.abs(Y - bg)
 track = [(p[0], p[1] - x, p[2] - y, p[3]) for p in cap["track"]]
 yy, xx = np.mgrid[0:h, 0:w]
+# enough of the track has to land inside the clip for a score to mean anything, but a short
+# track is still a track: one serve of session 20261112_194529 has 13 points in all.
+need = min(20, max(6, len(track) // 2))
 best = None
 for k in range(0, max(1, n_clip - cap["n"] + 1)):
     tot = 0.0; used = 0
@@ -59,7 +62,7 @@ for k in range(0, max(1, n_clip - cap["n"] + 1)):
         m = (xx[y0:y1, x0:x1] - tx) ** 2 + (yy[y0:y1, x0:x1] - ty) ** 2 <= r * r
         if m.sum() < 10: continue
         tot += float(D[j, y0:y1, x0:x1][m].mean()); used += 1
-    if used >= 20 and (best is None or tot / used > best[0]):
+    if used >= need and (best is None or tot / used > best[0]):
         best = (tot / used, k)
 if best is None:
     sys.exit("no offset scored: the track and the clip do not overlap")

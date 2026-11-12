@@ -3,7 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: same visual system as the pilot proposal (公文附件 look). One reading column: contact order first, then one card per 受文者 with route, sources and the letter (公文 主旨／說明 format) with a copy button. */
+/* Layout: same visual system as the pilot proposal (公文附件 look). One reading column: contact order first, then one card per 受文者 with email route, sources, the cover email and the letter (公文 主旨／說明 format), each with a copy button. */
 :root {
   --bg: #f5f7f9; --paper: #ffffff; --fg: #17202a; --muted: #5a6573; --line: #dbe1e7;
   --accent: #1d4f8f; --accent-soft: #e6eef8; --est: #8a5a00; --est-soft: #fbf1dd;
@@ -31,7 +31,7 @@ h3 { font: 700 19px/1.4 var(--zh); margin: 0; text-wrap: balance; }
 p { margin: 0 0 12px; max-width: 44em; }
 ul, ol { margin: 0 0 12px; padding-left: 1.4em; } li { margin: 4px 0; max-width: 44em; }
 a { color: var(--accent); text-underline-offset: 3px; word-break: break-all; }
-a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lede { font-size: 17px; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 18px 20px; margin: 0; max-width: none; }
 .est { font: 500 11.5px var(--mono); color: var(--est); background: var(--est-soft); border-radius: 4px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
 .pill { font: 500 12.5px var(--zh); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
@@ -39,11 +39,12 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .pill.warn { color: var(--warn); background: var(--warn-soft); }
 .pill.mid { color: var(--est); background: var(--est-soft); }
 .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
-table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 15px; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 15px; }
 th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-weight: 700; font-size: 13.5px; color: var(--muted); background: var(--bg); }
 tr:last-child td { border-bottom: 0; }
 td.n { font: 700 15px var(--mono); color: var(--accent); white-space: nowrap; }
+td .addr { white-space: nowrap; }
 .targets { display: grid; gap: 28px; }
 .target { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: grid; gap: 14px; min-width: 0; }
 .target-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; }
@@ -69,52 +70,53 @@ footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line)
   <header>
     <p class="meta">奇斯科技 QI SI TECHNOLOGY · 地方政府接洽 · 115.11.12 · 內部工作頁</p>
     <h1>縣市試辦來函清單</h1>
-    <p class="lede">依運動部 115 年 11 月 12 日回覆，國小訓練站由地方政府主管，應直接向縣市提案。本頁列出 5 個縣市、6 封來函，以及每封的受文單位、承辦科、可用的聯絡管道和來源頁面。所有電子郵件都取自該局官網的原始頁面，沒有任何一個是推測的。<span class="est">估</span> 標記為本公司的判斷。</p>
+    <p class="lede">依運動部 115 年 11 月 12 日回覆，國小訓練站由地方政府主管，應直接向縣市提案。本頁列出 5 個縣市、6 個受文單位：每個單位都有一個可寄的 email、一封寄信用的短信（請對方轉交承辦人），以及正式來函全文。每個 email 都取自政府公文或官網原頁，沒有任何一個是推測的。<span class="est">估</span> 標記為本公司的判斷。</p>
   </header>
 
-  <div class="warnbox"><b>寄出前必做</b>：附件連結（試辦計畫草案 claude.ai/artifact/NpU3dpbCi9c3UqKaFUMGUQ）目前是<b>私人</b>頁面，公務員點不開。寄出前要先把它設為公開分享，或另印成 PDF 隨函附上。公文要用公司大小章，信尾的地址、電話、聯絡人空格也要先填好。</div>
+  <div class="warnbox"><b>寄出前必做</b>：附件連結（試辦計畫草案 claude.ai/artifact/NpU3dpbCi9c3UqKaFUMGUQ）目前是<b>私人</b>頁面，公務員點不開。寄出前要先把它設為公開分享，或另印成 PDF 一起附上。信尾的地址、電話、聯絡人空格也要先填好。</div>
 
   <section>
     <h2>建議接洽順序</h2>
     <div class="scroll"><table>
-      <thead><tr><th>順序</th><th>受文者</th><th>主要管道</th><th>理由</th></tr></thead>
+      <thead><tr><th>順序</th><th>寄給</th><th>收件人</th><th>請對方轉交</th></tr></thead>
       <tbody>
-        <tr><td class="n">1</td><td>臺南市政府體育局 競技體育科</td><td>Email 給股長、副本科長，同日掛號寄紙本函</td><td>國小桌球站剛好 4 站（崇明、信義、歸仁、大橋），和試辦規模一致；也是唯一公開承辦人 email 的局處，回應最快 <span class="est">估</span></td></tr>
-        <tr><td class="n">1</td><td>臺北市政府體育局 競技運動科</td><td>掛號紙本函，寄出當天打電話給宋科員（分機 6605）預告</td><td>本公司所在地，到站支援最方便；基站由體育局主管；有「競技運動訓練暨科學中心」計畫</td></tr>
-        <tr><td class="n">1</td><td>臺北市政府教育局 體育及衛生保健科</td><td>和體育局函同日寄出（列副本，或另寄本頁簡函）</td><td>主管體育班與學校代表隊；基站不歸教育局，所以只需知會</td></tr>
-        <tr><td class="n">2</td><td>新北市政府體育局 學校體育科（副本 競技運動科）</td><td>掛號紙本函＋民意信箱</td><td>體育局兼管學校體育與基站，競技運動科有專人辦「競技運動科技」；115 學年辦國小中、高年級桌球對抗賽</td></tr>
-        <tr><td class="n">2</td><td>臺中市政府教育局 體育保健科（副本 運動局）</td><td>掛號紙本函＋教育局意見信箱</td><td>臺中的基站計畫由教育局主辦，聯絡資料都已核實</td></tr>
-        <tr><td class="n">3</td><td>高雄市政府運動發展局（副本 教育局）</td><td>先打 1999 確認地址與承辦科，再寄函</td><td>運動科技實證經驗最多（體育署補助智慧走跑場域 2.0），但兩局官網從我們的環境連不上，聯絡資料未核實</td></tr>
+        <tr><td class="n">1</td><td>臺南市 體育局 競技體育科</td><td><span class="addr">wenching@mail.tainan.gov.tw</span><br>股長，副本科長</td><td>科內基站承辦人</td></tr>
+        <tr><td class="n">1</td><td>臺北市 體育局 競技運動科</td><td><span class="addr">qh0757@gov.taipei</span><br>桌球項目承辦人</td><td>國小基站承辦人、科學中心計畫承辦人</td></tr>
+        <tr><td class="n">1</td><td>臺北市 教育局 體育及衛生保健科</td><td><span class="addr">cg7847@gov.taipei</span><br>科內承辦人（衛生側）</td><td>學校體育股</td></tr>
+        <tr><td class="n">2</td><td>新北市 體育局 學校體育科</td><td><span class="addr">af1934@ntpc.gov.tw</span><br>科長，副本競技運動科科長</td><td>基層選手訓練站承辦人</td></tr>
+        <tr><td class="n">2</td><td>臺中市 運動局 競技運動科</td><td><span class="addr">Sr4845148@taichung.gov.tw</span><br>科內承辦人</td><td>科長，並轉知教育局體育保健科</td></tr>
+        <tr><td class="n">3</td><td>高雄市 運動發展局 競技運動科</td><td><span class="addr">ausubel@kcg.gov.tw</span><br>科內承辦人，副本教育局體健科</td><td>科長／運動科學業務承辦人</td></tr>
       </tbody>
     </table></div>
-    <p class="note" style="margin-top:10px">順序 1 的三封建議同一週寄出，第 2 批隔一週，第 3 批等前兩批有回音（或 10 個工作天到期）再寄 <span class="est">估</span>。先讓臺北、臺南兩市互相不知道誰先，避免第一家拒絕影響後面。</p>
+    <p class="note" style="margin-top:10px">順序 1 的三封同一天寄出；第 2 批隔一週；第 3 批等前兩批有回音或 10 個工作天到期再寄 <span class="est">估</span>。寄出當天打電話給收件人說一聲「剛寄了一封 email，麻煩幫忙轉給承辦人」，被轉走的機率會高很多 <span class="est">估</span>。</p>
   </section>
 
   <section>
-    <h2>公文還是 email？</h2>
+    <h2>怎麼寄</h2>
     <ul>
-      <li><b>臺北市兩局、新北、臺中都沒有公開局處 email</b>，線上管道只有市府的陳情信箱（1999 系統、民意信箱）。陳情信箱會被當成民眾陳情案分案處理，適合作為補充，不適合當正式提案。</li>
-      <li><b>正式提案建議用紙本公文（函）掛號寄出</b>，受文者寫局名、信封註明承辦科。公司一般沒有政府「電子公文交換」帳號，所以紙本是實際可行的管道 <span class="est">估</span>。臺南市體育局秘書室的職掌同時列有「電子公文收文」與「紙本收文掛號分文」（<a href="https://sports.tainan.gov.tw/html2/about_show?aid=63a41a680e869&about_guid=5ab7c5711d75d">來源</a>）。</li>
-      <li><b>臺南市體育局例外</b>：競技體育科公開了承辦人 email，可以先寄電子版、再補紙本。</li>
-      <li>寄出當天打電話給承辦人預告，比只寄信有效 <span class="est">估</span>。各局的電話分機都列在下面。</li>
+      <li><b>先寄 email</b>：收件人是該局（或該科）有公開 email 的同仁。來源多半是對外公文抬頭上的「承辦人／電子信箱」，或局網新聞稿的聯絡人。信裡說明「網站未公開本業務信箱，懇請轉交承辦單位」，是常見且合乎禮貌的寫法。</li>
+      <li><b>每個收件人都是個人公務信箱</b>，不是單位信箱。人員異動後信箱可能失效；寄出前可再開一次來源頁，日期愈近愈可靠。</li>
+      <li><b>沒有使用私人信箱</b>：臺南基站承辦人與高雄部分承辦人在公文上留的是 gmail，本頁都略過，改寄同單位的公務信箱。</li>
+      <li><b>紙本公文是備案</b>：若對方回覆「請來函」，再把下面的正式來函用公司大小章掛號寄出。各局紙本地址都列在卡片裡。公司一般沒有政府電子公文交換帳號 <span class="est">估</span>。</li>
+      <li><b>線上信箱是最後一招</b>：臺北 1999、新北民意信箱、臺中意見信箱、高雄市長信箱都是網頁表單，會被當成民眾陳情案分案。</li>
     </ul>
   </section>
 
   <section>
-    <h2>各受文者與來函</h2>
+    <h2>各受文者</h2>
     <div class="targets" id="targets"></div>
   </section>
 
   <section>
     <h2>10 個工作天後的追蹤</h2>
     <div class="target">
-      <h3>追蹤信（email 或傳真用）</h3>
+      <h3>追蹤信（回覆原信寄出）</h3>
       <pre class="letter" id="followup"></pre>
       <div class="btns"><button class="copy" type="button" data-copy="followup">複製追蹤信</button></div>
       <h3>電話開場一句話</h3>
       <pre class="letter" id="callscript"></pre>
       <div class="btns"><button class="copy" type="button" data-copy="callscript">複製電話稿</button></div>
-      <p class="note">10 個工作天從寄出日（掛號交寄日）算起，不含週末與國定假日。</p>
+      <p class="note">10 個工作天從寄出日算起，不含週末與國定假日。</p>
     </div>
   </section>
 
@@ -125,7 +127,9 @@ footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line)
       <li>臺北市基層競技運動選手訓練站實施辦法第 2 條（主管機關為體育局）：<a href="https://laws.gov.taipei/law/LawSearch/LawExport/FL045494?type=0">臺北市法規查詢</a></li>
       <li>臺南市 115 年基層訓練站設站總表：<a href="https://sports.tainan.gov.tw/app_tnsport/views/web/upload_file/MES-1781589449738.pdf">設站總表</a>，核定總表：<a href="https://sports.tainan.gov.tw/app_tnsport/views/web/upload_file/MES-1782372326564.pdf">核定總表</a></li>
       <li>高雄市運動發展局 114 年度施政績效成果報告（運動科技場域實證）：<a href="https://orgws.kcg.gov.tw/001/KcgOrgUploadFiles/412/RelFile/74414/528305/de9918f5-b6a7-4931-8249-adc240867b4a.pdf">PDF</a></li>
-      <li>各局的承辦人姓名與分機取自 115 年 11 月 12 日開啟的官網頁面；人事會異動，寄出前請再開一次來源頁確認。</li>
+      <li>臺北、臺中、高雄的部分公文是轉載在彰化縣教育處或各校網站上的原件 PDF；信箱寫在原件抬頭的承辦人欄。</li>
+      <li>臺南市政府教育局沒有列入：臺南的基站與學校代表隊參賽都由體育局主管，且教育局官網從本公司的環境無法開啟。</li>
+      <li>所有承辦人資料取自 115 年 11 月 12 日開啟的頁面；人事會異動。</li>
     </ul>
   </footer>
 </main>
@@ -136,8 +140,11 @@ var TECH = '本公司開發「Serve Coach Live」手機應用程式：手機以�
 var OFFER = '本公司擬於一學期（12 週）內，在貴局推薦之 4 個國小桌球訓練站免費試辦。手機、三腳架、標記球及工具（約新臺幣 7 萬 3 千元）、教育訓練、每兩週到站支援及成果報告，均由本公司負擔，不需貴局編列經費。成果報告將提供使用率、量測數、可讀率、準確度及選手轉速變化等數據，可作為貴局評估納入基層運動推動規劃、並向運動部申請補助之依據。';
 var PRIV = '兒少個資部分：量測在手機上完成，不上傳；試辦前由學校發放家長同意書；成果報告僅用代號及統計數字；試辦結束後刪除手機中影片並回收設備。';
 var ASK = '懇請貴局惠予指定承辦窗口，本公司可至貴局簡報並現場展示（約 30 分鐘）。';
+var CONTACT = '奇斯科技（QI SI TECHNOLOGY）\n聯絡人：＿＿＿＿　電話：＿＿＿＿＿＿\n電子郵件：support@handyla.co\n網站：https://qisi.handyla.co';
 var SIGN = '奇斯科技（QI SI TECHNOLOGY）\n負責人：＿＿＿＿（用印）\n地址：臺北市萬華區＿＿＿＿＿＿\n聯絡人：＿＿＿＿　電話：＿＿＿＿＿＿\n電子郵件：support@handyla.co\n網站：https://qisi.handyla.co';
 var ATT = '附件：國小桌球發球旋轉量測試辦計畫（草案）' + PROPOSAL;
+var SUBJ = '建請貴局於所轄國小桌球基層訓練站試辦「以手機量測發球旋轉」技術';
+var MAILSUBJ = '【奇斯科技】國小桌球訓練站發球旋轉量測免費試辦提案（煩請轉交承辦單位）';
 
 function letter(t) {
   var s = '受文者：' + t.to + (t.cc ? '\n副本：' + t.cc : '') + '\n發文日期：中華民國 115 年＿＿月＿＿日\n\n主旨：' + t.subject + '，請查照。\n\n說明：\n';
@@ -146,83 +153,93 @@ function letter(t) {
   items.forEach(function (x, i) { s += nums[i] + '、' + x + '\n'; });
   return s + '\n' + ATT + '\n\n' + SIGN;
 }
-var SUBJ = '建請貴局於所轄國小桌球基層訓練站試辦「以手機量測發球旋轉」技術';
+function cover(t) {
+  return t.salute + ' 您好：\n\n' +
+    '冒昧來信。本公司奇斯科技依運動部 115 年 11 月 12 日之建議，向' + t.to + '提出「國小桌球基層訓練站發球旋轉量測」免費試辦提案：在 4 個國小桌球訓練站試辦 12 週，設備、教育訓練與成果報告均由本公司負擔。\n\n' +
+    t.fwd + '\n\n' +
+    '正式來函全文附於下方，試辦計畫草案：' + PROPOSAL + '\n如需紙本公文，本公司可另行用印寄送。敬請撥冗參閱，謝謝。\n\n' + CONTACT +
+    '\n\n————————————\n' + letter(t);
+}
 
 var T = [
-  { id: 'tn-sports', ord: '順序 1', name: '臺南市政府體育局', div: '競技體育科', status: ['ok', '聯絡資料已核實'],
+  { id: 'tn-sports', ord: '順序 1', name: '臺南市政府體育局', div: '競技體育科（基站承辦人在本科）', status: ['ok', '寄給本科'],
     route: [
-      ['寄給', '<span class="addr">wenching@mail.tainan.gov.tw</span>（股長 蔡小姐，分機 262）'],
-      ['副本', '<span class="addr">77657765@mail.tainan.gov.tw</span>（科長 黃先生，分機 257）'],
-      ['基站承辦', '科員 邵小姐，分機 264。官網列的是她的私人 gmail，建議不寄私人信箱，請股長轉交即可。'],
+      ['寄給', '<span class="addr">wenching@mail.tainan.gov.tw</span>　股長 蔡小姐，分機 262'],
+      ['副本', '<span class="addr">77657765@mail.tainan.gov.tw</span>　科長 黃先生，分機 257'],
+      ['請轉交', '科員 邵小姐（分機 264，基層運動選手訓練站）。她在官網留的是私人 gmail，所以不直接寄她。'],
       ['電話', '06-2157691'],
-      ['紙本地址', '70242 臺南市南區體育路10號　臺南市政府體育局（競技體育科）'],
-      ['公文', 'Email 先寄，同日掛號寄紙本函。秘書室收電子與紙本公文。'],
-      ['來源', '<a href="https://sports.tainan.gov.tw/html2/about_show?aid=63a41a52d6107&about_guid=5ab7c5711d75d">競技體育科職掌與人員</a>（頁面日期 2022-12-22，人員可能已異動）・<a href="https://sports.tainan.gov.tw/html2/about?about_guid=5ab7c4c542fa0">業務：運動科學訓練強化與運作</a>・<a href="https://sports.tainan.gov.tw/html2/serviceslist?ser_guid=5eb8bce90dc34">基層訓練站專區</a>']
+      ['紙本備案', '70242 臺南市南區體育路10號　臺南市政府體育局（競技體育科）'],
+      ['來源', '<a href="https://sports.tainan.gov.tw/html2/about_show?aid=63a41a52d6107&about_guid=5ab7c5711d75d">競技體育科職掌與人員</a>（體育局官網，頁面日期 2022-12-22，人員可能已異動）・<a href="https://sports.tainan.gov.tw/html2/about?about_guid=5ab7c4c542fa0">業務：運動科學訓練強化與運作</a>']
     ],
+    salute: '蔡股長', fwd: '本案涉及貴科基層運動選手訓練站業務，懇請惠予轉交承辦同仁（邵小姐）參閱，非常感謝。',
     emailSubject: '【奇斯科技】國小桌球訓練站發球旋轉量測免費試辦提案（崇明、信義、歸仁、大橋國小）',
     to: '臺南市政府體育局', subject: SUBJ,
     why: '貴局 115 年度設有桌球基層訓練站 7 站，其中國小 4 站（崇明、信義、歸仁、大橋國小），選手合計約 230 人，正與本試辦規劃之 4 站規模相符；且貴局競技體育科業務包含「運動科學訓練強化與運作」。爰建議以上述 4 站為試辦對象，實際名單仍由貴局決定。' },
 
-  { id: 'tp-sports', ord: '順序 1', name: '臺北市政府體育局', div: '競技運動科 第二股（強化訓練）', status: ['mid', '無公開 email'],
+  { id: 'tp-sports', ord: '順序 1', name: '臺北市政府體育局', div: '競技運動科 第二股（強化訓練）', status: ['ok', '寄給本科'],
     route: [
-      ['Email', '無。體育局官網沒有公開任何 email 或局長信箱。'],
-      ['線上表單', '<a href="https://1999.gov.taipei/">臺北市陳情系統 1999.gov.taipei</a>（市府共用，會以陳情案分案，僅作補充）'],
-      ['電話', '02-2570-2330 轉：宋科員 6605（國小基站申請審核、運動部基站培訓計畫）、盧科員 6606（競技運動訓練暨科學中心計畫）、洪科員 6614（桌球項目輔導）、鄧股長 6604（督辦基站業務）、科長 鄭明華 6601'],
-      ['紙本地址', '105037 臺北市松山區南京東路4段10號　臺北市政府體育局（競技運動科，第一辦公室6樓）'],
-      ['公文', '掛號紙本函為正式管道；科內登記桌 李小姐 分機 6636。寄出當天打給宋科員預告。'],
-      ['來源', '<a href="https://sports.gov.taipei/News_Content.aspx?n=2919EBFED0A4A419&sms=D0430E2A5304233D&s=415ED04CF28CE7BD">競技運動科職掌（115-10-27 更新）</a>・<a href="https://sports.gov.taipei/cp.aspx?n=F8452727FABD45BE">聯絡資訊</a>・<a href="https://laws.gov.taipei/law/LawSearch/LawExport/FL045494?type=0">基站實施辦法</a>']
+      ['寄給', '<span class="addr">qh0757@gov.taipei</span>　洪佑庭，競技運動科，分機 6614（科職掌：桌球等項目輔導）'],
+      ['請轉交', '宋科員（分機 6605，國小基站申請審核、運動部基站培訓計畫）；盧科員（分機 6606，競技運動訓練暨科學中心計畫）'],
+      ['電話', '02-2570-2330；科長 鄭明華 分機 6601'],
+      ['紙本備案', '105037 臺北市松山區南京東路4段10號　臺北市政府體育局（競技運動科，第一辦公室6樓）'],
+      ['來源', '信箱：<a href="https://newboe.chc.edu.tw/download/44327632_1153003588_1_print.pdf/81876">北市體競字第1153003588號函（115-07-30）承辦人欄</a>・分機與職掌：<a href="https://sports.gov.taipei/News_Content.aspx?n=2919EBFED0A4A419&sms=D0430E2A5304233D&s=415ED04CF28CE7BD">競技運動科職掌（115-10-27 更新）</a>・<a href="https://laws.gov.taipei/law/LawSearch/LawExport/FL045494?type=0">基站實施辦法</a>']
     ],
+    salute: '洪科員', fwd: '因貴局網站未公開本業務之信箱，本信依貴科公開公文所載寄給您。本案涉及國小基層訓練站及運動科學，若非您承辦，懇請惠予轉交宋科員（國小基站）或盧科員（競技運動訓練暨科學中心計畫），非常感謝。',
     to: '臺北市政府體育局', cc: '臺北市政府教育局', subject: SUBJ,
     why: '貴局依「臺北市基層競技運動選手訓練站實施辦法」主管本市基層訓練站，並推動「臺北市競技運動訓練暨科學中心計畫」。本公司設址於萬華區，可每兩週到站支援。建議由貴局自國小桌球訓練站中推薦 4 站試辦。' },
 
-  { id: 'tp-edu', ord: '順序 1', name: '臺北市政府教育局', div: '體育及衛生保健科 學校體育股', status: ['mid', '無公開 email・知會用'],
+  { id: 'tp-edu', ord: '順序 1', name: '臺北市政府教育局', div: '體育及衛生保健科 學校體育股（知會用）', status: ['mid', '寄給本科，請轉體育股'],
     route: [
-      ['Email', '無。教育局官網沒有公開 email。'],
-      ['線上表單', '<a href="https://1999.gov.taipei/">臺北市陳情系統 1999.gov.taipei</a>'],
-      ['電話', '1999（外縣市 02-27208889）轉：學校體育 林股長 6358、喻科員 6393（體育班、重點運動項目）、科長 莊科長 6390'],
-      ['紙本地址', '110204 臺北市信義區市府路1號8樓西北區　臺北市政府教育局（體育及衛生保健科）'],
-      ['公文', '基站歸體育局，所以本函只是知會。可以只在體育局函上列副本，或另寄下面這封簡函。'],
-      ['來源', '<a href="https://www.doe.gov.taipei/News_Content.aspx?n=2A30202B4B40FC8D&sms=69B4E6B26379EE4E&s=FC6EE391B29B1143">體健科職掌（115-09-22 更新）</a>・<a href="https://www.doe.gov.taipei/News_Content.aspx?n=A551210CC4265C02&sms=EF5F9B8CFE0371C0&s=B0B223B5B0D92AD9">聯絡資訊</a>']
+      ['寄給', '<span class="addr">cg7847@gov.taipei</span>　陳衍如，體育及衛生保健科，分機 6395（來源公文為衛生業務）'],
+      ['請轉交', '學校體育股 林股長（分機 6358）；體育班、重點運動項目：喻科員（分機 6393）'],
+      ['電話', '1999（外縣市 02-27208889）'],
+      ['紙本備案', '110204 臺北市信義區市府路1號8樓　臺北市政府教育局（體育及衛生保健科）'],
+      ['為何寄', '基站歸體育局主管；教育局管體育班與學校代表隊，所以本信是知會，請他們協助轉知學校。'],
+      ['來源', '信箱：<a href="https://www.yjjh.tp.edu.tw/wp-content/uploads/doc/yjjhosacom06/1150305%E5%87%BD%E9%98%B2%E7%96%AB.pdf">北市教體字第1153043727號函（115-03-05）承辦人欄</a>・分機與職掌：<a href="https://www.doe.gov.taipei/News_Content.aspx?n=2A30202B4B40FC8D&sms=69B4E6B26379EE4E&s=FC6EE391B29B1143">體健科職掌（115-09-22 更新）</a>']
     ],
+    salute: '陳承辦人', fwd: '因貴局網站未公開學校體育業務之信箱，本信依貴科公開公文所載寄給您。本案已另函臺北市政府體育局，寄貴局係為知會；懇請惠予轉交學校體育股（林股長）參閱，非常感謝。',
     to: '臺北市政府教育局', subject: '檢送本公司向臺北市政府體育局提出之「國小桌球發球旋轉量測試辦計畫」，敬請惠予協助',
     items: [MOS, TECH,
       '本公司已另函臺北市政府體育局，建請於所轄國小桌球基層訓練站免費試辦 12 週，設備與人力均由本公司負擔。因試辦站多設於國民小學，且貴局主管體育班及學校運動代表隊，特檢送計畫供參。',
       '如貴局所屬設有桌球體育班或代表隊之國小有意參與，或對家長同意書格式有建議，敬請惠予協助轉知或指導。',
       PRIV] },
 
-  { id: 'ntpc', ord: '順序 2', name: '新北市政府體育局', div: '學校體育科（副本 競技運動科）', status: ['mid', '無適用 email'],
+  { id: 'ntpc', ord: '順序 2', name: '新北市政府體育局', div: '學校體育科（副本 競技運動科）', status: ['ok', '寄給科長'],
     route: [
-      ['Email', '官網唯一的 email（sportsntpc@ntpc.gov.tw）標示為「大巨蛋信箱」，不適合寄這封。'],
-      ['線上表單', '<a href="https://service.ntpc.gov.tw/contact/Index.action">新北市民意信箱</a>（由體育局官網連結）'],
-      ['電話', '(02)2962-0462 轉：學校體育科 朱小姐 168（基層選手訓練站）、科長 謝秀瑜 160；競技運動科 周先生 505（競技運動科技）、科長 吳宗祐 500'],
-      ['紙本地址', '220071 新北市板橋區漢生東路278號　新北市政府體育局（學校體育科）'],
-      ['公文', '掛號紙本函，信封寫學校體育科，函上副本競技運動科。'],
-      ['來源', '<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=3338eea68717f3fe">學校體育科職掌（115-08-17 更新）</a>・<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=4f32982e512a0f1b">競技運動科職掌</a>・<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=b53646fbee8d8864">聯絡資訊</a>']
+      ['寄給', '<span class="addr">af1934@ntpc.gov.tw</span>　學校體育科 科長 謝秀瑜，分機 160'],
+      ['副本', '<span class="addr">an7928@ntpc.gov.tw</span>　競技運動科 科長 吳宗祐，分機 500'],
+      ['請轉交', '學校體育科 朱小姐（分機 168，基層選手訓練站）；競技運動科 周先生（分機 505，競技運動科技）'],
+      ['電話', '(02)2962-0462'],
+      ['紙本備案', '220071 新北市板橋區漢生東路278號　新北市政府體育局（學校體育科）'],
+      ['來源', '信箱：<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=d127e0ce0f4f407b&act=be4f48068b2b0031&dataserno=76040c1ae38d49ba08347db16350a298">體育局新聞稿聯絡人（2026-11-03）</a>・<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=d127e0ce0f4f407b&act=be4f48068b2b0031&dataserno=9c1c3bf742a563d125eb996f74bbb79c">新聞稿聯絡人（2026-11-09）</a>・職掌：<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=3338eea68717f3fe">學校體育科</a>・<a href="https://www.t-sports.ntpc.gov.tw/home.jsp?id=4f32982e512a0f1b">競技運動科</a>']
     ],
+    salute: '謝科長', fwd: '本案涉及貴科基層選手訓練站業務及競技運動科之運動科技業務，懇請惠予轉交承辦同仁（朱小姐）參閱，並副知吳科長，非常感謝。',
     to: '新北市政府體育局', subject: SUBJ,
     why: '貴局學校體育科辦理基層選手訓練站業務，競技運動科辦理競技運動科技業務，並於 115 學年度主辦國小中、高年級組之中小學桌球對抗賽，基層桌球人口充足。建議由貴局推薦 4 個國小桌球訓練站或校隊試辦。' },
 
-  { id: 'tc-edu', ord: '順序 2', name: '臺中市政府教育局', div: '體育保健科（副本 運動局 競技運動科）', status: ['mid', '無公開 email'],
+  { id: 'tc', ord: '順序 2', name: '臺中市政府運動局', div: '競技運動科（請轉知 教育局 體育保健科）', status: ['mid', '寄給本科，請轉教育局'],
     route: [
-      ['Email', '無。教育局與運動局官網都沒有公開 email。'],
-      ['線上表單', '<a href="https://www.tc.edu.tw/page/2e7ae731-405c-4283-ba4b-46bcd18a8811">教育局意見信箱</a>・<a href="https://talk.taichung.gov.tw/">運動局意見信箱（市府共用）</a>'],
-      ['電話', '04-22289111 轉：教育局 林小姐 54726（基層運動選手訓練站計畫）、體育股 陳股長 54709、科長 尤先生 54701；運動局 競技運動科 科長 顏蔚雯 51501、施專員 51503'],
-      ['紙本地址', '420018 臺中市豐原區陽明街36號　臺中市政府教育局（體育保健科）<br>副本：407610 臺中市西屯區臺灣大道三段99號惠中樓10樓　臺中市政府運動局（競技運動科）'],
-      ['公文', '掛號紙本函寄教育局，副本運動局。'],
-      ['來源', '<a href="https://www.tc.edu.tw/page/0e89156c-04bc-47eb-ab0b-a1e0891d5428">教育局體育保健科職掌</a>・<a href="https://www.sport.taichung.gov.tw/2419024/2428335/2428400/2720533/post">運動局競技運動科職掌</a>']
+      ['寄給', '<span class="addr">Sr4845148@taichung.gov.tw</span>　盧鈺亭，競技運動科，分機 51507'],
+      ['請轉交', '競技運動科 科長 顏蔚雯（分機 51501）；並轉知教育局體育保健科 林小姐（分機 54726，基層運動選手訓練站計畫）'],
+      ['為何寄運動局', '臺中的基站計畫由教育局主辦，但教育局體育側沒有找得到的公務信箱；運動局競技運動科有，且主管運動科學訓練。'],
+      ['電話', '04-22289111'],
+      ['紙本備案', '運動局官網地址：407610 臺中市西屯區臺灣大道三段99號惠中樓10樓；115-05 公文抬頭則為 420018 臺中市豐原區陽明街36號2樓。寄紙本前先電話確認。教育局：420018 臺中市豐原區陽明街36號'],
+      ['來源', '信箱：<a href="https://newboe.chc.edu.tw/download/387390000E_1150012596_print.pdf/79917">中市運競字第1150012596號函（115-05-26）承辦人欄</a>・職掌：<a href="https://www.sport.taichung.gov.tw/2419024/2428335/2428400/2720533/post">運動局競技運動科</a>・<a href="https://www.tc.edu.tw/page/0e89156c-04bc-47eb-ab0b-a1e0891d5428">教育局體育保健科</a>']
     ],
-    to: '臺中市政府教育局', cc: '臺中市政府運動局', subject: SUBJ,
-    why: '貴局體育保健科主辦本市「基層運動選手訓練站計畫」，運動局競技運動科辦理「運動科學訓練強化與運作」。建議由貴局自國小桌球訓練站或校隊中推薦 4 站試辦，並與運動局共同評估成果。' },
+    salute: '盧承辦人', fwd: '因貴局網站未公開本業務之信箱，本信依貴科公開公文所載寄給您。本案涉及運動科學與國小基層訓練站，若非您承辦，懇請惠予轉交顏科長，並協助轉知臺中市政府教育局體育保健科（基層運動選手訓練站計畫），非常感謝。',
+    to: '臺中市政府運動局', cc: '臺中市政府教育局', subject: SUBJ,
+    why: '貴局競技運動科辦理「運動科學訓練強化與運作」，臺中市政府教育局體育保健科主辦本市「基層運動選手訓練站計畫」。建議由貴局會同教育局，自國小桌球訓練站或校隊中推薦 4 站試辦，並共同評估成果。' },
 
-  { id: 'ks', ord: '順序 3', name: '高雄市政府運動發展局', div: '承辦科未核實（副本 教育局）', status: ['warn', '聯絡資料未核實'],
+  { id: 'ks', ord: '順序 3', name: '高雄市政府運動發展局', div: '競技運動科（副本 教育局 體育及衛生保健科）', status: ['ok', '寄給本科'],
     route: [
-      ['Email', '未核實。運動發展局（sports.kcg.gov.tw）與教育局（kh.edu.tw）官網從我們的環境連不上。'],
-      ['線上表單', '<a href="https://soweb.kcg.gov.tw/">高雄市線上即時服務系統（市長信箱）</a>，已在市府官網確認'],
-      ['電話', '1999。寄出前先打 1999 或在一般瀏覽器開兩局官網，確認地址、承辦科與承辦人。'],
-      ['紙本地址', '未核實，請勿在確認前寄出'],
-      ['公文', '確認地址後掛號紙本函寄運動發展局，副本教育局（體育及衛生保健科，依其發文字號「高市教健字」推定 <span class="est">估</span>）。'],
-      ['來源', '<a href="https://orgws.kcg.gov.tw/001/KcgOrgUploadFiles/412/RelFile/74414/528305/de9918f5-b6a7-4931-8249-adc240867b4a.pdf">運發局 114 年施政績效報告</a>・<a href="https://www.kjes.kh.edu.tw/upload/155/101_85186/1.115%E5%B0%8F%E4%BF%83%E6%9C%83%E6%A1%8C%E7%90%83%E6%AF%94%E8%B3%BD%E7%AB%B6%E8%B3%BD%E8%A6%8F%E7%A8%8B.pdf">115 年國小體促會桌球賽規程</a>・<a href="https://www.kcg.gov.tw/OrganWeb.aspx?n=49B34922D836FF24&sms=36A0BB334ECB4011">市府機關網站列表</a>']
+      ['寄給', '<span class="addr">ausubel@kcg.gov.tw</span>　陳香吟，競技運動科，07-5813680 分機 305'],
+      ['副本', '<span class="addr">tuna22tw@kcg.gov.tw</span>　教育局 體育及衛生保健科 秦先生，07-7995678 轉 3108（來源公文為 114 年，較舊）'],
+      ['請轉交', '競技運動科主管，及辦理運動科學輔助競技訓練計畫的同仁'],
+      ['紙本備案', '813003 高雄市左營區世運大道100號　高雄市政府運動發展局（競技運動科）<br>教育局：83001 高雄市鳳山區光復路二段132號'],
+      ['注意', '兩局官網從本公司的環境都打不開；地址與信箱取自對外公文原件。教育局體健科近期承辦人留的是私人 gmail，本頁略過。'],
+      ['來源', '<a href="https://newboe.chc.edu.tw/download/1509045_11531269401_1_print.pdf/83475">高市運競字第11531269401號函（115-09-10）</a>・<a href="https://www.fxp.kh.edu.tw/upload/121/101_21070/43551514_11433904700.pdf">高市教健字第11433904700號函（114-05-21）</a>・<a href="https://orgws.kcg.gov.tw/001/KcgOrgUploadFiles/412/RelFile/74414/528305/de9918f5-b6a7-4931-8249-adc240867b4a.pdf">運發局 114 年施政績效報告</a>']
     ],
+    salute: '陳承辦人', fwd: '因貴局網站未公開本業務之信箱，本信依貴科公開公文所載寄給您。本案涉及運動科技實證與國小基層桌球，若非您承辦，懇請惠予轉交貴科主管或運動科學業務承辦同仁，非常感謝。本信並副知教育局體育及衛生保健科。',
     to: '高雄市政府運動發展局', cc: '高雄市政府教育局', subject: SUBJ,
     why: '貴局已執行體育署補助之「高雄智慧走跑場域計畫 2.0」等運動科技場域實證計畫，並自 110 年起推動運動科學輔助競技運動訓練；高雄市政府教育局亦每年辦理國民小學體育促進會桌球比賽。本試辦可延續貴市運動科技實證經驗至基層桌球。建議由貴局會同教育局推薦 4 個國小桌球訓練站或校隊試辦。' }
 ];
@@ -234,24 +251,26 @@ T.forEach(function (t) {
   el.innerHTML =
     '<div class="target-head"><span class="ord">' + t.ord + '</span><h3>' + t.name + '</h3><span class="pill ' + t.status[0] + '">' + t.status[1] + '</span></div>' +
     '<p class="note" style="margin:0">承辦：' + t.div + '</p>' +
-    '<dl class="route">' + rows + '</dl>' +
-    (t.emailSubject ? '<dl class="route"><dt>Email 主旨</dt><dd><span id="' + t.id + '-subj">' + t.emailSubject + '</span></dd></dl>' : '') +
-    '<details' + (t.ord === '順序 1' ? ' open' : '') + '><summary>來函全文</summary><pre class="letter" id="' + t.id + '-letter"></pre></details>' +
-    '<div class="btns"><button class="copy" type="button" data-copy="' + t.id + '-letter">複製來函</button>' +
-    (t.emailSubject ? '<button class="copy" type="button" data-copy="' + t.id + '-subj">複製 email 主旨</button>' : '') + '</div>';
+    '<dl class="route">' + rows + '<dt>Email 主旨</dt><dd><span id="' + t.id + '-subj"></span></dd></dl>' +
+    '<details' + (t.ord === '順序 1' ? ' open' : '') + '><summary>Email 內文（含來函全文）</summary><pre class="letter" id="' + t.id + '-mail"></pre></details>' +
+    '<details><summary>正式來函（紙本備案用）</summary><pre class="letter" id="' + t.id + '-letter"></pre></details>' +
+    '<div class="btns"><button class="copy" type="button" data-copy="' + t.id + '-subj">複製 email 主旨</button>' +
+    '<button class="copy" type="button" data-copy="' + t.id + '-mail">複製 email 內文</button>' +
+    '<button class="copy" type="button" data-copy="' + t.id + '-letter">複製正式來函</button></div>';
   host.appendChild(el);
+  document.getElementById(t.id + '-subj').textContent = t.emailSubject || MAILSUBJ;
+  document.getElementById(t.id + '-mail').textContent = cover(t);
   document.getElementById(t.id + '-letter').textContent = letter(t);
 });
 
 document.getElementById('followup').textContent =
-  '主旨：追蹤本公司 115 年＿＿月＿＿日「國小桌球發球旋轉量測免費試辦」來函\n\n' +
-  '＿＿科 ＿＿先生／小姐 您好：\n\n' +
-  '本公司奇斯科技於 115 年＿＿月＿＿日寄送來函，建請貴局於國小桌球基層訓練站免費試辦以手機量測發球旋轉（12 週、4 站，設備與人力由本公司負擔）。此一提案係依運動部 115 年 11 月 12 日回覆，建議先由地方政府試辦，再視成果申請該部「推動運動科技實證計畫」。\n\n' +
-  '想請教來函是否已分案、由哪一位承辦。若方便，本公司可於貴局方便時間到局簡報並現場示範，約 30 分鐘。\n\n' +
-  '試辦計畫草案：' + PROPOSAL + '\n\n' +
-  '奇斯科技　聯絡人：＿＿＿＿　電話：＿＿＿＿＿＿\nsupport@handyla.co';
+  '主旨：RE: 國小桌球訓練站發球旋轉量測免費試辦提案（追蹤）\n\n' +
+  '＿＿ 您好：\n\n' +
+  '本公司奇斯科技於 115 年＿＿月＿＿日來信，建請貴局於國小桌球基層訓練站免費試辦以手機量測發球旋轉（12 週、4 站，設備與人力由本公司負擔）。此一提案係依運動部 115 年 11 月 12 日之建議，先由地方政府試辦，再視成果申請該部「推動運動科技實證計畫」。\n\n' +
+  '想請教本案是否已轉交承辦單位、由哪一位承辦。若方便，本公司可於貴局方便時間到局簡報並現場示範，約 30 分鐘；如需紙本公文，亦可另行寄送。\n\n' +
+  '試辦計畫草案：' + PROPOSAL + '\n\n' + CONTACT;
 document.getElementById('callscript').textContent =
-  '您好，我是奇斯科技的＿＿＿，我們在＿＿月＿＿日寄了一封函，提案在國小桌球訓練站免費試辦用手機量測發球旋轉，想請問這件是哪一位承辦、能不能安排 30 分鐘到局裡示範？';
+  '您好，我是奇斯科技的＿＿＿，＿＿月＿＿日寄了一封 email 給您，是在國小桌球訓練站免費試辦用手機量測發球旋轉的提案，想請問是否已轉給承辦人、是哪一位承辦，能不能安排 30 分鐘到局裡示範？';
 
 document.addEventListener('click', function (e) {
   var btn = e.target.closest('button.copy'); if (!btn) return;

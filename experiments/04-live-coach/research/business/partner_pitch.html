@@ -1,0 +1,159 @@
+<title>台灣經銷合作提案</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column, a partner pitch: the ask first, then product, gap, value per partner, deal terms, a drawn 3-month pilot, next step. Same tokens as the city pilot proposal so QI SI's documents look like one set. */
+:root {
+  --bg: #f5f7f9; --paper: #ffffff; --fg: #17202a; --muted: #5a6573; --line: #dbe1e7;
+  --accent: #1d4f8f; --accent-soft: #e6eef8; --est: #8a5a00; --est-soft: #fbf1dd;
+  --zh: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1218; --paper: #141b23; --fg: #e5ebf1; --muted: #9aa6b3; --line: #273240;
+  --accent: #7fb2ef; --accent-soft: #16263a; --est: #f0bd5e; --est-soft: #2b2312; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1218; --paper: #141b23; --fg: #e5ebf1; --muted: #9aa6b3; --line: #273240;
+  --accent: #7fb2ef; --accent-soft: #16263a; --est: #f0bd5e; --est-soft: #2b2312; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.75 var(--zh); padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 820px; margin: 0 auto; display: grid; gap: 40px; }
+header { display: grid; gap: 10px; }
+.meta { font: 13px/1.5 var(--mono); color: var(--muted); letter-spacing: .04em; }
+h1 { font: 900 clamp(28px, 5vw, 38px)/1.25 var(--zh); margin: 0; text-wrap: balance; }
+h2 { font: 700 21px/1.4 var(--zh); margin: 0 0 12px; display: flex; gap: 12px; align-items: baseline; text-wrap: balance; }
+h2 .n { color: var(--accent); font-weight: 900; flex: none; }
+p { margin: 0 0 12px; max-width: 42em; }
+ul, ol { margin: 0 0 12px; padding-left: 1.4em; } li { margin: 4px 0; max-width: 42em; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lede { font-size: 17.5px; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 18px 20px; margin: 0; max-width: none; }
+.est { font: 500 11.5px var(--mono); color: var(--est); background: var(--est-soft); border-radius: 4px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; min-width: 540px; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 700; font-size: 13.5px; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timeline { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 18px 18px 14px; margin-bottom: 14px; }
+.weeks { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+.weeks span { font: 11.5px var(--mono); color: var(--muted); text-align: center; }
+.bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; margin: 6px 0 10px; }
+.bar { border-radius: 4px; padding: 8px 10px; font-size: 13.5px; font-weight: 700; line-height: 1.35; min-width: 0; }
+.bar small { display: block; font-weight: 400; color: var(--muted); }
+.b1 { grid-column: 1 / 5; background: var(--accent-soft); color: var(--accent); }
+.b2 { grid-column: 5 / 11; background: var(--accent); color: var(--paper); }
+.b2 small { color: var(--paper); opacity: .85; }
+.b3 { grid-column: 11 / 13; background: var(--accent-soft); color: var(--accent); }
+.visits { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+.visits i { height: 8px; border-radius: 4px; }
+.visits i.on { background: var(--est); }
+.legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px; background: var(--est); margin-right: 6px; vertical-align: middle; }
+.letter { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; font-size: 15.5px; }
+.letter p { margin: 0 0 8px; }
+.copy { font: 500 13px var(--zh); color: var(--accent); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; margin-top: 8px; }
+footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer ul { padding-left: 1.2em; }
+@media (max-width: 560px) { .bar { font-size: 12px; padding: 6px; } .b1 small, .b3 small { display: none; } }
+</style>
+<main>
+  <header>
+    <p class="meta">奇斯科技 QI SI TECHNOLOGY · 115.11.06 · 合作提案</p>
+    <h1>Serve Coach Live 台灣經銷合作提案</h1>
+    <p class="lede">一支手機，即時量出每一顆發球的轉速。奇斯科技提供 App 與技術，想找一位台灣夥伴負責通路，先用 3 個月試點驗證，再談正式經銷。<span class="est">估</span> 標記為建議值或估算，歡迎一起調整。</p>
+  </header>
+
+  <section>
+    <h2>產品：手機架在球桌旁，每一顆發球幾秒內報出轉速</h2>
+    <ul>
+      <li><b>量測</b>：手機以每秒 240 格拍攝，自動抓到發球，算出轉速（RPM）、旋轉種類（下旋、側下旋…）與強弱等級（無旋轉／弱／中／強）。</li>
+      <li><b>說給你聽</b>：結果直接用語音唸出（例：「2450 RPM, strong spin, backspin」），並標出世界頂尖選手的發球平均約 2,760 RPM。</li>
+      <li><b>不用網路</b>：運算全在手機上完成，球館收訊差也能用。</li>
+      <li><b>不必買專用球</b>：一般練習球半顆塗黑、點上紅綠藍三個色點即可；3D 列印的杯座與色點模板讓一顆球一分鐘標記完成。</li>
+      <li><b>現況</b>：Android 測試版 v0.9.2，已在 Pixel 8 上以 1080p、240 fps 實測；iOS 版尚未開發。語音目前為英文。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>市場空缺：唯一的對手在德國，亞洲還沒有人做</h2>
+    <p>全球唯一的同類產品是德國 Spinsight，由膠皮大廠 ESN 投資，2026 年 5 月成為德國桌球協會（DTTB）技術夥伴。它的限制正好是我們的切入點：</p>
+    <div class="scroll"><table>
+      <thead><tr><th></th><th>Spinsight</th><th>Serve Coach Live</th></tr></thead>
+      <tbody>
+        <tr><td>量測手機</td><td>只支援 iPhone 13 以上</td><td>Android（240 fps 機型）</td></tr>
+        <tr><td>網路</td><td>需要連線</td><td>離線運作</td></tr>
+        <tr><td>球</td><td>必須買它的專用球，約每顆 €2.5–3.3</td><td>一般球自己標記</td></tr>
+        <tr><td>年費</td><td class="num">球員 €60／教練團隊 €300</td><td>待定（見下方合作方式）</td></tr>
+        <tr><td>亞洲布局</td><td>未見任何活動</td><td>從台灣開始</td></tr>
+      </tbody>
+    </table></div>
+    <p style="margin-top:12px">台灣的教練群可以直接觸及：中華民國桌球協會截至 2025 年底約有 3,800 位持證教練（C 級 2,747、B 級 838、A 級 215），每 4 年需累積 48 小時進修才能展延。</p>
+  </section>
+
+  <section>
+    <h2>為什麼找你：你有通路，我們有讓球和器材多一個購買理由的 App</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>夥伴</th><th>你的優勢</th><th>合作後你多了什麼</th></tr></thead>
+      <tbody>
+        <tr><td>JOOLA 台灣</td><td>JOOLA Spinball 雙色訓練球；台灣直營公司與線上商城</td><td>Spinball 目前沒有搭配的 App。「點上三個色點就能量轉速」讓這顆球有新的購買理由；台灣試點成果也能帶回總部</td></tr>
+        <tr><td>東暎體育（Nittaku、Yasaka、紅雙喜代理）</td><td>1984 年至今的代理經驗，器材行與校隊通路</td><td>一項可與球、膠皮一起賣的數位商品，以及以自家品牌推出的標記訓練球</td></tr>
+      </tbody>
+    </table></div>
+    <p style="margin-top:12px">雙色球的橙色半面是否和黑色一樣準，我們正在測試；試點前會先提供準確度數據。</p>
+  </section>
+
+  <section>
+    <h2>合作方式：夥伴賣「轉速訓練組」，我們按啟用碼收授權費</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>項目</th><th>建議 <span class="est">估</span></th></tr></thead>
+      <tbody>
+        <tr><td>組合內容</td><td>12–24 顆已標記的訓練球、3D 列印杯座＋色點模板、12 個月 App 啟用碼（另有教練版）</td></tr>
+        <tr><td>建議售價</td><td class="num">NT$990–1,490</td></tr>
+        <tr><td>夥伴毛利</td><td>依一般零售慣例，約 30–50%</td></tr>
+        <tr><td>奇斯科技授權費</td><td class="num">每組啟用碼 NT$300–500</td></tr>
+        <tr><td>通路</td><td>器材行、線上商城、校隊與教學點；若門市為運動幣合作店家，消費者可用「添裝備」額度抵用</td></tr>
+        <tr><td>獨家</td><td>台灣獨家經銷 12 個月，首年達到約定保底量（例如 500 組）後續約；未達則改為非獨家</td></tr>
+        <tr><td>各自保留</td><td>奇斯科技保留 App、資料與台灣以外市場；夥伴保留自家品牌與通路</td></tr>
+      </tbody>
+    </table></div>
+    <p style="margin-top:12px">我們負責 App 開發、更新、客服與教練教學素材；夥伴負責銷售、庫存與配送。</p>
+  </section>
+
+  <section>
+    <h2>試點計畫：3 個月、5 個教學點，用數字決定要不要正式合作</h2>
+    <div class="timeline" role="img" aria-label="3 個月試點：第 1 個月準備，第 2–3 個月使用，第 3 個月底決定">
+      <div class="weeks"><span>1月</span><span></span><span></span><span></span><span>2月</span><span></span><span></span><span></span><span>3月</span><span></span><span></span><span></span></div>
+      <div class="bars">
+        <div class="bar b1">準備<small>選 5 個教學點、架設、教學</small></div>
+        <div class="bar b2">使用<small>平常課程中使用；每週回報量測次數</small></div>
+        <div class="bar b3">決定<small>一起看數字</small></div>
+      </div>
+    </div>
+    <ul>
+      <li><b>夥伴</b>：推薦 5 個教學點（教室、校隊、運動中心）。</li>
+      <li><b>奇斯科技</b>：提供 App、標記好的球與 3D 列印工具，必要時借出可拍 240 fps 的手機，到現場教教練架設；第 4 週與第 10 週訪談教練。</li>
+      <li><b>通過標準</b> <span class="est">估</span>：5 個點中至少 3 個每週使用、每點每週至少 100 顆發球被量測、至少 2 位教練願意自費續用或推薦給學生。</li>
+      <li><b>費用</b>：試點期間雙方不收費。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>下一步：30 分鐘現場展示</h2>
+    <p>我們帶手機、三腳架與標記球到你的球館或辦公室，現場發幾球給你看。之後再談試點的教學點與時程。</p>
+    <p>奇斯科技 QI SI TECHNOLOGY　台北市萬華區　support@handyla.co　<a href="https://qisi.handyla.co/">qisi.handyla.co</a></p>
+  </section>
+
+  <footer>
+    <p>資料來源</p>
+    <ul>
+      <li>Spinsight 價格：<a href="https://intercom.help/spinsight/en/articles/12638741-how-much-does-training-with-the-spinsight-app-cost">Spinsight 說明中心</a>；手機需求：<a href="https://www.ttvn.de/news/die-spinsight-app-ist-endlich-offiziell-erhaeltlich/">TTVN 公告</a></li>
+      <li>Spinsight 與 DTTB 合作：<a href="http://www.ttbl.de/en/news/post/6a0ecabf10b7cf0001d52c5e">TTBL</a></li>
+      <li>台灣教練人數：<a href="https://www.cttta.org.tw/files/News/202622312380.pdf">中華民國桌球協會 115 年度教練計畫</a></li>
+      <li>2,760 RPM：2009 世界桌球錦標賽八強發球平均（Tamaki et al.）</li>
+      <li>運動幣添裝備：<a href="https://www.managertoday.com.tw/articles/view/71651">經理人</a></li>
+    </ul>
+  </footer>
+</main>

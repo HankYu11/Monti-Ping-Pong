@@ -64,7 +64,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         setOnClickListener { onNext() }
     }
     lateinit var aiButton: TextView; private set
-    private lateinit var testButton: TextView
+    private lateinit var bottomLeft: LinearLayout
     private lateinit var ballRow: LinearLayout
     /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
     var source = "SERVE"
@@ -103,14 +103,14 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
             setPadding(dp(16), dp(8), dp(16), dp(8)); background = HexDrawable(ctx.resources.displayMetrics.density).apply { color = Hud.DIM }
             setOnClickListener { onTap() }
         }
-        // Report stays while a session runs; the other two are only used before one and after it.
-        testButton = small("TEST VIDEO", onTest)
+        // All three are used before a session and after it, never during: a serve is the only
+        // thing on the screen while one runs.
         aiButton = small("AI COACH: OFF", onAi)
         val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        tools.addView(testButton)
+        tools.addView(small("TEST VIDEO", onTest))
         tools.addView(aiButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
-        val bottomLeft = LinearLayout(ctx).apply {
+        bottomLeft = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             addView(statsText); addView(tools, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
@@ -126,9 +126,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         val c = if (on) Hud.RED else Hud.CYAN
         startFace.color = c; startBtn.setTextColor(c)
         nextBtn.visibility = if (on) View.VISIBLE else View.GONE
-        // while serving, the screen carries the serve and nothing else
-        val tools = if (on) View.GONE else View.VISIBLE
-        testButton.visibility = tools; aiButton.visibility = tools; statsText.visibility = tools
+        // while serving, the screen carries the serve and nothing else: the tools and the stats
+        // are both for the other side of a session
+        bottomLeft.visibility = if (on) View.GONE else View.VISIBLE
     }
 
     /** a serve read: its number, RPM (to 10), what the spin is, any warning, and the spin to draw */

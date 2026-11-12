@@ -777,8 +777,9 @@ already said; it is one bar, your mark, and the single comparison worth keeping.
 `STRONG · TOPSPIN (CURVES LEFT) + GYRO`, which wrapped onto a second line and collided with the
 scale, and which printed “STRONG” twice — once in the type and once as the lit band. It is now
 `TOPSPIN` with `curves left · off the bat` under it, and the strength lives only on the scale. The
-ball's three-line caption is that one qualifier line. Test video and AI coach hide while a session
-runs; Report stays.
+ball's three-line caption is that one qualifier line. All three tools -- test video, AI coach and
+report -- hide while a session runs, so a serve is the only thing on the screen; pressing Stop
+brings them back.
 
 **The spin, three ways.** Where the coaching line used to say one vague thing in prose, `SpinSplit`
 draws the three parts the engine actually measures: end over end, like a door, like a drill. Three

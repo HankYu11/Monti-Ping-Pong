@@ -771,6 +771,20 @@
       const pieces = splitAtKinks(tr);
       let s0 = 0;
       for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++) if (pieces[k].kind === "contact") s0 = k;
+      // A contact kink marks the hit, but only if there is a stretch after it worth measuring.
+      // A ball leaving the picture thins and jumps as the edge takes a bite out of it, and that
+      // reads as a kink too. Session 20261112_194529's serve 2 was cut there: 53 frames of
+      // flight, then a 6-frame tail, and this took the tail, had 2 frames left after skipping
+      // the paddle's own, and built nothing. The whole track was then put aside as "no track
+      // flies like a ball" and the crop searched instead -- 2.5 s to arrive at the same flight,
+      // which the engine had in its hand the whole time. So when the piece after the last
+      // contact cannot be measured, fall back to the longest piece before any bounce.
+      if (pieces[s0].pts.length < skipAfter + 8) {
+        let best = s0;
+        for (let k = 0; k < pieces.length && pieces[k].kind !== "bounce"; k++)
+          if (pieces[k].pts.length > pieces[best].pts.length) best = k;
+        s0 = best;
+      }
       const first = pieces[s0], next = pieces[s0 + 1], sawBounce = !!next && next.kind === "bounce";
       // Did the ball already bounce before this stretch starts? Inside one track there is no way
       // to tell: no bounce follows, so it reads as a plain flight. The tracks before it show the

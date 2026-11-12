@@ -795,6 +795,45 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.5: why the slow serves were slow
+
+Two serves of the table session were slow for two different reasons, and neither was the one
+assumed. Both are measurable on the recorded tracks, which is how they were found rather than
+argued about.
+
+**One was a kink in the wrong place.** The track passed both the flight tests — it flies like a
+ball, it falls like a ball — and the engine still searched the crop. `serveBuilder` cuts a track
+at its kinks and takes the stretch after the last contact kink, because a serve begins at the
+hit. That track had 53 frames of flight, then a kink, then a 6-frame tail: the ball leaving the
+picture thins and jumps as the edge takes a bite out of it, and that reads as a contact. The
+builder took the tail, skipped the 4 frames where the paddle is still beside the ball, had 2
+left of the 8 it needs, and built nothing at all. The whole track was then put aside as "no
+track flies like a ball" and the crop searched instead — 2.5 seconds to arrive at the same
+flight the engine was already holding.
+
+A contact kink now only marks the hit if there is a stretch after it worth measuring; otherwise
+the longest piece before any bounce is used. That serve reads 52.35 rev/s along its own track
+against the 52.40 the search found, at fit 0.925 against 0.927, in 1012 ms against 1883. Every
+other serve of both sessions builds exactly what it built before, to the score.
+
+**The other was a stationary blob.** Tracks near the serve are kept so the engine can find the
+toss or the flight on from the bounce, and they stretch the crop to reach them and start the
+capture a quarter second before they began. That serve carried two of them 200 px below the
+flight and 180 px to its left — one of them barely moving at all, 1.5 px over 36 frames — and
+both were about half the ball's size. A toss happens where the flight begins, at the same
+distance from the camera, so it is the same size there; something half the size is not that
+ball. They are dropped now, which takes that capture's crop from 1344x804 to about 1160x634 and
+its frames from 117 to 85: a 217 MB capture roughly halved.
+
+Across both sessions' eleven serves that serve is the only one with any near track at all, so
+the filter changes nothing else — and it is also the only serve the desktop tracker will not
+accept (it calls that flight a toss), so the halving is arithmetic on its recorded box rather
+than a measurement. That is worth knowing before trusting it.
+
+Expected on the five: 2.68, 2.49, 2.09, 4.8 and 1.00 s, against the 3.33, 5.34, 2.81, 12.45 and
+1.56 that 0.10.3 measured. The one still over three seconds is the serve the engine cannot read
+at all.
+
 ## 0.10.4: stop cutting frames nothing reads, and stop searching when searching cannot help
 
 The first session on a table with 0.10.3. Three serves the engine measured along the live track

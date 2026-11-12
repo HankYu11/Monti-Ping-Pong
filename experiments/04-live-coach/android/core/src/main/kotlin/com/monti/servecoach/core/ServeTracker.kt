@@ -318,8 +318,23 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
             return null
         }
         val b0 = best.first()[0]; val b1 = best.last()[0]
+        // A track kept beside the serve is meant to be the same ball at another moment -- the
+        // toss, or the flight on from the bounce -- and the engine uses it to place the serve's
+        // own stretch. One that is half the size is not that ball: a toss happens where the
+        // flight begins, at the same distance from the camera, so it is the same size there.
+        //
+        // Keeping it costs the capture twice over, because the crop is stretched to reach it and
+        // the capture starts a quarter second before it began. Session 20261112_194529's serve 4
+        // carried two such blobs, 0.55 and 0.46 of the ball, 200 px below the flight and 180 px
+        // to its left; between them they doubled a 217 MB capture, which the phone then decoded,
+        // cut, wrote, served and parsed.
+        val rBest = median(best.pts.map { it[3] })
+        fun sameBall(tr: Track): Boolean {
+            val r = median(tr.pts.map { it[3] })
+            return r >= 0.6f * rBest && r <= 1.7f * rBest
+        }
         val keep = ArrayList<Track>()
-        for (tr in done) if (tr === best || (tr.score >= 0.3f * best.score && tr.first()[0] >= b0 - 0.3f * fps && tr.first()[0] <= b1 + 0.4f * fps)) keep.add(tr)
+        for (tr in done) if (tr === best || (tr.score >= 0.3f * best.score && tr.first()[0] >= b0 - 0.3f * fps && tr.first()[0] <= b1 + 0.4f * fps && sameBall(tr))) keep.add(tr)
         val first = keep.minOf { it.first()[0] }.toLong()
         val last = keep.maxOf { it.last()[0] }.toLong()
         val box = FloatArray(4).also { it[0] = Float.MAX_VALUE; it[1] = Float.MAX_VALUE; it[2] = -1f; it[3] = -1f }
@@ -330,7 +345,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val near = ArrayList<List<FloatArray>>()
         for (tr in keep) if (tr !== best) near.add(tr.pts)
         for (tr in recent) if (tr !in keep && tr.last()[0] >= b0 - 0.3f * fps && tr.last()[0] <= b0 + 3 &&
-            hypot(tr.last()[1] - f[1], tr.last()[2] - f[2]) < 12 * f[3]) { grow(tr); near.add(tr.pts) }
+            hypot(tr.last()[1] - f[1], tr.last()[2] - f[2]) < 12 * f[3] && sameBall(tr)) { grow(tr); near.add(tr.pts) }
         val mv = (b0.toLong()..b1.toLong()).map { movingAt[(it % movingAt.size).toInt()] }.sorted()
         val moving = if (mv.isEmpty()) floatArrayOf(0f, 0f) else floatArrayOf(mv[mv.size / 2], mv.last())
         val sp = speeds(best.pts)

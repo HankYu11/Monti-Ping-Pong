@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Serve Coach Live 球館說明</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+  /* One A4 page: big number on top, three facts, offer, limits, contact. */
+  :root{--ink:#14202b;--muted:#556372;--line:#d7dee5;--table:#1f5f8b;--ball:#e2572b;--bg:#ffffff;
+        --sans:"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;--num:"Space Grotesk",var(--sans)}
+  @page{size:A4;margin:14mm}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans)}
+  .page{max-width:182mm;margin:0 auto;padding:16px;display:grid;gap:18px}
+  header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:3px solid var(--table);padding-bottom:10px;flex-wrap:wrap}
+  h1{font-size:30px;line-height:1.2;margin:0;font-weight:900}
+  .brand{color:var(--muted);font-size:13px;text-align:right}
+  .hero{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+  .rpm{font-family:var(--num);font-weight:700;font-size:64px;line-height:1;color:var(--ball)}
+  .rpm small{display:block;font-size:14px;color:var(--muted);font-family:var(--sans);font-weight:400;margin-top:6px}
+  .hero p{margin:0;font-size:18px}
+  .facts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .facts div{border-top:2px solid var(--line);padding-top:8px}
+  .facts b{display:block;font-size:16px}
+  h2{font-size:17px;margin:0 0 6px;color:var(--table)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+  th{font-weight:700;color:var(--muted);font-size:12px;letter-spacing:.04em}
+  .num{font-family:var(--num);white-space:nowrap}
+  ul{margin:0;padding-left:20px}
+  footer{border-top:3px solid var(--table);padding-top:10px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:14px}
+  .note{color:var(--muted);font-size:12px}
+  @media (max-width:560px){.hero{grid-template-columns:1fr}.facts{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Serve Coach Live<br>發球轉速，當場聽得到</h1>
+    <div class="brand">奇斯科技 QI SI TECHNOLOGY<br>台北市萬華區</div>
+  </header>
+
+  <section class="hero">
+    <div class="rpm">2,760<small>世界級發球平均 RPM</small></div>
+    <p>手機放上腳架，以每秒 240 格拍攝。學生每發一球，App 就用聲音報出<b>轉速、旋轉種類和強度</b>。你的學生離這個數字還有多遠？</p>
+  </section>
+
+  <section class="facts">
+    <div><b>不用網路</b>地下室、學校體育館都能用。</div>
+    <div><b>一台手機，全組輪流</b>NEXT SERVE 讓學生排隊輪流發球比轉速。</div>
+    <div><b>教練一台就好</b>學生不用裝 App，聽結果就好。</div>
+  </section>
+
+  <section>
+    <h2>球館方案（預估價格，正式報價以合約為準）</h2>
+    <table>
+      <tr><th>方案</th><th>內容</th><th>價格</th></tr>
+      <tr><td>6 週試用</td><td>到場架設、24 顆標記球、每週追蹤</td><td class="num">免費</td></tr>
+      <tr><td>教練方案</td><td>一位教練，不限次數</td><td class="num">NT$2,490 / 年</td></tr>
+      <tr><td>創始教練</td><td>台灣前 50 位教練，終身使用</td><td class="num">NT$2,990 一次</td></tr>
+      <tr><td>球館方案</td><td>最多 3 台教練手機</td><td class="num">NT$6,900 / 年</td></tr>
+      <tr><td>學生球組</td><td>24 顆標記球＋一年學生版</td><td class="num">NT$990</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>使用前請先知道</h2>
+    <ul>
+      <li>需要可拍 240 fps 的 Android 手機（目前沒有 iPhone 版）。</li>
+      <li>球要做標記：黑色半邊加紅、綠、藍三點；用 3D 列印工具約 1 分鐘一顆，也可購買已標記的球。</li>
+      <li>語音目前為英文（數字與 backspin / topspin 等短字）。</li>
+      <li>尚無學生個人檔案與報表，歡迎告訴我們您需要什麼。</li>
+    </ul>
+  </section>
+
+  <footer>
+    <div><b>預約 30 分鐘免費示範</b><br>support@handyla.co</div>
+    <div class="note">Serve Coach Live v0.9.2 · 價格為預估，2026 年 11 月</div>
+  </footer>
+</div>
+</body>
+</html>

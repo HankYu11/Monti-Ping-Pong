@@ -1,0 +1,356 @@
+<title>Taiwan Club Pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&family=Noto+Sans+TC:wght@400;500;700&family=Space+Grotesk:wght@600;700&display=swap">
+<style>
+/* Layout: one column; summary first, then plan cards, then the working table that fills the width. */
+:root{
+  --bg:#f5f7f9; --surface:#ffffff; --fg:#17222c; --muted:#5a6977; --line:#d8e0e7;
+  --table:#1d5a85; --ball:#d9542a; --chip:#e7eef4;
+  --ok:#2f7d4f; --warn:#a86b00; --bad:#9b3434;
+  --display:"Space Grotesk","Noto Sans TC",system-ui,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10171d; --surface:#18222b; --fg:#e4ebf1; --muted:#97a6b3; --line:#2b3a46;
+  --table:#6fb0de; --ball:#f07a50; --chip:#22313d; --ok:#6cc58f; --warn:#e2ad4b; --bad:#ec8686; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10171d; --surface:#18222b; --fg:#e4ebf1; --muted:#97a6b3; --line:#2b3a46;
+  --table:#6fb0de; --ball:#f07a50; --chip:#22313d; --ok:#6cc58f; --warn:#e2ad4b; --bad:#ec8686; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--body)}
+.wrap{max-width:1240px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px;display:grid;gap:32px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(26px,4vw,36px)}
+h2{font-size:22px}
+h3{font-size:16px}
+p{margin:0}
+a{color:var(--table)}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{max-width:68ch;color:var(--muted)}
+header{display:grid;gap:10px}
+.stats{display:flex;flex-wrap:wrap;gap:10px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 14px;min-width:120px}
+.stat b{display:block;font-family:var(--mono);font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted)}
+section{display:grid;gap:14px;min-width:0}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;display:grid;gap:10px;align-content:start;min-width:0}
+.pitch{border-left:4px solid var(--ball);padding:4px 0 4px 14px;font-size:17px;max-width:70ch}
+.pitch small{display:block;color:var(--muted);font-size:13px;margin-top:4px}
+table.simple{width:100%;border-collapse:collapse;font-size:14px}
+table.simple td,table.simple th{padding:6px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+table.simple th{font-size:12px;color:var(--muted);font-weight:500}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.est{font-size:11px;color:var(--warn);border:1px solid currentColor;border-radius:3px;padding:0 4px;margin-left:4px;white-space:nowrap}
+ol.steps{margin:0;padding-left:20px;display:grid;gap:4px}
+.decisions{display:grid;gap:10px;counter-reset:d}
+.decisions li{list-style:none;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+.decisions{padding:0;margin:0}
+/* toolbar + main table */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar input,.toolbar select,.toolbar button,td select,td input{font:inherit;font-size:14px;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:6px 8px}
+.toolbar input[type=search]{flex:1 1 220px;min-width:0}
+button{cursor:pointer}
+button:hover{border-color:var(--table)}
+:focus-visible{outline:2px solid var(--table);outline-offset:2px}
+.tablebox{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+table.clubs{border-collapse:collapse;width:100%;min-width:1080px;font-size:13.5px}
+table.clubs th{position:sticky;top:0;background:var(--chip);text-align:left;font-weight:600;font-size:12px;padding:8px;white-space:nowrap;cursor:pointer;user-select:none}
+table.clubs th[aria-sort="ascending"]::after{content:" ▲";font-size:10px}
+table.clubs th[aria-sort="descending"]::after{content:" ▼";font-size:10px}
+table.clubs td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
+td.name b{display:block}
+td.name .meta{font-size:12px;color:var(--muted)}
+.chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:var(--chip);white-space:nowrap}
+.prio{font-family:var(--mono);font-weight:500;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
+.prio.A{color:var(--ball);border-color:var(--ball)}
+.contact{display:grid;gap:2px;font-size:12.5px;word-break:break-word}
+.offer{max-width:34ch;font-size:12.5px}
+td select{font-size:13px;padding:4px 6px}
+td input.note{width:100%;min-width:160px;font-size:12.5px;padding:4px 6px}
+select[data-s="paying"]{color:var(--ok);border-color:var(--ok)}
+select[data-s="pilot"],select[data-s="demo_done"],select[data-s="demo_booked"]{color:var(--table);border-color:var(--table)}
+select[data-s="not_now"]{color:var(--bad)}
+.trackmsg{font-size:13px;color:var(--muted)}
+.empty{padding:24px;text-align:center;color:var(--muted)}
+.msg{white-space:pre-wrap;font-size:14px;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:12px;max-height:280px;overflow:auto;font-family:var(--body)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">奇斯科技 QI SI TECHNOLOGY · Serve Coach Live v0.9.2 · 12 Nov 2026</div>
+  <h1>Taiwan Club Pipeline</h1>
+  <p class="lede">Who to sell Serve Coach Live to in Taiwan, what to offer, and where each club stands. Start with 3–5 coaches the founder knows, then Taipei. Prices are estimates. Contact address: support@handyla.co.</p>
+  <div class="stats" id="stats"></div>
+</header>
+
+<section aria-labelledby="h-plan">
+  <h2 id="h-plan">The plan</h2>
+  <p class="pitch">把手機放上腳架，學生每發一球，它就用聲音報出轉速和旋轉種類：讓發球課有看得見的進步。<small>Put a phone on a tripod and it speaks the RPM and spin type of every serve, so serve lessons show real progress.</small></p>
+  <div class="grid2">
+    <div class="card">
+      <h3>Offer and prices <span class="est">estimate</span></h3>
+      <table class="simple">
+        <tr><th>Plan</th><th>What</th><th>NT$</th></tr>
+        <tr><td>Pilot</td><td>6 weeks Coach, 24 marked balls on loan, setup visit</td><td class="num">0</td></tr>
+        <tr><td>Coach</td><td>One coach, unlimited serves</td><td class="num">2,490 / yr</td></tr>
+        <tr><td>Founding coach</td><td>Lifetime, first 50 in Taiwan, until 31 Mar 2027</td><td class="num">2,990 once</td></tr>
+        <tr><td>Club</td><td>Up to 3 coach phones</td><td class="num">6,900 / yr</td></tr>
+        <tr><td>Player</td><td>One player, unlimited</td><td class="num">990 / yr</td></tr>
+        <tr><td>Ball kit</td><td>24 marked balls + 12 months Player; club buys at 700</td><td class="num">990</td></tr>
+        <tr><td>Free</td><td>30 serves a day</td><td class="num">0</td></tr>
+      </table>
+      <p class="trackmsg">€99 ≈ NT$3,500; NT$2,490 is about 2.5 one-to-one lessons at ~NT$1,000/h (<a href="https://uptogo.com.tw/?p=1644240" target="_blank" rel="noopener">Taipei chain price list</a>). First clubs pay by bank transfer with a 統一發票 and get a code, avoiding the 15% store fee.</p>
+    </div>
+    <div class="card">
+      <h3>Who decides</h3>
+      <table class="simple">
+        <tr><th>Place</th><th>Decider</th><th>Pays today for</th></tr>
+        <tr><td>桌球教室</td><td>Owner, usually the head coach</td><td>Rent, tables, bulk balls, robots, coaches</td></tr>
+        <tr><td>Chain</td><td>Founder / head office</td><td>Same, plus brand</td></tr>
+        <tr><td>國民運動中心</td><td>Operator's course planner; sell to the contract coach</td><td>Coach fees per class</td></tr>
+        <tr><td>School team</td><td>Team coach, then PE office</td><td>Balls, robots, travel; parent fees and city grants</td></tr>
+        <tr><td>協會 / 委員會</td><td>Chair</td><td>Events; low budget</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Demo visit, 30 minutes</h3>
+      <table class="simple">
+        <tr><td class="num">0–3</td><td>Ask how they teach serves and where students get stuck.</td></tr>
+        <tr><td class="num">3–8</td><td>Set up the tripod beside one table, side view, net height.</td></tr>
+        <tr><td class="num">8–18</td><td><b>The coach serves</b>: backspin, topspin, side. 「這個數字跟你的感覺一樣嗎？」</td></tr>
+        <tr><td class="num">18–22</td><td>Two students compete with NEXT SERVE.</td></tr>
+        <tr><td class="num">22–26</td><td>Offer the pilot, then the prices.</td></tr>
+        <tr><td class="num">26–30</td><td>Close on one next step; note the coach's phone model; leave the one-pager.</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Objections</h3>
+      <table class="simple">
+        <tr><td>「我用 iPhone」</td><td>Only the coach's tripod phone must be Android; students just listen. Lend a phone in the pilot. iOS has no date; don't promise one.</td></tr>
+        <tr><td>Marking balls</td><td>About a minute a ball with the tool. We bring 24; a kit is NT$990. Orange two-tone balls are untested.</td></tr>
+        <tr><td>English voice</td><td>Short words and numbers, learned in one session. Log every request for Chinese.</td></tr>
+        <tr><td>Accuracy</td><td>Show it live on the coach's own serves. Don't quote a figure we haven't measured.</td></tr>
+        <tr><td>Reports</td><td>Not yet. Ask what they want; it shapes the next feature.</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>First 3–5 reference clubs</h3>
+      <ol class="steps">
+        <li>List every coach the founder knows: venue, students, phone model.</li>
+        <li>Pick 3–5 with Android (or a loan phone) and 2+ serve classes a week, in Taipei or New Taipei.</li>
+        <li>Send message D and book a 30-minute visit.</li>
+        <li>6-week pilot: set up in week 1, LINE check-in weekly, visit in week 4.</li>
+        <li>Week 6: ask them to pay at the founding price, give a quote and photo, and introduce one more coach.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>90 days</h3>
+      <table class="simple">
+        <tr><td class="num">Wk 1–2</td><td>Test loan phones, mark 100 balls, message known coaches, 2–3 visits.</td></tr>
+        <tr><td class="num">Wk 3–6</td><td>Pilot check-ins; 3 new visits a week, Taipei priority A first.</td></tr>
+        <tr><td class="num">Wk 7–10</td><td>Close pilots; 3–4 visits a week in New Taipei, Taoyuan and school teams.</td></tr>
+        <tr><td class="num">Wk 11–13</td><td>2 visits a week; review; south by video call or via a partner.</td></tr>
+      </table>
+      <h3>Targets by day 90 <span class="est">estimate</span></h3>
+      <table class="simple">
+        <tr><td>Contacted / demos / pilots</td><td class="num">60 / 25 / 8</td></tr>
+        <tr><td><b>Paying reference clubs</b></td><td class="num"><b>3</b></td></tr>
+        <tr><td>Paying coaches</td><td class="num">15</td></tr>
+        <tr><td>Revenue</td><td class="num">NT$40–60k</td></tr>
+        <tr><td>Pilot use per club</td><td class="num">≥2 sessions, ≥150 serves / wk</td></tr>
+      </table>
+      <p class="trackmsg">Rethink if fewer than 2 of the first 5 pilots still use it in week 4, or if over 60% of interested coaches can't use Android. About 39–50% of new phones sold in Taiwan in 2026 were iPhones (<a href="https://uanalyze.com.tw/articles/4692146931" target="_blank" rel="noopener">UAnalyze</a>, <a href="https://n.yam.com/Article/20260701106899" target="_blank" rel="noopener">yam</a>).</p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-dec">
+  <h2 id="h-dec">Three decisions for the founder</h2>
+  <ol class="decisions">
+    <li><b>1. Prices.</b> Approve the NT$ list (Coach 2,490/yr, founding lifetime 2,990 for 50 coaches, Club 6,900/yr, kit 990), or set your own before the first visit.</li>
+    <li><b>2. Android gap.</b> Buy 2–3 used 240 fps Android phones to lend during pilots (about NT$10–20k in total, estimate), or only pilot with coaches who already own one.</li>
+    <li><b>3. Who goes first.</b> Name the 3–5 coaches you know for the pilot and pick which one week to start; cold visits wait until at least 2 are running.</li>
+  </ol>
+</section>
+
+<section aria-labelledby="h-list">
+  <div class="row">
+    <h2 id="h-list">Clubs and coaching places</h2>
+    <span class="trackmsg" id="trackmsg">Loading the tracker…</span>
+  </div>
+  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A = Taipei studio or chain, B = other Taipei and New Taipei studios, C = the rest. Status and notes save for everyone who can edit this page.</p>
+  <div class="toolbar">
+    <label for="q" class="eyebrow" hidden>Search</label>
+    <input type="search" id="q" placeholder="Search name, district, offer…" aria-label="Search clubs">
+    <select id="fcity" aria-label="City"><option value="">All cities</option></select>
+    <select id="ftype" aria-label="Type"><option value="">All types</option></select>
+    <select id="fprio" aria-label="Priority"><option value="">All priorities</option><option>A</option><option>B</option><option>C</option></select>
+    <select id="fstatus" aria-label="Status"><option value="">All statuses</option></select>
+    <button id="copycsv" type="button">Copy CSV</button>
+    <button id="savecsv" type="button" hidden>Save CSV</button>
+  </div>
+  <div class="tablebox">
+    <table class="clubs" id="clubs">
+      <thead><tr>
+        <th data-k="prio">Pri</th><th data-k="name">Name</th><th data-k="city">City</th><th data-k="type">Type</th>
+        <th data-k="offer">Offers</th><th data-k="contact">Contact (as published)</th><th data-k="status">Status</th><th data-k="note">Next step / note</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>No clubs match these filters.</div>
+  </div>
+  <p class="trackmsg" id="count"></p>
+</section>
+
+<section aria-labelledby="h-msg">
+  <h2 id="h-msg">First messages</h2>
+  <p class="trackmsg">Drafts in Traditional Chinese. Replace 〔 〕 before sending. Nothing has been sent.</p>
+  <div class="grid2" id="msgs"></div>
+</section>
+
+<footer>
+  <p>Sources: <a href="https://www.cttta.org.tw/files/News/202622312380.pdf" target="_blank" rel="noopener">CTTTA coach plan 2026</a> (≈3,800 licensed coaches; renewal every 4 years with 48 h), <a href="https://www.managertoday.com.tw/articles/view/71651" target="_blank" rel="noopener">運動幣 2026</a>, club pages linked in the table. Full plan, messages, leave-behind and CSV: <span class="num">experiments/04-live-coach/research/business/clubs/</span> on branch claude/biz-clubs.</p>
+</footer>
+</div>
+
+<script>
+const CLUBS = /*CLUBS*/[];
+const MSGS = /*MSGS*/[];
+const STATUSES = [["","Not contacted"],["messaged","Messaged"],["replied","Replied"],["demo_booked","Demo booked"],["demo_done","Demo done"],["pilot","Pilot"],["paying","Paying"],["not_now","Not now"]];
+const SLABEL = Object.fromEntries(STATUSES);
+let track = {};        // id -> {status, note, version-less}
+let db = null, canWrite = false;
+let sortK = "prio", sortDir = 1;
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const link = (u, t) => u ? `<a href="${esc(u.startsWith("http") ? u : "https://" + u)}" target="_blank" rel="noopener">${esc(t)}</a>` : "";
+
+function fillSelect(sel, vals){ for (const v of vals){ const o=document.createElement("option"); o.value=v[0]; o.textContent=v[1]; sel.appendChild(o);} }
+fillSelect($("#fcity"), [...new Set(CLUBS.map(c=>c.city))].map(v=>[v,v]));
+fillSelect($("#ftype"), [...new Set(CLUBS.map(c=>c.type))].sort().map(v=>[v,v]));
+fillSelect($("#fstatus"), STATUSES.map(([k,l])=>[k||"none",l]));
+
+function stats(){
+  const n = CLUBS.length, by = k => CLUBS.filter(c=>c.city===k).length;
+  const st = s => Object.values(track).filter(t=>t.status===s).length;
+  const items = [[n,"clubs listed"],[by("台北市")||by("臺北市"),"in Taipei"],[CLUBS.filter(c=>c.prio==="A").length,"priority A"],
+    [st("pilot"),"pilots"],[st("paying"),"paying"]];
+  $("#stats").innerHTML = items.map(([b,s])=>`<div class="stat"><b>${b}</b><span>${s}</span></div>`).join("");
+}
+
+function contactHtml(c){
+  const parts = [];
+  if (c.website) parts.push(link(c.website,"Website"));
+  if (c.facebook) parts.push(link(c.facebook,"Facebook"));
+  if (c.line) parts.push(c.line.startsWith("http") ? link(c.line,"LINE") : "LINE " + esc(c.line));
+  if (c.phone) parts.push(`<span class="num">${esc(c.phone)}</span>`);
+  if (c.email) parts.push(esc(c.email));
+  parts.push(link(c.source_url,"Source"));
+  return `<div class="contact">${parts.filter(Boolean).join("")}</div>`;
+}
+
+function rows(){
+  const q = $("#q").value.trim().toLowerCase(), fc=$("#fcity").value, ft=$("#ftype").value, fp=$("#fprio").value, fs=$("#fstatus").value;
+  let r = CLUBS.filter(c=>{
+    const s = track[c.id]?.status || "";
+    if (fc && c.city!==fc) return false;
+    if (ft && c.type!==ft) return false;
+    if (fp && c.prio!==fp) return false;
+    if (fs && (fs==="none" ? s!=="" : s!==fs)) return false;
+    if (q && !(c.name+" "+c.district+" "+c.offer+" "+c.ages+" "+c.notes).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const key = c => sortK==="status" ? STATUSES.findIndex(x=>x[0]===(track[c.id]?.status||""))
+    : sortK==="note" ? (track[c.id]?.note||"") : sortK==="contact" ? (c.phone||c.website||"") : (c[sortK]||"");
+  r.sort((a,b)=>{ const x=key(a), y=key(b); const cmp = typeof x==="number" ? x-y : String(x).localeCompare(String(y),"zh-Hant"); return (cmp || a.idx-b.idx) * sortDir; });
+  return r;
+}
+
+function render(){
+  const r = rows();
+  const dis = canWrite ? "" : " disabled";
+  $("#tbody").innerHTML = r.map(c=>{
+    const t = track[c.id] || {};
+    const opts = STATUSES.map(([k,l])=>`<option value="${k}"${(t.status||"")===k?" selected":""}>${l}</option>`).join("");
+    return `<tr data-id="${esc(c.id)}">
+      <td><span class="prio ${esc(c.prio)}">${esc(c.prio)}</span></td>
+      <td class="name"><b>${esc(c.name)}</b><span class="meta">${esc(c.district)}${c.tables?" · "+esc(c.tables)+" tables":""}</span></td>
+      <td>${esc(c.city)}</td>
+      <td><span class="chip">${esc(c.type)}</span></td>
+      <td class="offer">${esc(c.offer)}${c.ages?`<div class="trackmsg">${esc(c.ages)}</div>`:""}${c.notes?`<div class="trackmsg">${esc(c.notes)}</div>`:""}</td>
+      <td>${contactHtml(c)}</td>
+      <td><select aria-label="Status for ${esc(c.name)}" data-s="${esc(t.status||"")}" id="st-${esc(c.id)}"${dis}>${opts}</select></td>
+      <td><input class="note" id="nt-${esc(c.id)}" aria-label="Note for ${esc(c.name)}" value="${esc(t.note||"")}" placeholder="${canWrite?"e.g. demo Tue 3pm":""}"${dis}></td>
+    </tr>`;}).join("");
+  $("#empty").hidden = r.length>0;
+  $("#count").textContent = `Showing ${r.length} of ${CLUBS.length}.`;
+  document.querySelectorAll("table.clubs th").forEach(th=>th.setAttribute("aria-sort", th.dataset.k===sortK ? (sortDir>0?"ascending":"descending") : "none"));
+  stats();
+}
+
+["#q","#fcity","#ftype","#fprio","#fstatus"].forEach(s=>$(s).addEventListener("input",render));
+document.querySelectorAll("table.clubs th").forEach(th=>{ th.tabIndex=0;
+  const go=()=>{ if (sortK===th.dataset.k) sortDir*=-1; else {sortK=th.dataset.k; sortDir=1;} render(); };
+  th.addEventListener("click",go); th.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();go();} });
+});
+
+async function save(id, patch){
+  if (!db || !canWrite) return;
+  track[id] = {...(track[id]||{}), ...patch};
+  try { await db.collection("pipeline").doc(id).set({...track[id], updatedAt: new Date().toISOString()}); $("#trackmsg").textContent = "Saved."; }
+  catch(e){ $("#trackmsg").textContent = "Could not save (" + (e?.code||"error") + "). Your change shows here but was not stored."; }
+}
+$("#tbody").addEventListener("change", e=>{
+  const tr = e.target.closest("tr"); if(!tr) return; const id = tr.dataset.id;
+  if (e.target.tagName==="SELECT"){ e.target.dataset.s = e.target.value; save(id,{status:e.target.value}); stats(); }
+  else if (e.target.classList.contains("note")) save(id,{note:e.target.value.slice(0,300)});
+});
+
+const CSV_COLS = ["id","prio","name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","source_url","notes"];
+function csv(){
+  const q = v => `"${String(v??"").replace(/"/g,'""')}"`;
+  return [CSV_COLS.concat(["status","note"]).join(","), ...CLUBS.map(c=>CSV_COLS.map(k=>q(c[k])).concat([q(SLABEL[track[c.id]?.status||""]), q(track[c.id]?.note)]).join(","))].join("\n");
+}
+$("#copycsv").addEventListener("click", ()=>{
+  const text = csv(), b = $("#copycsv");
+  navigator.clipboard.writeText(text).then(()=>{ b.textContent="Copied"; setTimeout(()=>b.textContent="Copy CSV",1500); })
+    .catch(()=>{ b.textContent="Copy blocked: use the CSV in the repo"; });
+});
+
+$("#msgs").innerHTML = MSGS.map((m,i)=>`<div class="card"><div class="row"><h3>${esc(m.title)}</h3><button type="button" data-m="${i}">Copy</button></div><div class="msg" id="msg-${i}">${esc(m.text)}</div></div>`).join("");
+$("#msgs").addEventListener("click", e=>{
+  const i = e.target.dataset?.m; if (i===undefined) return;
+  navigator.clipboard.writeText(MSGS[i].text).then(()=>{ e.target.textContent="Copied"; setTimeout(()=>e.target.textContent="Copy",1500); })
+    .catch(()=>{ const r=document.createRange(); r.selectNodeContents($("#msg-"+i)); const s=getSelection(); s.removeAllRanges(); s.addRange(r); e.target.textContent="Selected: press Ctrl+C"; });
+});
+
+render();
+
+(async ()=>{
+  const timer = setTimeout(()=>{ if(!db) $("#trackmsg").textContent = "Tracker not available in this view. The list still works."; }, 10000);
+  try {
+    const dl = await window.claude?.use?.("downloads");
+    if (dl){ const b=$("#savecsv"); b.hidden=false; b.addEventListener("click", ()=>dl.save({filename:"taiwan_clubs.csv", data:"﻿"+csv()}).catch(()=>{})); }
+  } catch {}
+  try {
+    db = await window.claude?.use?.("db");
+    if (!db){ clearTimeout(timer); $("#trackmsg").textContent = "Tracker not available in this view (sign in to see status). The list still works."; return; }
+    const user = await window.claude.use("user");
+    try { canWrite = user ? ((await user.can("data.write")) !== false) : true; } catch { canWrite = true; }
+    db.collection("pipeline").onSnapshot(snap=>{
+      clearTimeout(timer);
+      const next = {}; snap.docs.forEach(d=>{ const v=d.data()||{}; next[d.id]={status:String(v.status||""), note:String(v.note||"")}; });
+      const active = document.activeElement; const keepId = active?.id;
+      track = next; render();
+      if (keepId && document.getElementById(keepId)) document.getElementById(keepId).focus();
+      $("#trackmsg").textContent = canWrite ? "Tracker on: status and notes save for the team." : "Tracker is read-only for you.";
+    }, err=>{ clearTimeout(timer); $("#trackmsg").textContent = "Tracker could not load (" + (err?.code||"error") + ")."; });
+  } catch(e){ clearTimeout(timer); $("#trackmsg").textContent = "Tracker not available in this view."; }
+})();
+</script>

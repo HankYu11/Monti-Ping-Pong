@@ -10,7 +10,10 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.view.View
+import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * The live screen's look (0.9): a cockpit HUD drawn over the camera view. Cyan line art, the
@@ -71,50 +74,84 @@ class HudFrame(ctx: Context) : View(ctx) {
  */
 class SpinScale(ctx: Context) : View(ctx) {
     private val maxRpm = 4000f
-    private val band = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Hud.mono(ctx) }
-    private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     /** this serve's RPM, or null for none */
     var rpm: Int? = null
         set(v) { field = v; invalidate() }
     private val d = resources.displayMetrics.density
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(wSpec), (58 * d).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(wSpec), (24 * d).toInt())
     }
     private fun x(r: Float) = width * min(r, maxRpm) / maxRpm
     override fun onDraw(c: Canvas) {
-        val top = 16 * d; val barH = 7 * d; val gap = 3 * d
-        val lvl = rpm?.let { SpinLevel.of(it) }
-        val edges = floatArrayOf(0f) + SpinLevel.EDGES.map { it.toFloat() }.toFloatArray() + floatArrayOf(maxRpm)
-        text.textSize = 9.5f * d
-        for (k in 0 until 4) {
-            val x0 = x(edges[k]) + (if (k > 0) gap / 2 else 0f); val x1 = x(edges[k + 1]) - (if (k < 3) gap / 2 else 0f)
-            val on = lvl == k
-            band.color = if (on) Hud.CYAN else Color.argb(if (lvl != null && k < lvl) 120 else 45, 95, 242, 255)
-            c.drawRect(x0, top, x1, top + barH, band)
-            text.color = if (on) Hud.WHITE else Hud.DIM
-            text.isFakeBoldText = on
-            val label = SpinLevel.NAMES[k]
-            val tw = text.measureText(label)
-            c.drawText(label, ((x0 + x1) / 2 - tw / 2).coerceIn(0f, width - tw), top + barH + 14 * d, text)
-        }
-        // the world-class marks above the bar
-        text.isFakeBoldText = false; text.textSize = 8.5f * d; text.color = Hud.AMBER
-        mark.color = Hud.AMBER
-        for ((r, label) in listOf(SpinLevel.WORLD_AVG_RPM to "PRO AVG", SpinLevel.WORLD_MAX_RPM to "PRO MAX")) {
-            val xx = x(r.toFloat())
-            c.drawRect(xx - 0.75f * d, top - 4 * d, xx + 0.75f * d, top + barH, mark)
-            val tw = text.measureText(label)
-            c.drawText(label, (xx - tw / 2).coerceIn(0f, width - tw), top - 6 * d, text)
-        }
-        // this serve: a marker under the bar
-        rpm?.let {
-            val xx = x(it.toFloat()).coerceIn(5 * d, width - 5 * d)
-            mark.color = Hud.WHITE
-            val p = Path(); p.moveTo(xx, top + barH + 1 * d); p.lineTo(xx - 5 * d, top + barH + 1 * d + 0f); p.close()
-            val tri = Path(); tri.moveTo(xx, top - 1 * d); tri.lineTo(xx - 5 * d, top - 8 * d); tri.lineTo(xx + 5 * d, top - 8 * d); tri.close()
-            c.drawPath(tri, mark)
-            c.drawRect(xx - 1 * d, top - 2 * d, xx + 1 * d, top + barH + 2 * d, mark)
+        val top = 2 * d; val barH = 5 * d
+        bar.color = Color.argb(38, 95, 242, 255)
+        c.drawRect(0f, top, width.toFloat(), top + barH, bar)
+        rpm?.let { bar.color = Hud.CYAN; c.drawRect(0f, top, x(it.toFloat()), top + barH, bar) }
+        // one comparison, not four bands: what a world-class serve averages. The bands were naming
+        // the same thing the bar's own length already says.
+        val px = x(SpinLevel.WORLD_AVG_RPM.toFloat())
+        bar.color = Hud.AMBER
+        c.drawRect(px - 0.75f * d, top - 2.5f * d, px + 0.75f * d, top + barH + 2.5f * d, bar)
+        text.textSize = 8.5f * d
+        text.color = Hud.DIM
+        c.drawText("NO SPIN", 0f, top + barH + 10.5f * d, text)
+        text.color = Hud.AMBER
+        val lbl = "PRO AVG"; val w = text.measureText(lbl)
+        c.drawText(lbl, (px - w / 2).coerceIn(0f, width - w), top + barH + 10.5f * d, text)
+    }
+}
+
+/**
+ * The spin, three ways. A ball can only turn about three axes: end over end, like a door, and like
+ * a drill. The number above says how much spin there is; this says what it is made of, which is
+ * the part a player can change. Replaces the coaching line, which said one thing about the serve
+ * and said it in prose.
+ *
+ * The three bars share one scale, the serve's own rate, so their lengths compare with each other.
+ * They do not add up to it: the parts are at right angles, so they combine the way the sides of a
+ * box make its diagonal, not the way coins make a pile.
+ */
+class SpinSplit(ctx: Context) : View(ctx) {
+    var spin: Spin? = null
+        set(v) { field = v; invalidate() }
+    private val d = resources.displayMetrics.density
+    private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Hud.mono(ctx); letterSpacing = 0.1f }
+    private val value = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Hud.display(ctx, 600) }
+    override fun onMeasure(wSpec: Int, hSpec: Int) {
+        setMeasuredDimension(MeasureSpec.getSize(wSpec), (62 * d).toInt())
+    }
+    override fun onDraw(c: Canvas) {
+        val s = spin ?: return
+        val total = maxOf(1.0, hypot(hypot(s.lift, s.curve), s.gyro))
+        // a gyro whose direction the engine won't vouch for is drawn dim: the size is measured,
+        // which way round it goes is not
+        val rows = listOf(
+            Triple(if (s.lift >= 0) "BACKSPIN" else "TOPSPIN", abs(s.lift), true),
+            Triple(if (s.curve >= 0) "SIDE RIGHT" else "SIDE LEFT", abs(s.curve), true),
+            Triple("GYRO", abs(s.gyro), s.dirKnown))
+        val labW = 76 * d; val valW = 30 * d
+        val x0 = labW; val x1 = width - valW
+        label.textSize = 9.5f * d
+        value.textSize = 11f * d
+        label.color = Hud.DIM
+        val unit = "REV/S"
+        c.drawText(unit, width - label.measureText(unit), 8f * d, label)
+        for ((i, r) in rows.withIndex()) {
+            val y = 22f * d + i * 17f * d
+            label.color = if (r.third) Hud.DIM else Color.argb(90, 95, 242, 255)
+            c.drawText(r.first, 0f, y, label)
+            val mid = y - 3.2f * d
+            bar.color = Color.argb(34, 95, 242, 255)
+            c.drawRect(x0, mid - 2.5f * d, x1 - 6 * d, mid + 2.5f * d, bar)
+            bar.color = if (r.third) Hud.CYAN else Color.argb(110, 95, 242, 255)
+            val w = (x1 - 6 * d - x0) * (r.second / total).toFloat()
+            c.drawRect(x0, mid - 2.5f * d, x0 + w, mid + 2.5f * d, bar)
+            value.color = if (r.third) Hud.WHITE else Color.argb(150, 240, 248, 250)
+            val v = r.second.roundToInt().toString()
+            c.drawText(v, width - value.measureText(v), y, value)
         }
     }
 }

@@ -36,7 +36,7 @@ class HudFilm {
         val s = HudScreen(paparazzi.context, {}, {}, {})
         s.preview.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(Color.rgb(70, 74, 80), Color.rgb(28, 40, 70)))
-        s.statsText.text = "App 0.9.10\nCamera 1920×1080 @ 240 fps\nEngine ready"
+        s.statsText.text = "App 0.10.0\nCamera 1920×1080 @ 240 fps\nEngine ready"
         return s
     }
 
@@ -63,8 +63,7 @@ class HudFilm {
     @Test fun still() {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(3, 3150, "topspin (curves left) + gyro",
-            "Mostly gyro: it will look like a nothing ball and skid at the bounce.\nball 2.8 m/s · answer in 2.4 s",
-            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = true))
+            "", Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = true))
         s.spinBall.poseTurns(0.0)
         write(s.root, File(out, "still.rgb"), false)
     }
@@ -73,8 +72,7 @@ class HudFilm {
     @Test fun turning() {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(3, 3150, "topspin (curves left) + gyro",
-            "Mostly gyro: it will look like a nothing ball and skid at the bounce.\nball 2.8 m/s · answer in 2.4 s",
-            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = true))
+            "", Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = true))
         val n = 36
         val film = File(out, "turning.rgb")
         if (film.exists()) film.delete()

@@ -96,7 +96,6 @@ class MainActivity : Activity() {
     private lateinit var stateText: TextView
     private lateinit var bigText: TextView
     private lateinit var coachText: TextView
-    private lateinit var historyText: TextView
     private lateinit var statsText: TextView
     private lateinit var startBtn: Button
 
@@ -127,7 +126,7 @@ class MainActivity : Activity() {
     private fun buildUi() {
         screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
-        historyText = screen.historyText; statsText = screen.statsText; startBtn = screen.startBtn
+        statsText = screen.statsText; startBtn = screen.startBtn
         web = WebView(this)
         screen.root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
         setContentView(screen.root)
@@ -803,18 +802,11 @@ class MainActivity : Activity() {
         val coach = r.optJSONObject("coach")
         val kind = coach?.optString("kind") ?: ""
         val t = titles[kind]
-        val tip = if (t != null) "${t.first}. ${t.second}" else when (kind) {
-            "other" -> "Coaching covers backspin serves."
-            "unknown" -> "Film side-on to judge the contact."
-            else -> ""
-        }
         val ballPx = sv.optDouble("ballPx", 0.0)
-        val closer = if (ballPx in 1.0..24.0) "\nThe ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
-        val numbers = buildString {
-            if (coach != null && coach.has("ratio")) append("spin ÷ speed ${"%.2f".format(coach.optDouble("ratio"))} · ")
-            if (sv.has("speed")) append("ball ${"%.1f".format(sv.optDouble("speed"))} m/s · ")
-            append("answer in ${"%.1f".format(secs)} s")
-        }
+        // the only line the screen still carries on a good reading: something the player can act on.
+        // The coaching prose and the timing numbers both went into the report, where they can be
+        // read at leisure instead of competing with the serve.
+        val closer = if (ballPx in 1.0..24.0) "The ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only
@@ -826,7 +818,7 @@ class MainActivity : Activity() {
         val spin = if (sv.has("lift")) Spin(sv.optDouble("lift", 0.0), sv.optDouble("curve", 0.0),
             sv.optDouble("gyro", 0.0), sv.optBoolean("gyroDirKnown"),
             afterBounce = sv.optString("phase") == "bounce") else null
-        screen.reading(r.optInt("capture"), rpm, type, listOf(tip, numbers + closer).filter { it.isNotBlank() }.joinToString("\n"), spin)
+        screen.reading(r.optInt("capture"), rpm, type, closer, spin)
         turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
     }
 

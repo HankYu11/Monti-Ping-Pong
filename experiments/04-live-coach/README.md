@@ -763,6 +763,37 @@ it does nothing about an axis tilted by blur, which is what a small gyro is most
 So this is better than showing nothing in the field, and it is not a fix for the field. Side-on
 is still the real unlock, and no rule can substitute for a camera pointed the wrong way.
 
+## 0.10.0: one column, four things gone, and the spin in three parts
+
+The live screen carried twelve groups of information, and a player reads it for about a second
+between serves from a metre and a half away. Four groups are gone and four more are shorter.
+
+**Gone.** The history, because it is the report, and you open the report when you have stopped
+playing. The stats block and the timing numbers, because they are mine and not the player's; both
+still go into the report. And the coaching line, replaced by something better below.
+
+**Shorter.** The scale was four named bands and two pro marks naming what the bar's own length
+already said; it is one bar, your mark, and the single comparison worth keeping. The spin type was
+`STRONG · TOPSPIN (CURVES LEFT) + GYRO`, which wrapped onto a second line and collided with the
+scale, and which printed “STRONG” twice — once in the type and once as the lit band. It is now
+`TOPSPIN` with `curves left · off the bat` under it, and the strength lives only on the scale. The
+ball's three-line caption is that one qualifier line. Test video and AI coach hide while a session
+runs; Report stays.
+
+**The spin, three ways.** Where the coaching line used to say one vague thing in prose, `SpinSplit`
+draws the three parts the engine actually measures: end over end, like a door, like a drill. Three
+bars on one scale — the serve's own rate — with the rev/s beside each. They do not add up to the
+total and are not meant to: the parts are at right angles, so they make the total the way the sides
+of a box make its diagonal. On the measured serve 3 it reads topspin 21, side left 12, gyro 46,
+which says in one glance what three messages of prose were trying to explain: nearly all of that
+3,150 RPM is pointed down the table and does nothing until the bounce. A gyro whose direction the
+engine will not vouch for is drawn dim, the same rule the ball's chevrons follow.
+
+**The arrangement.** The ball sits beside the number rather than floating outside the column, with
+the scale tucked under the number, which is the only thing it gives context to. That is one glance
+instead of two, and it is the only one of the three layouts tried that fits the column with room
+to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

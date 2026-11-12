@@ -1,0 +1,216 @@
+<title>國小桌球發球旋轉試辦計畫</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column like an official proposal (公文附件): numbered sections 一–八 because the order is the document's own convention; a 12-week timeline drawn to scale; tables scroll in their own boxes on phones. */
+:root {
+  --bg: #f5f7f9; --paper: #ffffff; --fg: #17202a; --muted: #5a6573; --line: #dbe1e7;
+  --accent: #1d4f8f; --accent-soft: #e6eef8; --est: #8a5a00; --est-soft: #fbf1dd;
+  --zh: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1218; --paper: #141b23; --fg: #e5ebf1; --muted: #9aa6b3; --line: #273240;
+  --accent: #7fb2ef; --accent-soft: #16263a; --est: #f0bd5e; --est-soft: #2b2312; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1218; --paper: #141b23; --fg: #e5ebf1; --muted: #9aa6b3; --line: #273240;
+  --accent: #7fb2ef; --accent-soft: #16263a; --est: #f0bd5e; --est-soft: #2b2312; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.75 var(--zh); padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 820px; margin: 0 auto; display: grid; gap: 40px; }
+header { display: grid; gap: 10px; }
+.meta { font: 13px/1.5 var(--mono); color: var(--muted); letter-spacing: .04em; }
+h1 { font: 900 clamp(28px, 5vw, 38px)/1.25 var(--zh); margin: 0; text-wrap: balance; }
+h2 { font: 700 21px/1.4 var(--zh); margin: 0 0 12px; display: flex; gap: 12px; align-items: baseline; text-wrap: balance; }
+h2 .n { color: var(--accent); font-weight: 900; flex: none; }
+p { margin: 0 0 12px; max-width: 42em; }
+ul, ol { margin: 0 0 12px; padding-left: 1.4em; } li { margin: 4px 0; max-width: 42em; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lede { font-size: 17.5px; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 6px; padding: 18px 20px; margin: 0; max-width: none; }
+.est { font: 500 11.5px var(--mono); color: var(--est); background: var(--est-soft); border-radius: 4px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
+.scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; min-width: 540px; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 700; font-size: 13.5px; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timeline { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 18px 18px 14px; margin-bottom: 14px; }
+.weeks { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+.weeks span { font: 11.5px var(--mono); color: var(--muted); text-align: center; }
+.bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; margin: 6px 0 10px; }
+.bar { border-radius: 4px; padding: 8px 10px; font-size: 13.5px; font-weight: 700; line-height: 1.35; min-width: 0; }
+.bar small { display: block; font-weight: 400; color: var(--muted); }
+.b1 { grid-column: 1 / 3; background: var(--accent-soft); color: var(--accent); }
+.b2 { grid-column: 3 / 12; background: var(--accent); color: var(--paper); }
+.b2 small { color: var(--paper); opacity: .85; }
+.b3 { grid-column: 12 / 13; background: var(--accent-soft); color: var(--accent); }
+.visits { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 3px; }
+.visits i { height: 8px; border-radius: 4px; }
+.visits i.on { background: var(--est); }
+.legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 5px; background: var(--est); margin-right: 6px; vertical-align: middle; }
+.letter { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; font-size: 15.5px; }
+.letter p { margin: 0 0 8px; }
+.copy { font: 500 13px var(--zh); color: var(--accent); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; margin-top: 8px; }
+footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+footer ul { padding-left: 1.2em; }
+@media (max-width: 560px) { .bar { font-size: 12px; padding: 6px; } .b1 small, .b3 small { display: none; } }
+</style>
+
+<main>
+  <header>
+    <p class="meta">奇斯科技 QI SI TECHNOLOGY · 草擬 115.11.12 · 草案</p>
+    <h1>國小桌球發球旋轉量測試辦計畫</h1>
+    <p class="lede">奇斯科技擬於一個學期（12 週）內，在 4 個國小桌球基層訓練站<b>免費</b>試辦「以手機量測發球旋轉」，預計量測 4,000 顆以上發球，產出可供貴局評估、並申請運動部「推動運動科技實證計畫」的數據。本草案以臺北市為例，可改為其他縣市。<span class="est">估</span> 標記為本公司估算。</p>
+  </header>
+
+  <section>
+    <h2><span class="n">一、</span>緣起：運動部建議由地方政府先行試辦</h2>
+    <p>運動部於 115 年 11 月 12 日回函指出：國小體育訓練站及學校運動代表隊多屬地方政府權責管轄，建議向有意願的地方政府運動（教育）局處提案試辦；地方政府評估可行並納入基層運動推動規劃後，可透過該部「推動運動科技實證計畫」向中央申請補助。</p>
+    <p>本計畫即依此路徑提出：先在貴局轄下訓練站小規模試辦，累積實證數據，再由貴局評估是否向運動部申請。</p>
+    <p><b>技術簡介</b>：手機架在球桌旁，以每秒 240 格拍攝發球，在手機上即時算出轉速（RPM）、旋轉種類與強弱等級（無旋轉／弱／中／強），幾秒內以語音報出。不需網路、不需專用球（一般練習球半顆塗黑、點上紅綠藍三個色點即可）。目前為 Android 測試版 v0.9.2，語音為英文。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">二、</span>試辦目標與對象：讓基層教練看得到發球旋轉</h2>
+    <p>發球是桌球唯一由自己完全掌控的一拍，旋轉卻看不見：基層教練只能靠肉眼與對手反應判斷，國小選手也難以知道自己是否進步。試辦要回答三件事：</p>
+    <ol>
+      <li>教練能否在一般訓練中穩定使用（架設時間、可讀率）。</li>
+      <li>選手的發球轉速在 12 週內是否可量化地進步。</li>
+      <li>每站的成本與教練負擔，是否適合擴大到全市訓練站。</li>
+    </ol>
+    <p><b>對象</b>：貴局基層運動選手訓練站中的 4 個國小桌球站，每站約 10–20 位選手、1–2 位教練。以臺北市為例，可考慮已獲體育局設站或器材補助的桌球站（如民權國小、仁愛國小），實際名單由貴局推薦。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">三、</span>實施方式與時程：一個學期、三個階段</h2>
+    <div class="timeline" role="img" aria-label="12 週時程：第 1–2 週導入，第 3–11 週使用，第 12 週結果；第 2、4、6、8、10、12 週到站支援">
+      <div class="weeks"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span></div>
+      <div class="bars">
+        <div class="bar b1">導入<small>架設、教學、基準量測</small></div>
+        <div class="bar b2">使用<small>每週至少一次發球訓練；每月一頁進度給貴局</small></div>
+        <div class="bar b3">結果</div>
+      </div>
+      <div class="visits"><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i><i></i><i class="on"></i></div>
+      <p class="legend"><span class="dot"></span>奇斯科技到站支援（每兩週一次）　第 12 週：再量基準發球、訪談教練、提交成果報告</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>單位</th><th>負責</th></tr></thead>
+      <tbody>
+        <tr><td>貴局</td><td>推薦試辦站、指定聯絡窗口、協助家長同意書發放</td></tr>
+        <tr><td>試辦學校／教練</td><td>在平常訓練中使用、參加第 6 與第 12 週訪談</td></tr>
+        <tr><td>奇斯科技</td><td>設備、標記球與工具、教育訓練（約 1 小時）、到站支援、數據整理與成果報告</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="n">四、</span>經費與資源：試辦期間奇斯科技全額自籌</h2>
+    <p>試辦不需貴局編列經費。以下為奇斯科技投入的估算 <span class="est">估</span>：</p>
+    <div class="scroll"><table>
+      <thead><tr><th>項目</th><th>每站</th><th>4 站合計</th></tr></thead>
+      <tbody>
+        <tr><td>可拍 240 fps 的 Android 手機（借用，試辦後收回）</td><td class="num">約 NT$16,000</td><td class="num">約 NT$64,000</td></tr>
+        <tr><td>三腳架</td><td class="num">約 NT$800</td><td class="num">約 NT$3,200</td></tr>
+        <tr><td>標記好的練習球 48 顆、3D 列印杯座與色點模板</td><td class="num">約 NT$1,500</td><td class="num">約 NT$6,000</td></tr>
+        <tr><td>到站支援與數據整理（人力）</td><td class="num">—</td><td>奇斯科技自行負擔</td></tr>
+      </tbody>
+    </table></div>
+    <p style="margin-top:12px">若學校已有可拍 240 fps 的手機，可直接使用。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">五、</span>成效評估指標：日後申請運動部實證計畫的依據</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>指標</th><th>怎麼量</th><th>試辦目標 <span class="est">估</span></th></tr></thead>
+      <tbody>
+        <tr><td>使用率</td><td>每站每週有使用的週數</td><td>4 站中至少 3 站、12 週中至少 9 週</td></tr>
+        <tr><td>量測量</td><td>App 紀錄的發球數</td><td class="num">4 站合計 ≥ 4,000 顆</td></tr>
+        <tr><td>可讀率</td><td>讀出轉速的發球 ÷ 偵測到的發球</td><td class="num">≥ 80%</td></tr>
+        <tr><td>準確度</td><td>抽 50 顆以慢動作人工計數比對</td><td class="num">誤差 ±7% 以內</td></tr>
+        <tr><td>架設時間</td><td>教練從開箱到開始量測</td><td class="num">≤ 5 分鐘</td></tr>
+        <tr><td>選手進步</td><td>第 1 週與第 12 週基準發球的平均轉速</td><td>報告實際變化，不預設</td></tr>
+        <tr><td>教練評價</td><td>第 6、12 週訪談</td><td>至少半數教練願意續用</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="n">六、</span>兒少個資與安全</h2>
+    <ul>
+      <li><b>資料留在手機上</b>：量測在手機上完成，不上傳雲端。App 會在手機中保存每次發球的短片，以便查看讀錯的發球。</li>
+      <li><b>家長同意</b>：試辦前由學校發放家長同意書，說明拍攝範圍（發球動作、球桌）、用途（訓練與試辦評估）與保存期限。</li>
+      <li><b>去識別化</b>：成果報告只用代號與統計數字，不含姓名與影像；試辦結束後刪除手機中的影片並回收手機。</li>
+      <li><b>安全</b>：手機與三腳架置於球桌側邊、人員動線外。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">七、</span>風險與因應</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>風險</th><th>因應</th></tr></thead>
+      <tbody>
+        <tr><td>球館光線不足，讀數不穩</td><td>導入時現場測光；App 會提示「太暗」，必要時調整位置</td></tr>
+        <tr><td>教練太忙、使用中斷</td><td>每兩週到站支援；只要求每週一次發球訓練</td></tr>
+        <tr><td>讀錯數字影響教練信任</td><td>只播報有把握的結果，不確定的發球標為「無法讀取」</td></tr>
+        <tr><td>App 語音目前為英文</td><td>試辦前評估加入中文語音；畫面數字不受影響</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2><span class="n">八、</span>後續：申請運動部「推動運動科技實證計畫」</h2>
+    <p>試辦結果若達第五節的目標，建議貴局將「基層桌球訓練站發球旋轉量測」納入基層運動推動規劃，並以試辦數據向運動部申請「推動運動科技實證計畫」補助，擴大到全市桌球訓練站。奇斯科技可協助撰寫申請資料與提供數據。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">附一</span>致地方政府來函範本</h2>
+    <div class="letter" id="letter">
+      <p><b>主旨</b>：建請貴局於所轄國小桌球基層訓練站試辦「以手機量測發球旋轉」技術，請查照。</p>
+      <p><b>說明</b>：</p>
+      <p>一、本公司開發以手機量測桌球發球旋轉之技術，可於訓練中即時報出發球轉速、旋轉種類與強弱，不需網路及專用球。</p>
+      <p>二、運動部 115 年 11 月 12 日回覆本公司來函，建議向有意願導入之地方政府運動（教育）局處提案試辦；地方政府評估可行並納入基層運動推動規劃後，得透過該部「推動運動科技實證計畫」申請補助。</p>
+      <p>三、本公司擬於一學期內，在貴局推薦之 4 個國小桌球訓練站免費試辦，設備、教育訓練及成果報告均由本公司負擔，試辦計畫草案如附件。</p>
+      <p>四、懇請貴局指定承辦窗口，本公司可至貴局簡報並現場展示。</p>
+      <p>奇斯科技　聯絡人：＿＿＿　電話：＿＿＿　電子郵件：support@handyla.co</p>
+    </div>
+    <button class="copy" id="copyLetter" type="button">複製來函文字</button>
+  </section>
+
+  <section>
+    <h2><span class="n">附二</span>可優先接洽的縣市</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>縣市</th><th>理由</th><th>來源</th></tr></thead>
+      <tbody>
+        <tr><td>臺北市</td><td>本公司所在地；體育局補助國小桌球站設站與器材；已參與運動科技場域實證（科技棒球）</td><td><a href="https://www-ws.gov.taipei/001/Upload/340/relfile/10173/9533412/9c882415-9476-41f3-8c2c-b1c24762dcf0.pdf">體育局核定表</a></td></tr>
+        <tr><td>臺南市</td><td>115 年設桌球訓練站 7 站，其中國小 4 站（崇明、信義、歸仁、大橋）；同樣參與科技棒球實證</td><td><a href="https://sports.tainan.gov.tw/app_tnsport/views/web/upload_file/MES-1781589449738.pdf">115 年設站總表</a></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer>
+    <p>資料來源</p>
+    <ul>
+      <li>運動部回函，115 年 11 月 12 日（本公司收件）。</li>
+      <li>體育署推動運動科技場域實證（科技防溺、科技棒球、智慧走跑、運科訓練）：<a href="https://tw.news.yahoo.com/%E9%AB%94%E8%82%B2%E7%BD%B2%E6%8E%A8%E5%8B%95%E9%81%8B%E5%8B%95%E7%A7%91%E6%8A%80%E5%A0%B4%E5%9F%9F%E5%AF%A6%E8%AD%89-%E9%96%8B%E5%95%9F%E6%99%BA%E6%85%A7%E9%81%8B%E5%8B%95%E6%96%B0%E7%AF%87%E7%AB%A0-011235826.html">新聞轉載</a></li>
+      <li>運動部對地方政府補助款處理原則（補助比率依財力分級，最高 90%）：<a href="https://law.sports.gov.tw/LawContent.aspx?id=GL000050">運動部主管法規</a></li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+document.getElementById('copyLetter').addEventListener('click', function () {
+  var btn = this, text = document.getElementById('letter').innerText;
+  function done(msg) { btn.textContent = msg; setTimeout(function () { btn.textContent = '複製來函文字'; }, 2000); }
+  try {
+    navigator.clipboard.writeText(text).then(function () { done('已複製'); }, function () { select(); });
+  } catch (e) { select(); }
+  function select() {
+    var r = document.createRange(); r.selectNodeContents(document.getElementById('letter'));
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); done('已選取，請按 Ctrl+C');
+  }
+});
+</script>

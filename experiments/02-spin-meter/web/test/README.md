@@ -18,7 +18,8 @@ bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which wa
 node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
 
 python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
-node test/capprof.mjs serve01.cap 3                               # where the engine's time goes
+node test/capcheck.mjs  serve01.json serve02.json ...             # does it still read what the phone read?
+node test/capprof.mjs   serve01.cap 3                             # where the engine's time goes
 ```
 
 `make_clips.sh` writes `<clip>.json` beside each clip with the true spin, the axis and the
@@ -118,6 +119,20 @@ rendered clips have no mains flicker, no motion blur, no player and no real mark
 
 `--rect X Y W H` cuts a different window out of the same clip. That is how the engine's cost was
 shown to scale with the area it is handed and with nothing else.
+
+## capcheck.mjs — real serves as a regression test
+
+A session records its own reading for each serve; `capfromclip.py` rebuilds the capture that
+reading came from. Together they make a real serve — with real mains flicker, real motion blur, a
+real player in the picture and a real marking on the ball — into a test with an answer. Rendered
+clips cannot be that, however good the renderer is.
+
+The rule is not "the same number" for every serve. A serve the engine could not read is held only
+to saying so again: comparing one unreadable answer to another compares noise. Session
+20261112's serve 2 fits 0.09 where a serve the engine can read fits 0.7 to 0.9, and any change to
+which pixels are looked at moves that number freely. Those serves print with `~`. For every serve
+the engine called clear, the reading, the spin split, the marking and the gyro's direction must
+all still agree.
 
 ## capprof.mjs — where the engine's time goes
 

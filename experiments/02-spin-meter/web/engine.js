@@ -10,12 +10,20 @@
   "use strict";
 
   // ------------------------------------------------------------ small numeric helpers
-  function percentile(arr, p) {               // numpy default (linear interpolation)
-    const a = Float64Array.from(arr).sort();
-    if (!a.length) return NaN;
-    const idx = (p / 100) * (a.length - 1);
-    const lo = Math.floor(idx), hi = Math.ceil(idx);
-    return a[lo] + (a[hi] - a[lo]) * (idx - lo);
+  // numpy default (linear interpolation). Two order statistics are wanted, not an ordering, so it
+  // quickselects for the lower one and sweeps for the next value up -- the same number a sort
+  // gives, without paying for the other 66,000 comparisons. measurePole asks for percentiles of
+  // every ball pixel in the flight, and a sort of that was the engine's largest single cost.
+  function percentile(arr, p) {
+    const n = arr.length;
+    if (!n) return NaN;
+    const a = Float64Array.from(arr);
+    const idx = (p / 100) * (n - 1), lo = Math.floor(idx), hi = Math.ceil(idx);
+    const vlo = selectInPlace(a, 0, n - 1, lo);
+    if (hi === lo) return vlo;
+    let vhi = Infinity;                       // quickselect leaves everything past lo no smaller
+    for (let i = lo + 1; i < n; i++) if (a[i] < vhi) vhi = a[i];
+    return vlo + (vhi - vlo) * (idx - lo);
   }
   const median = (arr) => percentile(arr, 50);
   function selectInPlace(a, lo, hi, k) {      // k-th smallest of a[lo..hi] (quickselect, reorders a)
@@ -230,6 +238,9 @@
       for (let x = 0; x < W; x += rowStep) tmp[n++] = g[y * W + x] / Math.max(bg[y * W + x], 1);
       ratio[y] = medianInPlace(tmp, n);
     }
+    return smoothRows(ratio, H);
+  }
+  function smoothRows(ratio, H) {
     const sm = blur1d(ratio, 9, 73);
     for (let y = 0; y < H; y++) sm[y] = Math.max(sm[y], 0.2);
     return sm;
@@ -237,6 +248,42 @@
   function deflickerOne(g, bg, W, H, rowStep) {
     const rows = deflickerRows(g, bg, W, H, rowStep), out = new Float32Array(W * H);
     for (let y = 0; y < H; y++) { const r = rows[y]; for (let x = 0; x < W; x++) out[y * W + x] = g[y * W + x] / r; }
+    return out;
+  }
+  // The same correction when a frame is read as a box round the ball rather than whole. The scale
+  // for a row has to be read right across that row: inside the box the sample would be mostly
+  // ball, and the ball is the one thing in the picture that is not the background. So the row
+  // sample is taken from the source frame over the whole crop, at every ROW_STEPth column, which
+  // costs a fraction of reading the crop and loses nothing: the correction is a ratio to the
+  // background at those same columns, so whatever the sampling misses is common to both.
+  const ROW_STEP = 2;
+  function lumaRowSamples({ buf, offset, stride, lut }, roi, step) {
+    const [x0, y0, w, h] = roi, m = Math.ceil(w / step), out = new Float32Array(h * m);
+    for (let y = 0; y < h; y++) {
+      const r = offset + (y0 + y) * stride + x0;
+      let n = 0;
+      for (let x = 0; x < w; x += step) out[y * m + n++] = lut[buf[r + x]];
+    }
+    return out;
+  }
+  function sampleRows(g, W, H, step) {       // the same samples, from a crop already in memory
+    const m = Math.ceil(W / step), out = new Float32Array(H * m);
+    for (let y = 0; y < H; y++) { let n = 0; for (let x = 0; x < W; x += step) out[y * m + n++] = g[y * W + x]; }
+    return out;
+  }
+  function rowRatios(rows, bg, W, H, step) {
+    const m = Math.ceil(W / step), ratio = new Float64Array(H), tmp = new Float64Array(m);
+    for (let y = 0; y < H; y++) {
+      const b = y * W, s = y * m;
+      let n = 0;
+      for (let x = 0; x < W; x += step) { tmp[n] = rows[s + n] / Math.max(bg[b + x], 1); n++; }
+      ratio[y] = medianInPlace(tmp, n);
+    }
+    return smoothRows(ratio, H);
+  }
+  function applyRows(g, box, rows) {         // divide a box's pixels by its own rows' ratios
+    const [, y0, w, h] = box, out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) { const r = rows[y0 + y]; for (let x = 0; x < w; x++) out[y * w + x] = g[y * w + x] / r; }
     return out;
   }
 
@@ -531,6 +578,21 @@
     readStats[P ? "direct" : "canvas"]++;
     if (!P) return toColor(ctx, src, W, H, roi);
     return { g: lumaCrop(P, roi), u: P.u ? chromaCrop(P, P.u, roi) : null, v: P.v ? chromaCrop(P, P.v, roi) : null };
+  }
+  // One frame as the measuring step wants it: the pixels of a box inside the crop, and the crop's
+  // own per-row brightness sample. Without planes to read (the canvas fallback) the crop is read
+  // whole, as it always was, and the sample is taken from it.
+  async function grabBox(ctx, src, W, H, roi, box) {
+    const P = await framePlanes(src, W, H);
+    readStats[P ? "direct" : "canvas"]++;
+    const [rx, ry, rw, rh] = roi;
+    if (!P) {
+      const f = toColor(ctx, src, W, H, roi);
+      return { g: f.g, u: f.u, v: f.v, box: [0, 0, rw, rh], rows: sampleRows(f.g, rw, rh, ROW_STEP) };
+    }
+    const sub = [rx + box[0], ry + box[1], box[2], box[3]];
+    return { g: lumaCrop(P, sub), u: P.u ? chromaCrop(P, P.u, sub) : null, v: P.v ? chromaCrop(P, P.v, sub) : null,
+             box, rows: lumaRowSamples(P, roi, ROW_STEP) };
   }
   function colourDiff(g, bg, col, p) {        // how different a pixel is from the background, in brightness or colour
     let d = Math.abs(g - bg);
@@ -1326,6 +1388,8 @@
       candidates: candidates.slice(0, 5), method: "dots" };
   }
 
+  // frames[i] is { g, box } and chroma[i] is { u, v, box }: the piece of the crop that frame was
+  // read into, in the crop's own pixels. A whole frame is just the box [0, 0, W, H].
   function measurePole(frames, balls, W, H, fps, inner = 0.88, nb = 10, stats = {}, chroma = null) {
     const idx = balls.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     if (idx.length < 8) return null;
@@ -1335,16 +1399,15 @@
     const rows = [], Dall = [];
     for (const i of idx) {
       const cx = polyval(cxp, i), cy = polyval(cyp, i), r = rAt(i), rd = rDotAt ? rDotAt(i) : r;
-      const x0 = Math.trunc(Math.max(0, cx - r - 1)), x1 = Math.trunc(Math.min(W, cx + r + 2));
-      const y0 = Math.trunc(Math.max(0, cy - r - 1)), y1 = Math.trunc(Math.min(H, cy + r + 2));
-      const g = frames[i], vals = [], UX = [], UY = [], ring = [], DX = [], DY = [], CU = [], CV = [], col = chroma && chroma[i];
-      const X0 = Math.trunc(Math.max(0, cx - 2.6 * r)), X1 = Math.trunc(Math.min(W, cx + 2.6 * r + 1));
-      const Y0 = Math.trunc(Math.max(0, cy - 2.6 * r)), Y1 = Math.trunc(Math.min(H, cy + 2.6 * r + 1));
+      const P = frames[i], [bx, by, bw, bh] = P.box, g = P.g;
+      const vals = [], UX = [], UY = [], ring = [], DX = [], DY = [], CU = [], CV = [], col = chroma && chroma[i];
+      const X0 = Math.trunc(Math.max(bx, cx - 2.6 * r)), X1 = Math.trunc(Math.min(bx + bw, cx + 2.6 * r + 1));
+      const Y0 = Math.trunc(Math.max(by, cy - 2.6 * r)), Y1 = Math.trunc(Math.min(by + bh, cy + 2.6 * r + 1));
       for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
-        const dx = x - cx, dy = y - cy, rr = Math.hypot(dx, dy);
-        if (rr <= inner * r) { vals.push(g[y * W + x]); UX.push(dx / r); UY.push(dy / r); }
-        else if (rr >= 1.6 * r && rr <= 2.5 * r) ring.push(g[y * W + x]);
-        if (col && rr <= 0.95 * rd) { DX.push(dx / rd); DY.push(dy / rd); CU.push(col.u[y * W + x]); CV.push(col.v[y * W + x]); }
+        const dx = x - cx, dy = y - cy, rr = Math.hypot(dx, dy), q = (y - by) * bw + (x - bx);
+        if (rr <= inner * r) { vals.push(g[q]); UX.push(dx / r); UY.push(dy / r); }
+        else if (rr >= 1.6 * r && rr <= 2.5 * r) ring.push(g[q]);
+        if (col && rr <= 0.95 * rd) { DX.push(dx / rd); DY.push(dy / rd); CU.push(col.u[q]); CV.push(col.v[q]); }
       }
       if (vals.length < 20) continue;
       const even = ring.length >= 20 && percentile(ring, 75) - percentile(ring, 25) < 0.15 * median(ring);
@@ -1358,7 +1421,7 @@
             const px = Math.round(cx + k * rd * vx), py = Math.round(cy + k * rd * vy);
             let su = 0, sv = 0, m = 0;
             for (let y = py - 1; y <= py + 1; y++) for (let x = px - 1; x <= px + 1; x++)
-              if (x >= 0 && y >= 0 && x < W && y < H) { su += col.u[y * W + x]; sv += col.v[y * W + x]; m++; }
+              if (x >= bx && y >= by && x < bx + bw && y < by + bh) { const q = (y - by) * bw + (x - bx); su += col.u[q]; sv += col.v[q]; m++; }
             if (m) out.push([su / m, sv / m]);
           }
           return out;
@@ -1725,18 +1788,8 @@
   // ------------------------------------------------------------ 3. measure one serve
   async function measureSegment(R, seg, fps, hfov) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
-    let frames = new Array(seg.end - seg.start);
-    await R.run(seg.start, seg.end, async (i, src) => { frames[i - seg.start] = await grabColor(ctx, src, R.W, R.H, seg.roi); });
-    for (let k = 0; k < frames.length; k++) if (!frames[k]) frames[k] = frames[k - 1] || frames.find(Boolean);
-    const colour = frames.every((f) => f.u);
+    const n = seg.end - seg.start;
     const BG_FRAMES = 15;                       // enough for a background; see medianFrames
-    const bgU = colour ? medianFrames(frames.map((f) => f.u), rw * rh, BG_FRAMES) : null;
-    const bgV = colour ? medianFrames(frames.map((f) => f.v), rw * rh, BG_FRAMES) : null;
-    let gray = frames.map((f) => f.g);
-    let bg = medianFrames(gray, rw * rh, BG_FRAMES);
-    // the row ratio is smoothed over 9 rows afterwards, so every second pixel is as good
-    gray = gray.map((g) => deflickerOne(g, bg, rw, rh, 2));
-    bg = medianFrames(gray, rw * rh, BG_FRAMES);
     // where the flight search saw the ball, in this crop's pixels
     const seen = new Map((seg.track || []).map((p) => [p[0] - seg.start, [p[1] - rx, p[2] - ry, p[3]]]));
     const predict = (k) => {
@@ -1744,20 +1797,73 @@
       for (let d = 0; d < 6; d++) { if (seen.has(k - d)) return seen.get(k - d); if (seen.has(k + d)) return seen.get(k + d); }
       return null;
     };
-    const cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU, bgV } : null));
-    const balls = gray.map((g, k) => findBall(g, bg, rw, rh, 5.0, cols[k], predict(k)));
-    frames = gray;
+    // Each frame is read into a box round the ball rather than whole. findBall takes no blob
+    // farther than 2r + 15 from the predicted spot and its clean-up reaches a few pixels past
+    // that; measurePole samples a ring out to 2.6r for its white reference. Both sit inside
+    // 3r + 20 either way, which on a real serve is about a ninth of the strip a flight's crop
+    // covers -- and the engine costs very nearly the area it is handed and almost nothing else
+    // (test/capprof.mjs over captures from 53k to 348k pixels a frame: 4.5 us per thousand).
+    //
+    // The background cannot be read that way: it is a per-pixel median over the crop, and a box
+    // that follows the ball never sees one pixel in enough frames to take a median of it. So the
+    // spread of frames medianFrames would have picked is read whole and everything else as a box.
+    // x0 and y0 are kept even so that a box shifts the half-size chroma planes by a whole chroma
+    // pixel and reads exactly the pixels the whole crop would have.
+    const whole = [0, 0, rw, rh];
+    const boxOf = (k) => {
+      const p = predict(k);
+      if (!p) return whole;
+      const m = Math.ceil(3 * p[2] + 20);
+      const x0 = Math.max(0, (Math.floor(p[0]) - m) & ~1), y0 = Math.max(0, (Math.floor(p[1]) - m) & ~1);
+      const x1 = Math.min(rw, Math.ceil(p[0]) + m + 1), y1 = Math.min(rh, Math.ceil(p[1]) + m + 1);
+      return x1 - x0 >= rw && y1 - y0 >= rh ? whole : [x0, y0, x1 - x0, y1 - y0];
+    };
+    const bgAt = [];
+    if (n > BG_FRAMES) for (let k = 0; k < BG_FRAMES; k++) bgAt.push(Math.round(k * (n - 1) / (BG_FRAMES - 1)));
+    else for (let k = 0; k < n; k++) bgAt.push(k);
+    const bgSet = new Set(bgAt);
+
+    const frames = new Array(n);
+    await R.run(seg.start, seg.end, async (i, src) => {
+      const k = i - seg.start;
+      frames[k] = await grabBox(ctx, src, R.W, R.H, seg.roi, bgSet.has(k) ? whole : boxOf(k));
+    });
+    for (let k = 0; k < n; k++) if (!frames[k]) frames[k] = frames[k - 1] || frames.find(Boolean);
+    const colour = frames.every((f) => f.u);
+    const bgKeys = bgAt.filter((k) => frames[k] && frames[k].box === whole);
+    const bgU = colour ? medianFrames(bgKeys.map((k) => frames[k].u), rw * rh) : null;
+    const bgV = colour ? medianFrames(bgKeys.map((k) => frames[k].v), rw * rh) : null;
+    let bg = medianFrames(bgKeys.map((k) => frames[k].g), rw * rh);
+    const gray = frames.map((f) => applyRows(f.g, f.box, rowRatios(f.rows, bg, rw, rh, ROW_STEP)));
+    bg = medianFrames(bgKeys.map((k) => gray[k]), rw * rh);
+    // the background over one frame's box; findBall and the colour test read it per pixel
+    const cut = (src, box) => {
+      if (box === whole) return src;
+      const [x0, y0, w, h] = box, out = new src.constructor(w * h);
+      for (let y = 0; y < h; y++) { const r = (y0 + y) * rw + x0; out.set(src.subarray(r, r + w), y * w); }
+      return out;
+    };
+    const parts = frames.map((f, k) => ({ g: gray[k], box: f.box, bg: cut(bg, f.box) }));
+    const cols = frames.map((f, k) => (colour ? { u: f.u, v: f.v, bgU: cut(bgU, f.box), bgV: cut(bgV, f.box), box: f.box } : null));
+    const balls = parts.map((P, k) => {
+      const p = predict(k), [x0, y0, w, h] = P.box;
+      const b = findBall(P.g, P.bg, w, h, 5.0, cols[k], p ? [p[0] - x0, p[1] - y0, p[2]] : null);
+      if (b) { b[0] += x0; b[1] += y0; }        // back into the crop's own pixels
+      return b;
+    });
     const found = balls.filter(Boolean), stats = { frames: found.length, total: balls.length };
     // Does the picture around the ball stay still during the serve? Share of pixels away from the
     // ball that differ from the background, per frame; a moving camera makes most of them differ.
-    const changed = gray.map((g, k) => {
-      const b = balls[k], col = cols[k];
-      let n = 0, m = 0;
+    // Only the frames read whole can answer it, and those are the spread the background came from
+    // -- fifteen of them, taken across the flight, which is what a median over them needed anyway.
+    const changed = bgKeys.map((k) => {
+      const g = gray[k], b = balls[k], col = cols[k];
+      let c = 0, m = 0;
       for (let y = 0; y < rh; y += 2) for (let x = 0; x < rw; x += 2) {
         if (b && Math.hypot(x - b[0], y - b[1]) < 2 * b[2]) continue;
-        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) n++;
+        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) c++;
       }
-      return n / Math.max(1, m);
+      return c / Math.max(1, m);
     });
     stats.bgChange = median(changed);
     if (found.length) { stats.ballR = median(found.map((b) => b[2])); stats.stretch = median(found.map((b) => b[3])); }
@@ -1766,15 +1872,16 @@
       stats.ballChroma = median(balls.map((b, k) => {
         const f = cols[k], vals = [];
         if (!b || !f) return NaN;
-        for (let y = Math.max(0, Math.floor(b[1] - b[2])); y < Math.min(rh, b[1] + b[2]); y++)
-          for (let x = Math.max(0, Math.floor(b[0] - b[2])); x < Math.min(rw, b[0] + b[2]); x++)
-            if (Math.hypot(x - b[0], y - b[1]) <= 0.7 * b[2]) vals.push(Math.hypot(f.u[y * rw + x], f.v[y * rw + x]));
+        const [bx, by, bw, bh] = f.box;
+        for (let y = Math.max(by, Math.floor(b[1] - b[2])); y < Math.min(by + bh, b[1] + b[2]); y++)
+          for (let x = Math.max(bx, Math.floor(b[0] - b[2])); x < Math.min(bx + bw, b[0] + b[2]); x++)
+            if (Math.hypot(x - b[0], y - b[1]) <= 0.7 * b[2]) { const q = (y - by) * bw + (x - bx); vals.push(Math.hypot(f.u[q], f.v[q])); }
         return vals.length ? median(vals) : NaN;
       }).filter(Number.isFinite));
     }
     const fail = (error) => ({ error, phase: seg.kind, nFrames: balls.length, segment: seg, checks: serveChecks(stats), issues: diagnose(stats, null) });
     if (found.length < 4) return fail("The ball was found in too few frames.");
-    const r = measurePole(frames, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
+    const r = measurePole(parts, balls, rw, rh, fps, undefined, undefined, stats, colour ? cols : null);
     if (!r) return fail("The ball was found in too few frames in a row.");
     if (r.error) return fail(r.error);
     // where the crop sits in the whole picture (perspective); a capture's frames are themselves a crop of it
@@ -1825,7 +1932,7 @@
         tossVel: seg.toss ? matvec(geo.turn, scale([...seg.toss.v, 0], tossMs)).map((x, j) => x + (j === 1 ? 9.81 * (seg.toss.dt || 0) / fps : 0)) : null,
         launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, accel3: geo.accel3, dir: geo.f },
       ballRadiusPx: median(found.map((b) => b[2])), startSec: seg.start / fps,
-      segment: seg, crops: makeCrops(frames, balls, rw, rh, geo.turn), checks: serveChecks(stats),
+      segment: seg, crops: makeCrops(parts, balls, geo.turn), checks: serveChecks(stats),
     };
   }
 
@@ -2059,17 +2166,18 @@
     }
   }
 
-  function makeCrops(frames, balls, W, H, turn) {   // small gray crops of the ball, shown upright
+  function makeCrops(frames, balls, turn) {   // small gray crops of the ball, shown upright
     const out = [];
     balls.forEach((b, i) => {
       if (!b) return;
+      const P = frames[i], [bx, by, bw, bh] = P.box;
       const half = Math.ceil(b[2] * 1.4), size = 2 * half, data = new Uint8ClampedArray(size * size);
       for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
         // upright pixel (x, y) -> source pixel via the inverse of the orientation turn
         const ux = x - half, uy = y - half;
         const sx = turn[0][0] * ux + turn[1][0] * uy, sy = turn[0][1] * ux + turn[1][1] * uy;
         const X = Math.round(b[0] + sx), Y = Math.round(b[1] + sy);
-        data[y * size + x] = X >= 0 && Y >= 0 && X < W && Y < H ? frames[i][Y * W + X] : 0;
+        data[y * size + x] = X >= bx && Y >= by && X < bx + bw && Y < by + bh ? P.g[(Y - by) * bw + (X - bx)] : 0;
       }
       out.push({ size, data });
     });

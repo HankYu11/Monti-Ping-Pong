@@ -2,32 +2,77 @@
 
 The target is the wait a player has between finishing a serve and hearing the answer: the app's
 own `answerMs`, from "Got it" to the spoken reading. It was about 6.4 s when it was first
-measured, and cutting and fetching the capture was 4.5 s of that.
+measured, and cutting and fetching the capture was 4.5 s of that — a figure this document was
+planned around and which the session below replaces.
 
 ## What the budget actually is
 
-Nobody knows, right now, and that has to be fixed before anything is built. The figures above
-predate two changes: measuring along the tracker's track (about 3× less engine work on real
-captures) and everything since. The engine is not the suspect — a desktop A/B over rendered clips
-puts 0.10.1 within about 1% of the engine from before all the spin work — but that says nothing
-about where the phone's seconds go.
+Measured, on a Pixel 8 at 0.10.2, one session of six serves (`Session_20261112_154728`).
 
-**No new code is needed to find out.** The report already records, per serve:
+`answerMs` is `fetchMs` plus the engine plus about 35 ms of dispatch, and `writeMs` sits *inside*
+`fetchMs` — the WebView's fetch is almost entirely the wait for the writer, with 41–185 ms of
+parsing after it on a tracked serve. Queue time, `answerMs` minus `wallMs`, is 5–20 ms on every
+serve: nothing waited behind anything. So there are two stages, and the event log splits the
+first one further, into decoding the stored frames and cutting the crop out of them.
 
-| field | what it covers |
-|---|---|
-| `answerMs` | "Got it" to the answer: the player's whole wait |
-| `writeMs` | cutting the capture out of the decoded frames and writing it |
-| `fetchMs` | the WebView pulling those frames into JS memory |
-| `engineSeconds`, `time` | the measurement itself, with its own breakdown |
-| `wallMs` | from handing the engine the capture to its answer |
+| serve | answer | decode | cut | write | parse | engine | track |
+|---|---|---|---|---|---|---|---|
+| 1 | 3.27 s | 741 | 475 | 425 | 41 | 1538 | yes |
+| 2 | 8.26 s | 2059 | 771 | 69 | 520 | 4819 | **refused** |
+| 3 | 3.62 s | 1040 | 622 | 87 | 124 | 1716 | yes |
+| 4 | 11.69 s | 1112 | 4196 | 70 | 981 | 5298 | **refused** |
+| 5 | 3.27 s | 977 | 833 | 85 | 62 | 1274 | yes |
+| 6 | 4.05 s | 907 | 780 | 73 | 185 | 2070 | yes |
 
-`answerMs` minus `wallMs` is the time a serve spent queued behind another. `wallMs` minus
-`fetchMs` minus the engine's own time is WebView dispatch and whatever else is unaccounted. One
-session at home gives all of it.
+On the four tracked serves, which average 3.55 s:
 
-So: **one session before any of this is built.** Optimising the wrong stage is the easiest
-mistake available here, and the instrumentation to avoid it already exists.
+| stage | mean | share | does a windowed capture help? |
+|---|---|---|---|
+| decode the stored frames | 916 ms | 26% | no |
+| cut the crop | 678 ms | 19% | **yes** |
+| write the file | 168 ms | 5% | **yes** |
+| JS parse | 103 ms | 3% | **yes** |
+| **engine measure** | **1650 ms** | **46%** | no |
+| dispatch | 36 ms | 1% | no |
+
+**The lever this document was written around is 27% of the wait, not most of it.** The 4.5 s of
+cutting and fetching quoted at the top predates the track-based crop; on a tracked serve those
+stages are now 0.95 s together. Strip 90% of them and serves 1, 3 and 5 land at 2.4, 2.9 and
+2.4 s — but serve 6 lands at 3.11 s, still over.
+
+**The engine is the biggest stage.** "The engine was never the prize" is no longer true: at
+1.27–2.07 s it is 46% of a tracked serve, and with the capture stages gone it would be two
+thirds. The desktop A/B that found it flat to about 1% was asking whether it had got *slower*,
+which it hadn't; it never asked whether it was now the largest thing left. It is.
+
+**The two slow serves are a different failure.** Both are the engine refusing the tracker's track
+— "the serve's own stretch read unclear", "no track flies like a ball" — and searching for the
+flight itself, at 3.5 s and 4.6 s of pure search. Both still had a track good enough to cut
+windows from, so windowing does shrink their bytes; it takes them to about 7 s, all of it engine.
+For these serves the capture is not the problem at any size.
+
+**There is a cheaper lever that was missed.** The capture rect is consistently about 2.1× taller
+and 1.1× wider than the bounding box of the very track it was built from, and the engine then
+reads a smaller ROI still — 4–20% of the bytes the phone cut, wrote and parsed:
+
+| serve | capture | track bbox + radius | engine ROI × frames used | captured | read |
+|---|---|---|---|---|---|
+| 1 | 1024×368 | 832×172 | 844×250 × 60 | 79.1 MB | 19.0 MB |
+| 3 | 1256×374 | 1169×172 | 1090×238 × 60 | 101.5 MB | 23.3 MB |
+| 5 | 1288×330 | 1210×157 | 1065×190 × 60 | 95.6 MB | 18.2 MB |
+| 6 | 1344×424 | 1237×189 | 1195×291 × 55 | 112.8 MB | 28.7 MB |
+
+Tightening the vertical margin is worth about 2× on cut, write and parse for a one-line change,
+needs no new format, and carries none of the row-alignment risk below. It should be tried first,
+if only to find out what the margin is protecting against.
+
+**What the air test does not tell us.** No serve in this session bounced — there was no table, and
+every one is annotated "no bounce seen". Capture length barely moved (132–166 frames), so the
+window looks close to fixed, but a real serve's flight is *taller*, and crop height feeds cut,
+write and parse directly. Those are the stages windowing fixes, so a table session should be
+slower in exactly the places the fix lands. The 2-in-6 track refusal rate is also suspect: "no
+track flies like a ball" is what a ball that never bounces and leaves frame early would produce.
+It needs one session on a table to know.
 
 ## The lever that is already built and not shipped
 
@@ -112,21 +157,24 @@ not cutting, writing and serving the whole crop, and no desktop test can measure
 
 ## Order of work
 
+1. ~~**Measure.**~~ Done: six serves, broken down above. The result moved the rest of this list.
+2. **Tighten the capture rect** to the track's own bounding box plus a margin that is argued for
+   rather than inherited. About 2× on cut, write and parse; no new format.
+3. **Attack the engine's measure**, now the largest stage at 1.65 s on a tracked serve. Nothing
+   here has been profiled yet — that is the next measurement, not the next build.
+4. **Stop the engine refusing good tracks**, or cap the search when it does. Two serves in six
+   cost 3.5 s and 4.6 s of search; nothing in the capture path touches them.
+5. **Build the windowed capture on the phone**, background from pre-serve frames, off the critical
+   path. Worth 0.95 s on a tracked serve, and more on a real one with a bounce — real, but on its
+   own it does not reach three seconds.
+6. **Prove it on the phone before trusting it**: a session writing both a whole-crop and a windowed
+   capture for each serve and measuring both, so the two readings can be compared on the same ball.
 
-1. **Measure.** One session at home; read `answerMs`, `writeMs`, `fetchMs`, `engineSeconds` per
-   serve. No code.
-2. **Confirm the windowed read still agrees** with the whole crop on the current engine, which has
-   changed since the format was validated.
-3. **Settle the stride** for row brightness.
-4. **Build it on the phone**, background from pre-serve frames, off the critical path.
-5. **Prove it on the phone before trusting it**: a session that writes both a whole-crop and a
-   windowed capture for each serve and measures both, so the two readings can be compared on the
-   same ball. The desktop harness does exactly this comparison already; the phone should do it
-   once.
-
-Only if that is not enough: serve the capture from memory rather than through a file, and — last,
-because it is weeks of work and risks the accuracy that is already proven — move the spin fit out
-of the WebView into Kotlin.
+Steps 2 and 5 are the capture; 3 and 4 are the engine, and the measurement says the engine is
+where the target is actually won. Serving the capture from memory rather than through a file is
+worth 168 ms and is not the answer. Moving the spin fit out of the WebView into Kotlin now has a
+real case for the first time — it is step 3's likeliest ending — but it stays last, because it is
+weeks of work and risks accuracy that is already proven.
 
 ## What would break it, and the test that catches it
 

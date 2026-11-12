@@ -770,3 +770,14 @@ writes `release/serve-coach-live-<version>.apk`, signed with a debug key (sidelo
 `gradle :desktop:installDist`, then `desktop/build/install/desktop/bin/desktop clip.mp4 outDir`
 (needs ffmpeg) runs the serve tracker on a clip and writes its captures (`.cap`).
 mp4box.js (BSD-3-Clause, gpac) is bundled in `assets/`.
+
+**An emulator cannot run this app**, which is worth knowing before anyone tries. Two walls, one
+soft and one hard. The soft one: `abiFilters` is `arm64-v8a` only, so nothing installs on an
+x86_64 image -- `INSTALL_FAILED_NO_MATCHING_ABIS`, raised not by the native part in `jniLibs` but
+by MediaPipe, whose AAR does ship x86_64. Building with `abiFilters += listOf("x86_64")` installs
+and launches fine, and the HUD draws. The hard one: the engine runs in a WebView, and Chromium's
+renderer dies on a software-emulated device (`SIGTRAP`, with the stack in `buildUi` where the
+WebView is made; `--no-sandbox --disable-gpu` through `/data/local/tmp/webview-command-line`
+doesn't save it). A container with no `/dev/kvm` boots the emulator in about fourteen minutes and
+then cannot run the part that does the measuring. Use `recordPaparazziDebug` for the screen, the
+harnesses under `02-spin-meter/web/test` for the engine, and a phone for both together.

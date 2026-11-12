@@ -743,10 +743,25 @@ field ball has a sign the measurement cannot establish however side-on the camer
 was 1 rev/s, which was nearly no floor at all; it is now `max(8, 0.2 x rps)`, a little above the
 worst error seen on clips that are cleaner than any real one.
 
-On the field rows that leaves 2 of 10 rather than 4: serve 3 off the paddle (+16.9 at 52.5 rev/s)
-and serve 8 (-21.9 at 65). The eight it declines, it declines for a reason that camera cannot
-argue with -- it views those serves 30 to 55 degrees head-on, where the mirror term swamps the
-gyro. Side-on is still the real unlock for the field, and no rule can substitute for it.
+Counted over the 33 stretches, with all three gates applied -- the mirror test, a clear reading
+and the magnitude floor:
+
+| group | 0.9.7 (dots only) | 0.9.10 |
+|---|---|---|
+| home, side on | 5 of 15 | **8 of 15** |
+| club, head on | 3 of 8 | **3 of 8** |
+| 10 Nov field | **0 of 10** | **2 of 10** |
+| all | 8 of 33 | 13 of 33 |
+
+The two field rows that survive are serve 3 off the paddle (+16.9 at 52.5 rev/s) and serve 8
+(-21.9 at 65). The eight it declines, it declines for a reason that camera cannot argue with --
+it views those serves 30 to 55 degrees head-on, where the mirror term swamps the gyro. Note also
+what the floor costs on the dots side: T1 at 1.5 rev/s and M6's bounce at 5.3 were shown under
+0.9.7 and are not shown now, and that is the right trade. A dots reading settles front from back;
+it does nothing about an axis tilted by blur, which is what a small gyro is mostly made of.
+
+So this is better than showing nothing in the field, and it is not a fix for the field. Side-on
+is still the real unlock, and no rule can substitute for a camera pointed the wrong way.
 
 ## Build
 

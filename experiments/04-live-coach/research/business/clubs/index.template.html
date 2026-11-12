@@ -60,6 +60,8 @@ table.clubs th{position:sticky;top:0;background:var(--chip);text-align:left;font
 table.clubs th[aria-sort="ascending"]::after{content:" ▲";font-size:10px}
 table.clubs th[aria-sort="descending"]::after{content:" ▼";font-size:10px}
 table.clubs td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
+td.name{min-width:9em}
+table.clubs td:nth-child(3){white-space:nowrap}
 td.name b{display:block}
 td.name .meta{font-size:12px;color:var(--muted)}
 .chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:var(--chip);white-space:nowrap}
@@ -229,7 +231,8 @@ let sortK = "prio", sortDir = 1;
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const link = (u, t) => u ? `<a href="${esc(u.startsWith("http") ? u : "https://" + u)}" target="_blank" rel="noopener">${esc(t)}</a>` : "";
+const link = (u, t) => !u ? "" : /^https?:\/\//.test(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`
+  : /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(u) ? `<a href="https://${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : `<span>${esc(t)}: ${esc(u)}</span>`;
 
 function fillSelect(sel, vals){ for (const v of vals){ const o=document.createElement("option"); o.value=v[0]; o.textContent=v[1]; sel.appendChild(o);} }
 fillSelect($("#fcity"), [...new Set(CLUBS.map(c=>c.city))].map(v=>[v,v]));

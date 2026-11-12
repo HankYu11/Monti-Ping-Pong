@@ -180,6 +180,7 @@ class SpinBall(ctx: Context) : View(ctx) {
     private var gyroKnown = true
     private var angle = 0.0
     private var lastNanos = 0L
+    private var still = false
     private var tex: Bitmap? = null
     private var texPx = IntArray(0)
     private var texN = 0
@@ -202,6 +203,9 @@ class SpinBall(ctx: Context) : View(ctx) {
 
     fun clear() { axis = null; rps = 0.0; invalidate() }
 
+    /** Hold the ball at a fixed pose, in turns, instead of letting it run: for stills and films. */
+    fun poseTurns(turns: Double) { angle = turns * 2 * Math.PI; still = true; invalidate() }
+
     override fun onMeasure(wSpec: Int, hSpec: Int) {
         val w = MeasureSpec.getSize(wSpec)
         setMeasuredDimension(w, w)                      // square: the ball and its ring
@@ -211,12 +215,14 @@ class SpinBall(ctx: Context) : View(ctx) {
         val a = axis ?: return
         val w = width.toFloat()
         if (w < 8f) return
-        val now = System.nanoTime()
-        if (lastNanos != 0L) {
-            val dt = ((now - lastNanos) / 1e9).coerceAtMost(0.05)
-            angle += 2 * Math.PI * (rps / slow) * dt
+        if (!still) {
+            val now = System.nanoTime()
+            if (lastNanos != 0L) {
+                val dt = ((now - lastNanos) / 1e9).coerceAtMost(0.05)
+                angle += 2 * Math.PI * (rps / slow) * dt
+            }
+            lastNanos = now
         }
-        lastNanos = now
 
         val cxy = w / 2f
         val r = w * 0.345f
@@ -224,7 +230,7 @@ class SpinBall(ctx: Context) : View(ctx) {
         marks(c, a, w, r, cxy)
         // about 30 a second. The ball turns slowly enough that this looks the same as 60, and
         // the camera, the tracker and the engine all want the CPU more than this does.
-        postInvalidateDelayed(32)
+        if (!still) postInvalidateDelayed(32)
     }
 
     /** drawn small and scaled up: the sphere is smooth, and this keeps the per-pixel pass cheap */

@@ -1,0 +1,249 @@
+<title>Serve Coach Launch Kit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a working kit, one reading column. Jump links up top; each asset is a block with its purpose, the copy itself, and a Copy button. Same court-blue tokens as the landing page. */
+:root {
+  --ground: #f3f6f7; --paper: #ffffff; --ink: #121c22; --muted: #586873; --rule: #d6dfe3;
+  --accent: #0f5f8c; --accent-soft: #e2eff6; --est: #8a5300; --est-soft: #fbf0dc; --dot-r: #d62839;
+  --zh: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --num: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #0b1216; --paper: #121b21; --ink: #e4ecf0; --muted: #98a9b3; --rule: #24323b;
+  --accent: #6fb6e0; --accent-soft: #13293a; --est: #f2bd62; --est-soft: #2a2011; --dot-r: #ff5c6c; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --ground: #0b1216; --paper: #121b21; --ink: #e4ecf0; --muted: #98a9b3; --rule: #24323b;
+  --accent: #6fb6e0; --accent-soft: #13293a; --est: #f2bd62; --est-soft: #2a2011; --dot-r: #ff5c6c; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.75 var(--zh); padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 860px; margin: 0 auto; display: grid; gap: 44px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1 { font: 900 clamp(28px, 5vw, 38px)/1.25 var(--zh); margin: 0; text-wrap: balance; }
+h2 { font: 900 24px/1.35 var(--zh); margin: 0 0 6px; text-wrap: balance; }
+h3 { font: 700 18px/1.4 var(--zh); margin: 0; }
+p { margin: 0; max-width: 44em; }
+.meta { font: 13px/1.5 var(--mono); color: var(--muted); }
+.lead { color: var(--muted); }
+nav { display: flex; flex-wrap: wrap; gap: 8px; }
+nav a { font-size: 14px; padding: 6px 12px; border-radius: 999px; background: var(--accent-soft); text-decoration: none; }
+.est { font: 500 11.5px var(--mono); color: var(--est); background: var(--est-soft); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.note { font-size: 14px; color: var(--muted); border-left: 3px solid var(--rule); padding-left: 12px; }
+.asset { background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; padding: 20px 22px; display: grid; gap: 12px; min-width: 0; }
+.asset-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.len { font: 700 18px var(--num); color: var(--accent); letter-spacing: .03em; }
+.why { font-size: 14px; color: var(--muted); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 15px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 13px; }
+td.t { font: 500 14px var(--mono); white-space: nowrap; color: var(--muted); }
+.copy-box { position: relative; }
+pre { white-space: pre-wrap; word-break: break-word; font: 15px/1.8 var(--zh); background: var(--ground); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 16px 16px; margin: 0; }
+pre.en { font-family: Georgia, "Times New Roman", serif; font-size: 15.5px; }
+button.copy { font: 600 13px var(--zh); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--accent); background: var(--paper); color: var(--accent); cursor: pointer; }
+.stack { display: grid; gap: 16px; }
+.creators td:first-child { font-weight: 700; }
+ul { margin: 0; padding-left: 1.3em; } li { margin: 3px 0; }
+</style>
+
+<main>
+  <header style="display:grid;gap:10px">
+    <div class="meta">Serve Coach Live · personal users · launch kit · draft 12 Nov 2026</div>
+    <h1>個人球友上市素材包</h1>
+    <p class="lead">Five short-video scripts, three community posts and a creator outreach message, all in zh-TW (outreach also in English), plus the creator list. Nothing here has been posted or sent.</p>
+    <nav><a href="#videos">短影音腳本</a><a href="#posts">社群貼文</a><a href="#outreach">創作者邀約</a><a href="#creators">創作者名單</a></nav>
+    <p class="note">Rules for every asset: use real readings from real serves (replace any number in brackets), always show the marked ball, say "Android only" and "English voice" plainly, and never claim the JOOLA Spinball works until experiment E2 passes.</p>
+  </header>
+
+  <section id="videos" class="stack">
+    <div><h2>短影音腳本（15–30 秒）</h2><p class="lead">For Reels, Shorts, TikTok and Threads. Vertical 9:16. Film the phone screen and the serve in one take so the number is believable.</p></div>
+
+    <article class="asset">
+      <div class="asset-head"><h3>1. 你的發球幾轉？</h3><span class="len">20 秒</span></div>
+      <p class="why">Hook for the spin challenge. Goal: comments with people's guesses, saves, sign-ups.</p>
+      <div class="scroll"><table><thead><tr><th>秒</th><th>畫面</th><th>字幕／旁白</th></tr></thead><tbody>
+        <tr><td class="t">0–3</td><td>特寫：發球手拋球，畫面定格</td><td>字幕：「猜猜看，這顆下旋幾轉？」</td></tr>
+        <tr><td class="t">3–8</td><td>正常速度發球；角落是腳架上的手機</td><td>字幕：「留言你的猜測」＋ 1,000／2,000／3,000 三個選項</td></tr>
+        <tr><td class="t">8–14</td><td>手機螢幕大特寫，App 唸出結果</td><td>App 語音（英文）：「[2450] RPM, strong spin, backspin.」字幕：「[2,450] 轉／分」</td></tr>
+        <tr><td class="t">14–20</td><td>刻度條，紅線停在 2,760</td><td>字幕：「世界頂尖選手發球平均約 2,760。你呢？ #發球幾轉 挑戰，連結在個人頁」</td></tr>
+      </tbody></table></div>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>2. 「切薄一點」到底差多少？</h3><span class="len">25 秒</span></div>
+      <p class="why">Before and after. Shows the product is a training tool, not a toy. Goal: serious club adults.</p>
+      <div class="scroll"><table><thead><tr><th>秒</th><th>畫面</th><th>字幕／旁白</th></tr></thead><tbody>
+        <tr><td class="t">0–3</td><td>球員對鏡頭</td><td>旁白：「教練一直說我下旋要切薄一點。到底差多少？」</td></tr>
+        <tr><td class="t">3–10</td><td>第一球，App 讀數</td><td>App：「[1300] RPM, weak spin, backspin.」字幕：「平常的發法：[1,300]」</td></tr>
+        <tr><td class="t">10–14</td><td>慢動作：拍面角度更平、往前刷</td><td>字幕：「拍面再打開一點，往前刷」</td></tr>
+        <tr><td class="t">14–21</td><td>第二球，App 讀數</td><td>App：「[2200] RPM, medium spin, backspin.」字幕：「同一個人，多了 [900] 轉」</td></tr>
+        <tr><td class="t">21–25</td><td>結尾卡</td><td>字幕：「看不見的旋轉，現在聽得見。Android 搶先登記，連結在個人頁」</td></tr>
+      </tbody></table></div>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>3. 爸媽也看得懂的進步</h3><span class="len">25 秒</span></div>
+      <p class="why">For parents of junior players, timed for winter break (寒假) training camps. Get the parent's and child's consent before filming a minor; do not show the child's face if they prefer.</p>
+      <div class="scroll"><table><thead><tr><th>秒</th><th>畫面</th><th>字幕／旁白</th></tr></thead><tbody>
+        <tr><td class="t">0–4</td><td>家長在場邊看孩子練球</td><td>旁白：「孩子練了一個月發球。我看不出差別，教練說有進步。」</td></tr>
+        <tr><td class="t">4–14</td><td>四週的讀數疊在一起：第 1 週到第 4 週</td><td>字幕：「第 1 週 [1,450] → 第 4 週 [2,050]」</td></tr>
+        <tr><td class="t">14–20</td><td>孩子聽到 App 唸出新紀錄後的反應</td><td>App：「[2100] RPM, medium spin, backspin.」</td></tr>
+        <tr><td class="t">20–25</td><td>結尾卡＋練習包照片</td><td>字幕：「寒假練發球，每一球都有數字。練習包含 24 顆標記球」</td></tr>
+      </tbody></table></div>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>4. 一顆球，一分鐘</h3><span class="len">15 秒</span></div>
+      <p class="why">Answers the "why marked balls?" objection before it is asked, and sells the kit.</p>
+      <div class="scroll"><table><thead><tr><th>秒</th><th>畫面</th><th>字幕／旁白</th></tr></thead><tbody>
+        <tr><td class="t">0–3</td><td>白球在桌上旋轉，看不出轉沒轉</td><td>字幕：「白球轉起來，每一面都一樣」</td></tr>
+        <tr><td class="t">3–11</td><td>縮時：3D 列印杯塗半顆黑，模板點紅綠藍三點</td><td>字幕：「半顆黑＋三個色點，一顆約一分鐘」</td></tr>
+        <tr><td class="t">11–15</td><td>一籃畫好的球</td><td>字幕：「懶得畫？練習包裡 24 顆已經畫好」</td></tr>
+      </tbody></table></div>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>5. 你的手機可以嗎？</h3><span class="len">20 秒</span></div>
+      <p class="why">Turns the phone gate into a call to action. Every reply with a phone model feeds the compatibility list.</p>
+      <div class="scroll"><table><thead><tr><th>秒</th><th>畫面</th><th>字幕／旁白</th></tr></thead><tbody>
+        <tr><td class="t">0–4</td><td>三支手機並排：Pixel、Samsung、iPhone</td><td>字幕：「同樣是手機，為什麼只有一支能量旋轉？」</td></tr>
+        <tr><td class="t">4–12</td><td>Pixel 開 App 顯示「240 fps OK」</td><td>旁白：「量旋轉需要每秒 240 格，而且手機要開放給 App 用。目前 Pixel 可以，Samsung 不行，iPhone 版還沒做。」</td></tr>
+        <tr><td class="t">12–20</td><td>留言區畫面示意</td><td>字幕：「留言你的手機型號，我們幫你查，也決定下一支要測哪個」</td></tr>
+      </tbody></table></div>
+    </article>
+  </section>
+
+  <section id="posts" class="stack">
+    <div><h2>社群貼文</h2><p class="lead">Read each group's or board's rules before posting. Many Taiwanese table tennis groups ban ads; post as the maker asking for testers, and ask an admin first.</p></div>
+
+    <article class="asset">
+      <div class="asset-head"><h3>A. PTT 桌球板（Tabletennis）：徵求測試</h3><button class="copy" type="button" data-copy="post-a">複製</button></div>
+      <p class="why">PTT readers dislike marketing. Lead with the limits and ask for help.</p>
+      <pre id="post-a">[分享] 自己做了量發球轉速的 Android App，徵 20 位測試者
+
+大家好，我們是台北的小團隊奇斯科技。做了一個 App：手機架在球桌旁，用 240 fps 拍發球，幾秒內唸出轉速（RPM）、上旋／下旋／側旋和強弱。不用網路，影片不上傳。
+
+先講限制：
+1. 只有 Android，而且手機要開放 240 fps 給 App。Pixel 可以，Samsung 目前不行，其他型號要測。
+2. 球要畫記號：半顆黑加紅綠藍三點。我們有 3D 列印工具，一顆約一分鐘；測試者我們可以寄畫好的球。
+3. 語音目前是英文（"2450 RPM, strong spin, backspin."），畫面有大字數字。
+
+想找 20 位常練發球的板友試用 4 週，免費，只希望你：
+‧回報手機型號能不能用
+‧每週至少練一次，告訴我們準不準、好不好用
+
+有興趣請推文留手機型號，或填表：[登記連結]
+也歡迎直接問問題，我們會一一回。</pre>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>B. Facebook 桌球社團：發球旋轉挑戰</h3><button class="copy" type="button" data-copy="post-b">複製</button></div>
+      <p class="why">Runs the challenge. Ask the group admin first; offer them a free kit for the group's prize table.</p>
+      <pre id="post-b">🏓 #發球幾轉 挑戰（12 月 7 日 – 1 月 31 日）
+
+你覺得自己的下旋發球每分鐘轉幾圈？
+世界頂尖選手在世錦賽的發球平均約 2,760 轉。
+
+怎麼參加：
+1. 用 Serve Coach Live（Android）量你的發球
+2. 拍一支影片：發球和手機畫面要在同一個鏡頭裡
+3. 貼到這篇留言，或在 IG／Threads 加 #發球幾轉
+
+分組：國小、國中、高中、成人、50 歲以上
+類別：下旋、側旋、上旋
+每週更新排行榜，各組第一名送「發球練習包」（24 顆標記球＋一年會員）。
+
+沒有能用的手機？12 月起我們會帶 Pixel 到幾個球館和比賽現場，現場免費測。地點會公布在這裡。
+
+App 限制先說：只支援部分 Android 手機（Pixel 已測試），語音是英文，球要畫記號。
+登記：[登記連結]</pre>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>C. Dcard／Threads：短問句</h3><button class="copy" type="button" data-copy="post-c">複製</button></div>
+      <p class="why">Short, casual, with video 1 attached. Aim: university club players and YouTube learners.</p>
+      <pre id="post-c">打了三年球，第一次知道自己的下旋只有 [1,600] 轉 😅
+職業選手發球平均約 2,760。
+
+我們做了一個 App，手機架在桌邊就能量發球轉速，還會直接唸給你聽（目前是 Android，Pixel 可用）。
+想知道你的發球幾轉？留言你的手機型號，我們幫你看能不能用。
+
+#桌球 #發球幾轉 #發球練習</pre>
+    </article>
+  </section>
+
+  <section id="outreach" class="stack">
+    <div><h2>創作者邀約訊息</h2><p class="lead">One message per creator, sent from support@handyla.co or the brand's own account. Personalise the first line with one of their real videos. Offer: a kit, early access, a revenue-share code, and a small fee for a video only if they want one.</p></div>
+
+    <article class="asset">
+      <div class="asset-head"><h3>中文版</h3><button class="copy" type="button" data-copy="out-zh">複製</button></div>
+      <pre id="out-zh">主旨：想請您幫我們量一量發球轉速（台灣團隊的新 App）
+
+[創作者名字] 您好：
+
+我是奇斯科技的 [你的名字]。看了您的〈[影片名稱]〉，[一句具體的感想]。
+
+我們在台北做了一個 Android App：Serve Coach Live。手機架在球桌旁，用 240 fps 拍發球，幾秒內唸出轉速（RPM）、旋轉種類和強弱，並標出世界頂尖選手的平均 2,760 RPM。完全離線。
+
+想邀請您：
+1. 免費試用，我們寄上一組畫好記號的球和 3D 列印標記工具；如果您的手機不支援，我們可以借您一支 Pixel。
+2. 如果覺得好用，拍一支「我的發球幾轉？」或和學生、球友比轉速的影片。內容完全由您決定，覺得不好用也可以直說。
+3. 給您專屬折扣碼，觀眾用碼訂閱，您分得 30%。
+
+先說限制：目前只支援部分 Android（Pixel 已測試），語音是英文，球要畫記號。
+
+方便的話，回信告訴我寄送地址，或約 15 分鐘線上示範。
+
+謝謝您，
+[你的名字]
+奇斯科技 QI SI TECHNOLOGY
+support@handyla.co</pre>
+    </article>
+
+    <article class="asset">
+      <div class="asset-head"><h3>English version</h3><button class="copy" type="button" data-copy="out-en">Copy</button></div>
+      <pre id="out-en" class="en">Subject: Can we measure your serve's spin? (new Android app)
+
+Hi [name],
+
+I'm [your name] from QI SI Technology, a small studio in Taipei. I liked your video "[title]", especially [one specific point].
+
+We built Serve Coach Live, an Android app. Put the phone on a tripod beside the table and it films each serve at 240 fps, then says the spin out loud within a few seconds: RPM, spin type and a strength band, with the world-class average of 2,760 RPM marked. It works offline.
+
+What we'd like to offer:
+1. Free access, plus a set of marked balls and the 3D-printed marking tool. If your phone can't do 240 fps, we can lend you a Pixel.
+2. If you like it, a "How much spin is on my serve?" video, or a spin contest with your students or friends. Your call on the content, including saying what doesn't work.
+3. Your own discount code with a 30% share of every subscription it brings in.
+
+The limits, up front: Android only for now (Pixel tested; Samsung blocks 240 fps for apps), and the balls need marking.
+
+If you're interested, reply with a shipping address or a time for a 15-minute demo call.
+
+Thanks,
+[your name]
+QI SI Technology
+support@handyla.co</pre>
+    </article>
+  </section>
+
+  <section id="creators" class="stack">
+    <div><h2>創作者名單</h2><p class="lead">CREATORS_LEAD</p></div>
+    CREATORS_TABLE
+  </section>
+</main>
+
+<script>
+document.querySelectorAll("button.copy").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const el = document.getElementById(btn.dataset.copy);
+    const done = (t) => { const o = btn.textContent; btn.textContent = t; setTimeout(() => btn.textContent = o, 1600); };
+    const select = () => { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); done("已選取，請按複製"); };
+    try { navigator.clipboard.writeText(el.innerText).then(() => done("已複製"), select); } catch (_) { select(); }
+  });
+});
+</script>

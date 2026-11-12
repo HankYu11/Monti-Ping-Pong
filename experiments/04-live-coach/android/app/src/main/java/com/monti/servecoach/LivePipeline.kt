@@ -426,6 +426,15 @@ class LivePipeline(
      * window's 65, which the chip has the time for.
      */
     private val ringRowStep = 2
+    /**
+     * Frames after the hit that are not counted against the ring's coverage.
+     *
+     * The ball leaves the bat merged with it, the live track takes four points to settle, and
+     * the engine throws these frames away itself. Measured on three recorded serves: counting
+     * them turned one down at 73 of 101 frames that was covered 82 of 91 without them, and its
+     * reading from the ring is the whole crop's to 0.05 rev/s.
+     */
+    private val FLIGHT_GRACE = 10
     private var planSide = 0
     private var planning = false
     private var planFit: CaptureGl.Calib? = null
@@ -472,10 +481,17 @@ class LivePipeline(
         }
         var best: List<FloatArray>? = null; var bestScore = 0f
         for (t in tr.liveTracks) {
-            val a = t[0]; val b = t[t.size - 1]
-            val disp = kotlin.math.hypot(b[1] - a[1], b[2] - a[2])
-            if (disp < 8f) continue                      // an arm, a shirt: it has to be going somewhere
-            val s = t.size * disp
+            val k = t.size
+            // fast enough NOW to be a ball, and then the longest of those. Length times travel
+            // alone -- which is how the grouping scores a FINISHED track -- picks an arm that
+            // has been alive for a hundred frames over a flight ten frames old, and the first
+            // part of the flight is exactly where the window is wanted. The gate is 2 px a
+            // tracker frame at quarter size; a served ball runs 8 to 25.
+            val a0 = t[maxOf(0, k - 4)]; val b0 = t[k - 1]
+            val v = kotlin.math.hypot(b0[1] - a0[1], b0[2] - a0[2]) / maxOf(1f, b0[0] - a0[0])
+            if (v < 2f) continue
+            val a = t[0]; val b = t[k - 1]
+            val s = k * kotlin.math.hypot(b[1] - a[1], b[2] - a[2])
             if (s > bestScore) { bestScore = s; best = t }
         }
         if (best == null) {
@@ -700,13 +716,21 @@ class LivePipeline(
         val b0 = Windows.Builder(rect, nGuess + captureFps / 4, tracks)
         val want = b0.backgroundFrames
         val wanted = want.toHashSet()
+        // The frames that count are the ones the engine will measure: the serve's own track,
+        // less the first few after the hit. A capture covers more -- the near tracks, and the
+        // frames offsets() fills in either side -- and a window missing out there costs
+        // nothing, while the live track takes a moment to settle on a ball that has just come
+        // off the bat. Counting those turned down a serve covered everywhere it mattered.
+        val main = tracks[0]
+        val lo = (main.minOf { it[0] }).toInt() + FLIGHT_GRACE
+        val hi = (main.maxOf { it[0] }).toInt()
         // Does the ring even hold this serve? Asked before anything is decoded, because a
         // decode it then throws away is the whole cost of the old way paid twice.
         run {
             val pre = ring.take(firstFrame, nGuess)
             val s0 = b0.side
             var w0 = 0; var h0 = 0
-            for (i in 0 until nGuess) {
+            for (i in lo..minOf(hi, nGuess - 1)) {
                 val place = b0.placeOf(i) ?: continue
                 w0++
                 val at = pre.at[i] ?: continue
@@ -737,7 +761,7 @@ class LivePipeline(
             val at = taken.at[i]
             var win: ByteArray? = null
             if (place != null) {
-                need++
+                if (i in lo..hi) need++
                 if (at != null) {
                     val from = taken.sides[i]
                     val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
@@ -745,12 +769,12 @@ class LivePipeline(
                     if (d > worst) worst = d
                     win = taken.pixels[i]?.let { Windows.reCut(it, from, dx, dy, side) }
                 }
-                if (win == null) missed++ else got++
+                if (i in lo..hi) { if (win == null) missed++ else got++ }
             }
             b.addParts(taken.rows[i]?.let { Windows.ringRows(it, rect, w, h, rowStep) }, win, crops[i])
         }
         if (need == 0 || got < need * 3 / 4) return no("the chip's windows covered $got of $need frames (decoded already)")
-        ringNote = "$got of $need windows, missed $missed, worst ${worst} px off centre; " +
+        ringNote = "$got of $need flight windows, missed $missed, worst ${worst} px off centre; " +
             "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms)"
         return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
     }
@@ -809,17 +833,9 @@ class LivePipeline(
         if (CaptureGl.ringCalib == null && y.rms <= 6.0) CaptureGl.ringCalib = fit
     }
 
-    /**
-     * The crop nudged so its row sample's columns are the ones the chip sampled, and its first
-     * row one the chip sampled too (see assets/shaders/crop_rows.frag). Only when the windows
-     * are cut on the chip: otherwise the crop is what it always was.
-     */
-    private fun alignRect(r: IntArray, w: Int, h: Int): IntArray {
-        if (!windowRing) return r
-        val dx = r[0] % Windows.ROW_STRIDE
-        val dy = r[1] % ringRowStep
-        return intArrayOf(r[0] - dx, r[1] - dy, minOf(w - (r[0] - dx), r[2] + dx), minOf(h - (r[1] - dy), r[3] + dy))
-    }
+    /** only when the windows are cut on the chip: otherwise the crop is what it always was */
+    private fun alignRect(r: IntArray, w: Int, h: Int): IntArray =
+        if (!windowRing) r else Windows.alignRect(r, w, h, ringRowStep)
 
     private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect0: IntArray, w: Int, h: Int) {
         val rect = alignRect(rect0, w, h)

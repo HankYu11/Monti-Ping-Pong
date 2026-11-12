@@ -421,3 +421,64 @@ needing the code read against it.
 
 None of this touches a reading: all four serves were cut exactly as 0.11 cut them, which is what
 the fallback is for. The cost of the whole experiment so far has been 6% of the frames' thread.
+
+## Running the ring without a phone
+
+The emulator was the wrong thing to fix, for a reason that has nothing to do with the emulator:
+**"Test with a video" never touches the chip**. It feeds a file's frames to the pipeline's own
+decoder; GlTap, and with it the whole window pass, only exists on the camera's path. An emulator
+that booted perfectly would have exercised none of this — and it would not boot anyway, since
+without /dev/kvm there is no 240 fps camera, no GLES 3 external images and no arm64 native part.
+
+So the ring is reproduced instead, on the JVM, from a clip the phone recorded: `RingSim` in the
+desktop runner (`desktop/ringcheck.sh`). The same tracker, the same `Predict`, the same
+`WindowRing`, the same `Windows.Builder` — with the window and the row sample cut by the
+processor from the decoded frame rather than by the chip from the camera's. What that leaves out
+is the shader's arithmetic, the chip's timing, and the camera's frames against the decoder's.
+What it covers is everything else, which is where all four faults so far have been.
+
+### What it found at once
+
+Of three recorded serves, **one was refused outright and the other two lost a fifth of their
+windows**, and the per-frame dump said why — in two different ways:
+
+- **The track the window follows was chosen the way a finished track is scored**, by length times
+  travel. That picks an arm that has been alive for a hundred frames over a flight that is ten
+  frames old — and the first part of the flight is exactly where the window is wanted. A dump of
+  serve 2 shows the window sitting at x≈1350 while the ball ran from 1326 to 1106. It is now
+  chosen by how fast a track is going *now* (2 px a tracker frame at quarter size; a served ball
+  runs 8 to 25), and among those by length times travel.
+- **Coverage was counted over the whole capture**, including the near tracks and the frames
+  `offsets()` fills in at either end, where a missing window costs nothing. Counting only the
+  flight, less ten frames after the hit (the ball is merged with the bat there and the engine
+  throws them away itself), serve 2 goes from 73 of 101 to 82 of 91.
+
+With both: 21/27, 81/91, 63/63 of the measured flight, and the captures read
+
+| serve | phone | whole crop | from the ring | bytes |
+|---|---|---|---|---|
+| 1 | 26.05 | 26.00 | **26.00** | 25x fewer |
+| 2 | 51.45 | 51.50 | **51.45** | 74x fewer |
+| 3 | 51.20 | 51.20 | **51.10** | 69x fewer |
+
+The split moves by up to 4.2 rev/s, which is what the windowed format already moves it by on its
+own (serve 3's curve: −26.0 whole, −22.9 windowed, −21.8 from the ring).
+
+### Two numbers the sim can give and the phone cannot
+
+**How far behind the live track may run.** On the phone the delay is whatever the tracker, the
+finders and the linker add up to; here it is a dial. Coverage of the measured flight, per serve:
+
+| lag (tracker frames) | 0 | 2 | 4 | 6 | 8 |
+|---|---|---|---|---|---|
+| serve 1 | 23/27 | 21/27 | 21/27 | 21/27 | 21/27 |
+| serve 2 | 88/91 | 81/91 | 73/91 | 61/91 | 53/91 |
+| serve 3 | 63/63 | 63/63 | 59/63 | 55/63 | 51/63 |
+
+So it degrades gracefully to about four tracker frames (33 ms) and starts refusing serves past
+six. That is the headroom the design has, measured rather than hoped for.
+
+**Whether the margin is worth its bytes.** At a lag of 4, margins of 48, 72, 104 and 144 px give
+serve 2 70, 73, 75 and 76 of 91, and change serves 1 and 3 not at all. The window is not what
+loses frames — being on the wrong object, or having no prediction yet, is. 72 stays because it
+costs little and the phone's real lag is still unknown, but there is nothing to buy by raising it.

@@ -236,6 +236,22 @@ object Windows {
     }
 
     /**
+     * The crop nudged so its row sample's columns are the ones the chip sampled, and its first
+     * row one the chip sampled too.
+     *
+     * The chip samples the WHOLE picture, because the crop is not known while the serve is
+     * happening; the capture samples the crop. They are the same pixels only if the crop's left
+     * edge is a multiple of the stride and its top a multiple of the row step. A few pixels of
+     * crop, and the ratio's bias is common to both sides and cancels; without it the two
+     * samples are merely similar, which is not the same thing.
+     */
+    fun alignRect(r: IntArray, frameW: Int, frameH: Int, rowStep: Int, stride: Int = ROW_STRIDE): IntArray {
+        val dx = r[0] % stride
+        val dy = r[1] % rowStep
+        return intArrayOf(r[0] - dx, r[1] - dy, minOf(frameW - (r[0] - dx), r[2] + dx), minOf(frameH - (r[1] - dy), r[3] + dy))
+    }
+
+    /**
      * The chip's row sample turned into the one a [Builder] wants.
      *
      * The chip samples the WHOLE picture -- every [rowStep]th row at every [stride]th column,

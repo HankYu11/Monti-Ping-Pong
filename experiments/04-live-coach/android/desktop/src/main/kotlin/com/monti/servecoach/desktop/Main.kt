@@ -4,6 +4,7 @@ import com.monti.servecoach.core.Capture
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Plane
 import com.monti.servecoach.core.ServeTracker
+import com.monti.servecoach.core.Windows
 import com.monti.servecoach.core.Yuv
 import java.io.DataInputStream
 import java.io.EOFException
@@ -61,6 +62,13 @@ fun main(args: Array<String>) {
         println("  track ${a[0].toInt()}-${b[0].toInt()} (${pts.size}) ${a[1].toInt() * 4},${a[2].toInt() * 4} -> ${b[1].toInt() * 4},${b[2].toInt() * 4} r ${"%.1f".format(a[3] * 4)}-${"%.1f".format(b[3] * 4)}: ${why ?: "SERVE"}")
     }
     val serves = ArrayList<ServeTracker.Serve>()
+    // RING=1: the live window ring reproduced here (RingSim), so the capture it would build can
+    // be measured against the one the phone cuts. RINGLAG is how many tracker frames the live
+    // track runs behind -- the number the phone could not give.
+    val ringLag = (System.getenv("RINGLAG") ?: "2").toInt()
+    val ringMargin = (System.getenv("RINGMARGIN") ?: "72").toInt()
+    val ringRowStep = (System.getenv("RINGROWSTEP") ?: "2").toInt()
+    val ring = if (System.getenv("RING") != null) RingSim(W, H, step, ringLag, ringMargin, ringRowStep, 600) else null
     var n = 0L
     val t0 = System.nanoTime()
     var dsNs = 0L; var pushNs = 0L; var pushed = 0
@@ -74,7 +82,9 @@ fun main(args: Array<String>) {
             val s = if (par == null) tracker.push(q, n / step) else par.push(q, n / step)
             dsNs += b - a; pushNs += System.nanoTime() - b; pushed++
             if (s != null) serves.add(s.copy(first = s.first * step, last = s.last * step + step - 1))
+            ring?.seen(tracker, n / step)
         }
+        ring?.cut(f, n)
         n++
     }
     par?.drain()?.let { serves.addAll(it.map { s -> s.copy(first = s.first * step, last = s.last * step + step - 1) }) }
@@ -83,7 +93,12 @@ fun main(args: Array<String>) {
     repeat(120) { tracker.push(quiet)?.let { serves.add(it.copy(first = it.first * step, last = it.last * step + step - 1)) } }
     val ms = (System.nanoTime() - t0) / 1e6
     // the second pass: the serves' frames, cropped (the phone decodes them again from its memory)
-    val caps = serves.map { s -> s to Capture(W, H, tracker.cropFor(s, W, H), false, 240) }
+    // with the ring, the crop is nudged so the chip's row sample and the capture's are the same
+    // columns and rows (Windows.alignRect); both captures then use it, so they can be compared
+    val caps = serves.map { s ->
+        val r = tracker.cropFor(s, W, H).let { if (ring != null) Windows.alignRect(it, W, H, ringRowStep) else it }
+        s to Capture(W, H, r, false, 240)
+    }
     var i = 0L
     frames(clip, W, H) { f ->
         for ((s, c) in caps) if (i in s.first..s.last) c.add(f)
@@ -104,6 +119,24 @@ fun main(args: Array<String>) {
             val side = com.monti.servecoach.core.Windows.write(wf, c, listOf(conv(s.track)) + s.near.map { conv(it) },
                 ""","first":${s.first},"last":${s.last}""" + s.tracksJson(step, sc, s.first), radii.toDouble())
             println("  windows ${side}x$side: ${wf.name} ${wf.length() / 1000} kB against ${file.length() / 1000} kB")
+        }
+        ring?.let { r ->
+            val sc = W.toFloat() / (W / 4)
+            fun conv(t: List<FloatArray>) = t.map {
+                floatArrayOf((it[0] * step - s.first).toFloat(), it[1] * sc, it[2] * sc, it[3] * sc)
+            }
+            val tracks = (listOf(s.track) + s.near).map(::conv).filter { it.size >= 2 }
+            val built = r.build(c.rect, tracks, c.frames, s.first)
+            println("  ring (lag $ringLag, margin $ringMargin): ${built.note}")
+            built.builder?.let { b ->
+                val rf = File(outDir, "${clip.nameWithoutExtension}_${k + 1}.ring.cap")
+                val head = c.header(b.headerExtra() + ""","first":${s.first},"last":${s.last}""" +
+                    s.tracksJson(step, sc, s.first), c.frames.size).toByteArray()
+                java.io.DataOutputStream(java.io.FileOutputStream(rf).buffered(1 shl 20)).use { o ->
+                    o.writeInt(head.size); o.write(head); b.writeBody(o)
+                }
+                println("  ring: ${rf.name} ${rf.length() / 1000} kB against ${file.length() / 1000} kB")
+            }
         }
         println("""{"clip":"${clip.name}","serve":${k + 1},"frames":"${s.first}-${s.last}","rect":[${c.rect.joinToString(",")}],"ballR":${"%.1f".format(s.ballRadius * 4)},"tracks":${s.tracks},"why":"${s.why}","file":"${file.path}"}""")
     }

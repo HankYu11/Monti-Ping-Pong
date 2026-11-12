@@ -87,30 +87,39 @@ async function measure(file) {
     const out = await window.SpinMeter.measureCapture(cap, { useTrack: true, single: true, serveDir: 'any', robust: true });
     return { ms: performance.now() - t0, rps: out.rps, error: out.error || null, phase: out.phase,
              refused: (out.meta && out.meta.debug && out.meta.debug.trackRefused) || false,
+             lift: out.lift, curve: out.curve, gyro: out.gyro, toward: out.toward != null ? out.toward : (out.flight && out.flight.towardCameraDeg), type: out.spinType,
              bytes: b.length, windowed: !!head.windows, box: head.winW || 0 };
   }, `http://127.0.0.1:${srv.address().port}/${key}`);
   return r;
 }
 
 const mb = (b) => (b / 1e6).toFixed(2) + ' MB';
+const num = (v) => (typeof v === 'number' ? v.toFixed(1) : '-').padEnd(8);
+const head = () => `${'file'.padEnd(26)}${'rps'.padEnd(9)}${'lift'.padEnd(8)}${'curve'.padEnd(8)}${'gyro'.padEnd(8)}${'toward'.padEnd(8)}${'bytes'.padEnd(10)}form`;
 if (pair) {
   const [a, b] = [await measure(files[0]), await measure(files[1])];
   const say = (f, r) => `${path.basename(f).padEnd(26)}${(r.error ? 'ERROR' : r.rps.toFixed(2)).padEnd(9)}` +
-    `${String(r.phase || '-').padEnd(9)}${mb(r.bytes).padEnd(10)}${r.windowed ? r.box + 'px windows' : 'whole crop'}`;
-  console.log(`${'file'.padEnd(26)}${'rps'.padEnd(9)}${'stretch'.padEnd(9)}${'bytes'.padEnd(10)}form`);
+    `${num(r.lift)}${num(r.curve)}${num(r.gyro)}${num(r.toward)}` +
+    `${mb(r.bytes).padEnd(10)}${r.windowed ? r.box + 'px windows' : 'whole crop'}`;
+  console.log(head());
   console.log(say(files[0], a)); console.log(say(files[1], b));
   if (a.error || b.error) { console.log(`\n${a.error || b.error}`); process.exitCode = 1; }
   else {
+    // the rate is what the player is shown; the split is what a wrong row brightness moves, and
+    // it moved by 9.6 rev/s once while the rate stayed within 0.1 (see Windows.rowBright)
     const d = Math.abs(a.rps - b.rps);
-    console.log(`\ndrift ${d.toFixed(2)} rev/s · ${(a.bytes / b.bytes).toFixed(0)}x fewer bytes`);
-    if (d > 0.5) process.exitCode = 1;
+    const sp = Math.max(Math.abs(a.lift - b.lift), Math.abs(a.curve - b.curve), Math.abs(a.gyro - b.gyro));
+    console.log(`\ndrift ${d.toFixed(2)} rev/s, split ${sp.toFixed(2)} rev/s, toward ${Math.abs(a.toward - b.toward).toFixed(1)} deg` +
+      ` · ${(a.bytes / b.bytes).toFixed(0)}x fewer bytes`);
+    if (d > 0.5 || sp > 1.0) process.exitCode = 1;
   }
 } else {
-  console.log(`${'file'.padEnd(26)}${'rps'.padEnd(9)}${'stretch'.padEnd(9)}${'bytes'.padEnd(10)}form`);
+  console.log(head());
   for (const f of files) {
     const r = await measure(f);
     console.log(`${path.basename(f).padEnd(26)}${(r.error ? 'ERROR' : r.rps.toFixed(2)).padEnd(9)}` +
-      `${String(r.phase || '-').padEnd(9)}${mb(r.bytes).padEnd(10)}${r.windowed ? r.box + 'px windows' : 'whole crop'}`);
+      `${num(r.lift)}${num(r.curve)}${num(r.gyro)}${num(r.toward)}` +
+      `${mb(r.bytes).padEnd(10)}${r.windowed ? r.box + 'px windows' : 'whole crop'}`);
     if (r.error) console.log(`   ${r.error}`);
   }
 }

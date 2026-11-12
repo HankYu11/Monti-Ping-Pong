@@ -795,6 +795,39 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.2: the engine is flat, and the ball stops turning while a serve is measured
+
+The spin work since 0.9.5 cost nothing measurable in the engine. An A/B on one machine over the
+same rendered clips, 0.10.1 against 9831ec0 (before the signed gyro, gyroDirKnown and the window
+path):
+
+| | 0.10.1 | 9831ec0 |
+|---|---|---|
+| bench, 13 clips, best of 2 | 22.4 s / 21.9 s | 21.7 s / 21.7 s |
+| capbench, search | 10.09 s | 10.03 s |
+| capbench, track | 8.93 s | 8.85 s |
+| median error against truth | 0.05 rev/s | 0.05 rev/s |
+
+About +1% on bench and under +1% on the live path, inside the run-to-run spread of 0.5 s.
+gyroDirKnown costs one extra `spinComponents` call per reading and it does not show.
+
+Two cautions on those numbers, from the session that ran them. The clips had to be re-encoded to
+VP9, because `make_clips.sh` writes H.264 and that container's headless Chromium would not decode
+it, so the absolute times are VP9 decode; both engines saw identical files, so the comparison
+holds. And on rendered clips the track path gains only about 1.1x over the search, against about
+3x on the real club captures, because a rendered crop is small and cheap to search. The 3x is the
+one that describes the app.
+
+**So a slow turn is not the engine, and may be the HUD.** Since 0.9.6 the spin ball has drawn a
+per-pixel sphere about thirty times a second for as long as a reading is on screen, including
+while the tracker and the engine measure the next serve on the same cores. That was never
+measured. It is now held still from "Got it" until the answer lands: the ball is showing the
+previous serve during that window, so there is nothing to lose, and the state line and the amber
+frame already carry liveness. It turns again with the new reading.
+
+That is a precaution, not a fix for a measured problem. Settling it needs a phone: one session's
+`answerMs` and the tracker's `msPerFrame` and `dropped`, against a session before this change.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

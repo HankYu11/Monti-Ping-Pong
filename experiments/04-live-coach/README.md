@@ -795,6 +795,58 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.3: the engine measures a box round the ball
+
+A serve's wait was measured properly for the first time: six serves on a Pixel 8, every stage
+instrumented. It was 3.27, 8.26, 3.62, 11.69, 3.27 and 4.05 seconds, and on the four the engine
+measured along the live track it went decode 916 ms, cut the crop 678, write 168, parse 103,
+**engine 1,650**, dispatch 36. The engine was 46% of it, which is not what the plan to shrink the
+capture assumed.
+
+A profile said why. The spin maths is 6% of the engine; the other 94% is per-pixel JavaScript,
+and the ball is 0.55% of the strip the crop covers. Cutting the same capture at five different
+rectangles gives a straight line — about 4.5 microseconds per thousand pixels, over a fixed cost
+of 40 to 100 ms, confirmed on a second serve — so the engine costs the area it is handed and
+almost nothing else.
+
+So it is handed less. Each frame is now read into a box round the ball, 3r + 20 either way, which
+is what `findBall`'s search and `measurePole`'s white-reference ring need between them. The
+background still has to be a median over the crop, so the spread of frames that median needs is
+read whole; so does the row-brightness correction, which is read across the whole row at every
+other column, because inside the box the sample would be mostly ball. `percentile` also stopped
+sorting 66,000 values to find one of them.
+
+Measured on captures rebuilt from two real serves: 1,010 → 613 ms and 1,653 → 873. With the
+capture itself cut down to windows, 357 and 404 — 2.8 and 4.1 times what it was.
+
+The crop is tighter too: it padded the serve's box by 4r + 40, sized when the engine read the
+whole crop and wanted room for a background. 3r + 24 is what the box needs, about 1.4 times fewer
+pixels to cut, write, serve and parse, and the reading does not move.
+
+Nothing else moved either: 19 rendered clips at median and maximum error 0.05 rev/s, 13 of 13 on
+the gyro's direction, 40 of 40 on the flight guard, and all six serves of the measured session
+still read what the phone read — to the digit on the five it could read.
+
+**Two bugs in the windowed capture, found by comparing a real serve both ways.** That format is
+not shipped yet, and it had never been checked on anything but rendered clips and the spin *rate*.
+
+The writer measured a row's brightness as median(frame) ÷ median(background); the engine takes
+median(frame ÷ background) pixel by pixel. A median of a row's values is the median of whatever
+that row crosses, so on a row the two pictures cross differently the two medians come from
+different things. The error depends on the row, the ball changes rows as it flies, and it lands
+as a drift in the ball's measured size over the flight — which is how the engine works out
+whether a serve comes toward the camera, which is how the spin is split into lift, curve and
+gyro. One serve read 36 degrees toward the camera from windows against 13 from the whole crop,
+moving its gyro from −35 to −52 rev/s while the rate stayed within 0.1.
+
+And the background came from a spread of the whole capture, which holds the toss and the swing:
+a median across those has the arm in it wherever the arm went, which is where the ball goes a
+moment later. It now comes from the frames the ball was tracked through.
+
+A capture a fiftieth of the size then reads within 0.15 rev/s and 3.4 on the split. The format
+also stopped being rebuilt: the reader put the whole crop back together for every frame and then
+had a box read out of it, so it had been saving bytes and no work at all.
+
 ## 0.10.2: the engine is flat, and the ball stops turning while a serve is measured
 
 The spin work since 0.9.5 cost nothing measurable in the engine. An A/B on one machine over the

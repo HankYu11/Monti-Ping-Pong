@@ -350,9 +350,21 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     }
 
     /** The serve's crop in the whole picture (size W x H): its box, padded by 4 radii + 40 px, all even. */
+    /**
+     * The crop a capture is cut to: the serve's own box and enough round it for the engine.
+     *
+     * The engine measures a box round the ball of 3r + 20 either way and reads nothing outside it
+     * (engine.js, measureSegment). The 4r + 40 this used to take was sized when it read the whole
+     * crop every frame and needed room for a background; that is 1.4x the pixels, on every stage
+     * that scales with them -- the cut, the write, the WebView's parse and the measuring itself.
+     *
+     * r is the largest the ball gets along the track, not its typical size: a ball coming toward
+     * the camera can end half as big again as it started, and the box grows with it.
+     */
     fun cropFor(s: Serve, W: Int, H: Int): IntArray {
         val sx = W.toFloat() / w; val sy = H.toFloat() / h
-        val pad = 4 * s.ballRadius * sx + 40
+        val rMax = maxOf(s.ballRadius, s.track.maxOfOrNull { it[3] } ?: 0f)
+        val pad = 3 * rMax * sx + 24
         val x0 = ((s.box[0] * sx - pad).toInt()).coerceAtLeast(0) and 1.inv()
         val y0 = ((s.box[1] * sy - pad).toInt()).coerceAtLeast(0) and 1.inv()
         val x1 = ((s.box[2] * sx + pad).toInt() + 1).coerceAtMost(W)

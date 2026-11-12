@@ -1,0 +1,287 @@
+<title>Serve Coach Personal Users Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Barlow+Condensed:wght@600;700;800&family=Noto+Sans+TC:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column for the founder. The three links and three decisions first, then the plan in the order it runs: who, blockers, funnel, channels, calendar, budget, prices, metrics, sources. Court-blue tokens shared with the landing page and launch kit. */
+:root {
+  --ground: #f3f6f7; --paper: #ffffff; --ink: #121c22; --muted: #586873; --rule: #d6dfe3;
+  --accent: #0f5f8c; --accent-soft: #e2eff6; --court: #0f3a54; --court-ink: #eaf4f8; --court-muted: #a8c3d1;
+  --est: #8a5300; --est-soft: #fbf0dc; --bad: #b3261e; --bad-soft: #fbe6e4; --ok: #1e7a48; --ok-soft: #e1f3e8;
+  --sans: "Inter", "Noto Sans TC", system-ui, sans-serif;
+  --num: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #0b1216; --paper: #121b21; --ink: #e4ecf0; --muted: #98a9b3; --rule: #24323b;
+  --accent: #6fb6e0; --accent-soft: #13293a; --court: #0c2c40; --court-ink: #e8f2f7; --court-muted: #8fb0c2;
+  --est: #f2bd62; --est-soft: #2a2011; --bad: #ff8a80; --bad-soft: #351816; --ok: #5fd197; --ok-soft: #12291c; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --ground: #0b1216; --paper: #121b21; --ink: #e4ecf0; --muted: #98a9b3; --rule: #24323b;
+  --accent: #6fb6e0; --accent-soft: #13293a; --court: #0c2c40; --court-ink: #e8f2f7; --court-muted: #8fb0c2;
+  --est: #f2bd62; --est-soft: #2a2011; --bad: #ff8a80; --bad-soft: #351816; --ok: #5fd197; --ok-soft: #12291c; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.7 var(--sans); }
+.band { background: var(--court); color: var(--court-ink); }
+.wrap { max-width: 900px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.band .wrap { padding-block: 40px 36px; display: grid; gap: 14px; }
+.meta { font: 13px/1.5 var(--mono); color: var(--court-muted); }
+h1 { font: 800 clamp(34px, 6vw, 52px)/1.05 var(--num); margin: 0; letter-spacing: .01em; text-wrap: balance; }
+.band p { color: var(--court-muted); max-width: 44em; margin: 0; }
+.links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.links a { display: grid; gap: 2px; padding: 14px 16px; border-radius: 10px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); color: var(--court-ink); text-decoration: none; min-width: 0; }
+.links a b { font-weight: 600; }
+.links a span { font-size: 13px; color: var(--court-muted); }
+.links a:hover { background: rgba(255,255,255,.14); }
+main.wrap { display: grid; gap: 52px; padding-block: 44px 72px; }
+section { display: grid; gap: 14px; min-width: 0; }
+h2 { font: 700 30px/1.15 var(--num); margin: 0; letter-spacing: .01em; text-wrap: balance; }
+h2 small { font: 500 14px var(--mono); color: var(--muted); margin-left: 8px; letter-spacing: 0; }
+h3 { font: 600 17px/1.4 var(--sans); margin: 8px 0 0; }
+p { margin: 0; max-width: 46em; }
+ul, ol { margin: 0; padding-left: 1.3em; } li { margin: 4px 0; max-width: 46em; }
+a { color: var(--accent); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.est { font: 500 11px var(--mono); color: var(--est); background: var(--est-soft); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.muted { color: var(--muted); }
+.scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; min-width: 680px; font-size: 14.5px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 500; color: var(--muted); font-size: 13px; background: var(--ground); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tfoot td { font-weight: 600; background: var(--ground); }
+.decisions { display: grid; gap: 12px; counter-reset: d; }
+.decision { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; display: grid; gap: 6px; }
+.decision h3 { margin: 0; }
+.decision .rec { font-size: 14.5px; }
+.decision .rec b { color: var(--accent); }
+.chip { font: 600 12px/1 var(--sans); padding: 4px 8px; border-radius: 999px; white-space: nowrap; display: inline-block; }
+.chip.bad { color: var(--bad); background: var(--bad-soft); }
+.chip.warn { color: var(--est); background: var(--est-soft); }
+.chip.ok { color: var(--ok); background: var(--ok-soft); }
+/* funnel: steps with counts; widths on a log scale, labelled as such */
+.funnel { display: grid; gap: 8px; background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 18px; }
+.step { display: grid; grid-template-columns: 9.5em 1fr 5.5em; gap: 12px; align-items: center; font-size: 14.5px; }
+.step .bar { height: 22px; border-radius: 4px; background: var(--accent); opacity: .85; }
+.step .v { font: 700 19px var(--num); text-align: right; font-variant-numeric: tabular-nums; }
+.step .rate { grid-column: 2 / 4; font-size: 13px; color: var(--muted); margin-top: -6px; }
+.callout { background: var(--bad-soft); color: var(--ink); border-radius: 10px; padding: 14px 16px; font-size: 15px; }
+.callout b { color: var(--bad); }
+@media (max-width: 680px) {
+  .links { grid-template-columns: 1fr; }
+  .step { grid-template-columns: 7em 1fr 4.5em; }
+}
+</style>
+
+<header class="band">
+  <div class="wrap">
+    <div class="meta">QI SI TECHNOLOGY · Serve Coach Live v0.9.2 · personal-user acquisition · 12 Nov 2026</div>
+    <h1>Personal users: who they are, how we get them</h1>
+    <p>A 90-day plan to win individual players, starting in Taiwan, under NT$50,000. Figures with a source are linked; my own estimates are marked <span class="est">Est.</span>. Nothing has been posted and nobody has been contacted.</p>
+    <div class="links">
+      <a href="https://claude.ai/artifact/MaakvpNKZrbDhjHxQ1jqNJ"><b>Landing page draft</b><span>zh-TW, price cards, sign-up you can read</span></a>
+      <a href="https://claude.ai/artifact/PgeBrXQ5Qf38qTGdSEiA3A"><b>Launch kit</b><span>5 video scripts, 3 posts, outreach, 15 creators</span></a>
+      <a href="https://github.com/HankYu11/Monti-Ping-Pong/tree/claude/biz-personal-users/experiments/04-live-coach/research/business/personal-users"><b>Files on GitHub</b><span>branch claude/biz-personal-users</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <h2>In short</h2>
+    <ul>
+      <li><b>The phone gate is the main problem in Taiwan.</b> iPhone is about 52% of phones in use and Samsung about 19% of sales; neither can run the app. Pixel, the one tested phone, is about 3% (<a href="https://gs.statcounter.com/os-market-share/mobile/taiwan">StatCounter, Oct 2026</a>; <a href="https://news.cnyes.com/news/id/6327054">鉅亨網, Dec 2025 retail share</a>). Only about <b>3–15% of Taiwanese players</b> can use the app today <span class="est">Est.</span>, depending on how many OPPO, vivo and Xiaomi models pass.</li>
+      <li><b>So the first 90 days are a test with real buyers, not a mass launch.</b> Collect phone models with every sign-up, let people try the app on our Pixel at clubs and tournaments, and sell pre-marked ball kits. Count iPhone sign-ups to decide when the iOS port starts.</li>
+      <li><b>First segment: serious adult club players. Second: parents of junior players.</b> Both already pay NT$700–1,200 for a private lesson (<a href="https://www.pro360.com.tw/price/table_tennis_lesson">Pro360</a>), and a year of the app costs about one lesson.</li>
+      <li><b>Prices:</b> free (30 serves a day), NT$149 a month or NT$1,190 a year (NT$890 early bird), and a NT$1,290 kit with 24 marked balls and a year of Player. Spinsight's player plan is about NT$2,100 a year plus its own balls.</li>
+      <li><b>Cheapest, fastest channels:</b> community posts, our own short videos, and the #發球幾轉 serve spin challenge. Next come small Taiwanese creators (3–55K subscribers), who reply and are affordable. English markets follow in weeks 8–13.</li>
+      <li><b>90-day target <span class="est">Est.</span>:</b> 800 sign-ups, 180 activated users, about 45 paying subscribers and 30 kits, for about NT$80,000 of revenue from a NT$49,000 budget. The bigger result is a phone list and an iOS waitlist count.</li>
+    </ul>
+  </section>
+
+  <section id="decisions">
+    <h2>Three decisions for you</h2>
+    <div class="decisions">
+      <div class="decision"><h3>1. When does the iOS port start?</h3><p>Half of Taiwan uses iPhones, and most Android sales are Samsung, which blocks 240 fps for apps. Android-only caps Taiwan at a few percent of players.</p><p class="rec"><b>My recommendation:</b> run the 90 days on Android, but set a trigger now. If iPhone sign-ups exceed 300, or exceed 40% of all sign-ups, by week 6, start iOS in week 7. Spinsight already measures only on iPhone 13 and newer, so iPhones 8–12 are open.</p></div>
+      <div class="decision"><h3>2. Do we sell pre-marked ball kits now, or wait for the JOOLA Spinball test (E2)?</h3><p>Marking balls is the second-biggest friction. A first batch of 40 kits costs about NT$13,000 and about 16 hours of marking (960 balls at a minute each) <span class="est">Est.</span>.</p><p class="rec"><b>My recommendation:</b> sell kits now, in a batch of 40, and run E2 in parallel. Kits also solve the payment problem before the Google Play listing, because a physical product with an activation code can be sold through our own shop.</p></div>
+      <div class="decision"><h3>3. Do you approve the prices, and a zh-TW voice before the public Taiwan launch?</h3><p>Prices: NT$149 a month, NT$1,190 a year, NT$890 early bird for the first 300, a NT$1,290 kit, and 30 free serves a day. The voice is English today. It speaks only short lines, so a zh-TW voice is a small change to the app.</p><p class="rec"><b>My recommendation:</b> approve the prices as a test that runs until week 13. Ask the app team for a zh-TW voice option before the Play listing in week 7. "幾轉" spoken in Mandarin is the product's best demo.</p></div>
+    </div>
+  </section>
+
+  <section id="segments">
+    <h2>1 · Who the personal users are</h2>
+    <p class="muted">Taiwan has no public count of table tennis players. The national sports survey reports badminton but not 桌球 (<a href="https://focustaiwan.tw/sports/202512220024">Focus Taiwan</a>), and the CTTTA publishes no player count. Sizes below are built from proxies and are estimates.</p>
+    <h3>Taiwan</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Segment</th><th>Size</th><th>Where they gather</th><th>What makes them pay</th><th>Fit</th></tr></thead>
+      <tbody>
+        <tr><td><b>Serious adult club and league players</b><br><span class="muted">play 2+ times a week, enter 縣市 and amateur ranking events</span></td><td>30,000–60,000 <span class="est">Est.</span><br><span class="muted">Proxies: 3,800 licensed coaches (<a href="https://www.cttta.org.tw/files/News/202622312380.pdf">CTTTA 2026</a>); Taichung's public sports centres logged 120,003 table tennis visits in H1 2025 (<a href="https://www.sport.taichung.gov.tw/media/1291159/114年統計通報-國民運動中心使用情形.pdf">Taichung</a>)</span></td><td>Club halls and 國民運動中心; FB groups for clubs, matches and second-hand gear; PTT <a href="https://www.ptt.cc/bbs/tabletennis/index.html">tabletennis</a> (about 20–25 posts a month <span class="est">Est.</span>); <a href="https://www.mobile01.com/topiclist.php?f=696">Mobile01 table tennis forum</a>; club LINE groups; tournaments</td><td>A number for a skill they can't see; beating clubmates; rubber choices. They already spend NT$2,000–4,000 on a rubber pair <span class="est">Est.</span>.</td><td><span class="chip ok">Primary</span></td></tr>
+        <tr><td><b>Parents of junior players</b><br><span class="muted">children in school teams, academies, 寒訓 winter camps</span></td><td>10,000–20,000 families <span class="est">Est.</span><br><span class="muted">Proxy: Pro360 lists 22,248 providers under children's table tennis (<a href="https://www.pro360.com.tw/topic/%E5%85%92%E7%AB%A5%E6%A1%8C%E7%90%83%E5%9F%B9%E9%A4%8A">Pro360</a>); school teams are capped at 12–13 players</span></td><td>Training halls during lessons; school-team and parent LINE groups; FB parent pages such as <a href="https://www.youtube.com/@HappyTableTennis">HTT 蘇爸</a>; 全中運 and junior ranking events</td><td>Proof that lessons work ("1,450 → 2,050 in four weeks"); practice at home between lessons; a gift. They already pay NT$700–1,200 per private lesson.</td><td><span class="chip ok">Second</span></td></tr>
+        <tr><td><b>YouTube and online learners</b><br><span class="muted">students and young adults, self-taught, university clubs</span></td><td>50,000–100,000 viewers <span class="est">Est.</span><br><span class="muted">Proxy: the largest Taiwanese channel, KCCC傑夫, has 54.9K subscribers</span></td><td>YouTube (KCCC傑夫, 旋風小智, 跟桌球國手學球); <a href="https://www.dcard.tw/f/table_tennis">Dcard table_tennis</a>; Threads and IG; campus clubs</td><td>Fun, challenge, a shareable number. Low willingness to pay and iPhone-heavy <span class="est">Est.</span>.</td><td><span class="chip warn">Reach, not revenue</span></td></tr>
+        <tr><td><b>Older recreational players (樂齡)</b></td><td>Largest group, at least 100,000 <span class="est">Est.</span><br><span class="muted">Senior events such as 富邦甲子盃 run every year (<a href="https://www.taiwannews.com.tw/zh/news/6348726">Taiwan News</a>); no counts published</span></td><td>Morning sessions at sports centres and community colleges (社大 class groups on FB); LINE groups</td><td>Rarely the buyer. They respond to a demo in person, not to an app.</td><td><span class="chip bad">Later</span></td></tr>
+      </tbody>
+    </table></div>
+    <h3>English-speaking markets (weeks 8–13)</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Segment</th><th>Size</th><th>Where they gather</th><th>What makes them pay</th></tr></thead>
+      <tbody>
+        <tr><td><b>Club and league adults</b> (UK, Australia, Canada)</td><td>England: about 350–389K regular adult players (<a href="https://www.tabletennisengland.co.uk/news/2025/active-lives-table-tennis-participation-on-the-rise/">TTE / Active Lives</a>). Australia: 200,543 participants in the 2022 census (<a href="https://www.ittf.com/2023/02/15/table-tennis-australia-registers-record-47-increase-participation-rates">ITTF</a>). Canada: about 9,000 members (undated).</td><td><a href="https://www.reddit.com/r/tabletennis/">r/tabletennis</a> (about 96K members, <a href="https://thehiveindex.com/communities/r-tabletennis/">Hive Index</a>); the <a href="https://www.tabletennisdaily.com/forum/">TTD forum</a>; club WhatsApp groups; league nights</td><td>Same as Taiwan, plus "Spinsight without the iPhone and the €2.70 balls". The Android share is higher in the UK and Australia than in Taiwan <span class="est">Est.</span>.</td></tr>
+        <tr><td><b>US players and junior parents</b></td><td>15.9M people played at least once in 2025 (<a href="https://athletechnews.com/us-tennis-participation-surges-amid-racket-sports-boom/">USTA / SFIA</a>); about 14K USATT members</td><td>Academies; USATT tournaments; Facebook groups</td><td>Junior parents pay US$50+/h for lessons, so willingness to pay is high.</td></tr>
+        <tr><td><b>YouTube learners</b></td><td>TableTennisDaily 518K, Tom Lodziak 285K, PingSunday 273K, PingSkills 263K subscribers (channel pages, 12 Nov 2026)</td><td>Those channels and their paid academies</td><td>Bundles with courses they already pay for: Tom's academy £49 a year, NOVI £139.99 a year, PingSkills US$270 a year.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="blockers">
+    <h2>2 · Blockers, and what the plan does about each</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Blocker</th><th>How big</th><th>What we do</th></tr></thead>
+      <tbody>
+        <tr><td><b>Phone gate</b>: only phones that give apps 240 fps</td><td><span class="chip bad">Severe in Taiwan</span><br>Pixel is about 3%, and Samsung, about 19%, is reportedly blocked.</td><td>
+          <ul><li>The landing page asks for the phone model and shows its status right away. Every sign-up adds to the phone census (experiment E1).</li>
+          <li>The app checks the phone on first launch, and nobody pays before it passes. (This is an app task; the checker may already exist.)</li>
+          <li>A public list of phones that pass, updated weekly, plus a "send us your model" call to action (video 5).</li>
+          <li>A demo Pixel at club nights and tournament booths, so people can try it without the right phone.</li>
+          <li>Test the top OPPO, vivo and Xiaomi models first. Buy or borrow 3 in week 1–2.</li></ul></td></tr>
+        <tr><td><b>No iOS</b></td><td><span class="chip bad">Severe</span><br>About 52% of phones in Taiwan</td><td>An iOS waitlist on the landing page; the decision 1 trigger; and we spend nothing on iPhone-heavy audiences (paid ads are limited to Android users).</td></tr>
+        <tr><td><b>Marking balls</b></td><td><span class="chip warn">Medium</span><br>About a minute a ball; a session needs 12–24 balls</td><td>Sell pre-marked balls: the NT$1,290 kit and a NT$390 refill of 24. Lend the 3D-printed marker at clubs. Video 4 explains why marking is needed. Run E2 (JOOLA Spinball) and drop marking if it passes.</td></tr>
+        <tr><td><b>English voice</b></td><td><span class="chip warn">Medium in Taiwan</span><br>Short lines only</td><td>Show big on-screen numbers in every video, caption the voice line, and print a 6-line zh-TW card in each kit. Ask for a zh-TW voice before the Play listing (decision 3).</td></tr>
+        <tr><td><b>Not on Google Play yet</b></td><td><span class="chip warn">Blocks payment</span></td><td>Sideloaded beta for the first testers. Open a Play developer account in week 1. An organisation account, which needs a D-U-N-S number, skips the 12-tester closed test that new personal accounts must run. Listing in week 7. Kits sold through our own shop until then.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="funnel">
+    <h2>3 · Funnel: see → try → pay <small>90-day targets, all Est.</small></h2>
+    <div class="funnel" role="img" aria-label="Funnel from 150,000 views to 45 paying subscribers, log scale">
+      <div class="step"><span>See (views, reach)</span><div class="bar" style="width:100%"></div><span class="v">150,000</span></div>
+      <div class="step"><span>Visit landing page</span><div class="bar" style="width:69%"></div><span class="v">4,000</span><span class="rate">2.7% of views. Short videos, posts, creators, challenge.</span></div>
+      <div class="step"><span>Sign up</span><div class="bar" style="width:56%"></div><span class="v">800</span><span class="rate">20% of visits (warm traffic; E3's bar is 10%)</span></div>
+      <div class="step"><span>Phone passes or tries on demo Pixel</span><div class="bar" style="width:46%"></div><span class="v">250</span><span class="rate">About 30% of sign-ups. Android users, plus booth and club tries.</span></div>
+      <div class="step"><span>Activated (10+ measured serves)</span><div class="bar" style="width:44%"></div><span class="v">180</span><span class="rate">72% of eligible. Kits and tester balls remove the marking step.</span></div>
+      <div class="step"><span>Active in week 4</span><div class="bar" style="width:38%"></div><span class="v">90</span><span class="rate">50% of activated</span></div>
+      <div class="step"><span>Pay (subscription)</span><div class="bar" style="width:32%"></div><span class="v">45</span><span class="rate">25% of activated, plus about 30 kits sold</span></div>
+    </div>
+    <p class="muted">Bar widths use a log scale, so the steps stay readable. Revenue <span class="est">Est.</span>: 45 subscribers at about NT$900 average first payment (early bird) is about NT$40,000; 30 kits at NT$1,290 is about NT$39,000. Kits carry a year of Player, so they also count as paying users. The other output: about 350 iPhone sign-ups for decision 1 <span class="est">Est.</span>.</p>
+  </section>
+
+  <section id="channels">
+    <h2>4 · Channels, ranked by cost and speed</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>Channel</th><th class="n">Cost (NT$)</th><th>Speed</th><th>Why, and the catch</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><b>Community posts</b>: PTT tabletennis, Dcard table_tennis, FB groups, Mobile01, Threads</td><td class="n">0</td><td>Days</td><td>Free and honest posts asking for testers (launch kit posts A–C). Most groups ban ads, so ask admins first. Post once per place, not spam.</td></tr>
+        <tr><td>2</td><td><b>Our own short videos</b>: Reels, Shorts, TikTok, Threads</td><td class="n">2,000</td><td>1–3 weeks</td><td>The number reveal is the hook (scripts 1–5). Two a week from week 2. A tripod and light are the only cost.</td></tr>
+        <tr><td>3</td><td><b>#發球幾轉 serve spin challenge</b> with a weekly leaderboard</td><td class="n">3,000 + kits</td><td>2–8 weeks</td><td>User videos spread the product, and the age groups pull in parents and seniors. Runs 7 Dec – 31 Jan. Entries need the serve and the phone screen in one take.</td></tr>
+        <tr><td>4</td><td><b>Taiwanese creator partnerships</b></td><td class="n">12,000</td><td>2–4 weeks lead</td><td>Small channels (3–55K) reply and cost little: about NT$4,000 a video for 3 of them <span class="est">Est.</span>, plus kits, plus a 30% code share. Taiwanese viewers rarely see local table tennis creators promote products, so trust is high <span class="est">Est.</span>.</td></tr>
+        <tr><td>5</td><td><b>Club demo nights and tournament booths</b></td><td class="n">5,500 + phone</td><td>Slow, high conversion</td><td>The only channel that gets past the phone gate: players try it on our Pixel. "打敗 2,760" spin radar. Two events plus 3–4 club nights.</td></tr>
+        <tr><td>6</td><td><b>Referrals</b></td><td class="n">0 cash</td><td>Slow until there are users</td><td>Each side gets a free month, or 6 extra marked balls with a kit. Coaches get a 30% share on students who pay.</td></tr>
+        <tr><td>7</td><td><b>Google Play listing</b> (zh-TW and English)</td><td class="n">800</td><td>Weeks 6–7</td><td>Needed for subscriptions. Organic search volume is low, so the listing exists to convert traffic, not to bring it. Screenshots show the RPM readout.</td></tr>
+        <tr><td>8</td><td><b>English community and creators</b>: r/tabletennis, TTD forum, Craig Bryant, Tom Lodziak, PingSunday</td><td class="n">0 (code share)</td><td>Weeks 8–13</td><td>The higher Android share helps. Spinsight is already known there, so lead with "no iPhone needed, no €2.70 balls".</td></tr>
+        <tr><td>9</td><td><b>Paid social</b> (Meta/IG, Android-only targeting)</td><td class="n">4,000</td><td>Immediate</td><td>A test only: boost the two best organic videos to measure the cost per sign-up. No more until the phone gate eases.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="calendar">
+    <h2>5 · 90-day calendar <small>23 Nov 2026 – 21 Feb 2027</small></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Week</th><th>Starts</th><th>Main work</th><th>Checkpoint</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>23 Nov</td><td>Put the landing page on a real domain with a real form store; open the Play developer account (organisation); buy balls and mark the first 20 kits; borrow or buy 3 test phones (OPPO, vivo, Xiaomi); film videos 1, 4 and 5.</td><td>Page live; phone list started</td></tr>
+        <tr><td>2</td><td>30 Nov</td><td>Post A on PTT and Mobile01; post C on Dcard and Threads; publish videos 1 and 5; send outreach to 5 Taiwanese creators (KCCC傑夫, 旋風小智, 跟桌球國手學球, HTT, 桌球教練技研所); ship tester kits.</td><td>20 testers</td></tr>
+        <tr><td>3</td><td>7 Dec</td><td><b>Challenge starts</b> (post B, with 2–3 FB group admins); video 4; first club demo night in Taipei.</td><td>200 sign-ups</td></tr>
+        <tr><td>4</td><td>14 Dec</td><td>First creator video goes live; first weekly leaderboard; tester calls (accuracy, setup time).</td><td>First creator code used</td></tr>
+        <tr><td>5</td><td>21 Dec</td><td>Publish the accuracy video (app against slow-motion hand counts); kit pre-orders open as a year-end gift; video 2.</td><td>10 kit orders</td></tr>
+        <tr><td>6</td><td>28 Dec</td><td>Play closed or internal testing; paywall check; <b>iOS trigger check</b> (decision 1).</td><td>iPhone count vs trigger</td></tr>
+        <tr><td>7</td><td>4 Jan</td><td><b>Public Play listing</b>, zh-TW voice if approved; early-bird price live; referrals on.</td><td>First paid subscriptions</td></tr>
+        <tr><td>8</td><td>11 Jan</td><td>English start: r/tabletennis post, TTD forum thread, outreach to Craig Bryant, Tom Lodziak and PingSunday; second creator video in Taiwan.</td><td>100 English sign-ups</td></tr>
+        <tr><td>9</td><td>18 Jan</td><td>Tournament booth 1 (a weekend open or ranking event); video 3 for parents as winter break starts.</td><td>Booth tries ≥ 60</td></tr>
+        <tr><td>10</td><td>25 Jan</td><td>Visit winter training camps (寒訓) or booth 2; <b>challenge closes 31 Jan</b>.</td><td>Challenge entries ≥ 80</td></tr>
+        <tr><td>11</td><td>1 Feb</td><td>Winners' video; Lunar New Year gift kits (New Year's Eve is 5 Feb); third creator video.</td><td>Kits sold ≥ 30 total</td></tr>
+        <tr><td>12</td><td>8 Feb</td><td>Holiday week, so keep it quiet: answer support and clean the data.</td><td>—</td></tr>
+        <tr><td>13</td><td>15 Feb</td><td>Review against the funnel targets; decide on iOS, kits and the next 90 days.</td><td>Go / change / stop</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="budget">
+    <h2>6 · Budget for the first 90 days</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Item</th><th>Detail</th><th class="n">NT$</th></tr></thead>
+      <tbody>
+        <tr><td>Marked-ball kits, first batch</td><td>960 training balls at about NT$10 each (<a href="https://www.momoshop.com.tw/TP/TP0004447/goodsDetail/TP00044470002917">SUZ 3-star, 50 for NT$499</a>), paint pens, filament, boxes and printed cards. Most of it comes back as kit sales.</td><td class="n">13,000</td></tr>
+        <tr><td>Creator fees</td><td>3 Taiwanese creators at about NT$4,000 a video <span class="est">Est.</span>, plus kits from stock; the 30% code share is paid from revenue</td><td class="n">12,000</td></tr>
+        <tr><td>Demo and loan phone</td><td>A used Pixel (7a or 8) <span class="est">Est.</span>, for booths, clubs and creators without a passing phone</td><td class="n">7,000</td></tr>
+        <tr><td>Booths and club nights</td><td>Two event fees (NT$0–2,000 each <span class="est">Est.</span>), a banner, flyers with a QR code</td><td class="n">5,500</td></tr>
+        <tr><td>Paid social test</td><td>Two videos boosted, Android-only targeting</td><td class="n">4,000</td></tr>
+        <tr><td>Challenge prizes</td><td>Gear vouchers for 3 overall winners; group winners get kits from stock</td><td class="n">3,000</td></tr>
+        <tr><td>Video gear</td><td>Phone tripod with clamp and a small LED light</td><td class="n">2,000</td></tr>
+        <tr><td>Shipping</td><td>20 tester kits by convenience-store delivery at about NT$60 each</td><td class="n">1,200</td></tr>
+        <tr><td>Domain and form tool</td><td>For the public landing page</td><td class="n">1,000</td></tr>
+        <tr><td>Google Play developer account</td><td>US$25, one time</td><td class="n">800</td></tr>
+      </tbody>
+      <tfoot><tr><td>Total</td><td>NT$500 under the NT$50,000 cap. Kit sales of about NT$39,000 <span class="est">Est.</span> refill it.</td><td class="n">49,500</td></tr></tfoot>
+    </table></div>
+  </section>
+
+  <section id="pricing">
+    <h2>7 · Prices for individuals</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Plan</th><th>Price</th><th>What it includes</th><th>Why this price</th></tr></thead>
+      <tbody>
+        <tr><td><b>Free</b></td><td>NT$0</td><td>30 serves a day with the full spoken result and scale; last session only</td><td>The "wow" moment, and enough to trust the accuracy. Same as the earlier business model.</td></tr>
+        <tr><td><b>Player monthly</b></td><td>NT$149</td><td>Unlimited serves, history, trends, drills, report export</td><td>Under the price of one small-group lesson (NT$350–550).</td></tr>
+        <tr><td><b>Player yearly</b></td><td>NT$1,190 (NT$890 early bird for the first 300)</td><td>Same</td><td>About one private lesson (NT$700–1,200) for a year. Close to the €39 (about NT$1,365) in the business model, adjusted down for Taiwan <span class="est">Est.</span>.</td></tr>
+        <tr><td><b>Serve practice kit</b></td><td>NT$1,290</td><td>24 pre-marked balls, a year of Player, a zh-TW setup card; refill of 24 balls NT$390</td><td>Unit cost about NT$350 <span class="est">Est.</span> (balls NT$240, marking time, box). Pays for itself next to the yearly plan and removes the marking step.</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Against Spinsight and other apps <span class="muted" style="font-weight:400">(converted at €1 ≈ NT$35, £1 ≈ NT$41, US$1 ≈ NT$32 <span class="est">Est.</span>)</span></h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Product</th><th>What it is</th><th class="n">Price</th><th class="n">≈ NT$ a year</th></tr></thead>
+      <tbody>
+        <tr><td><b>Serve Coach Live, Player</b></td><td>Serve spin, offline, Android</td><td class="n">NT$1,190/yr</td><td class="n">1,190</td></tr>
+        <tr><td>Spinsight Player Pro (<a href="https://www.spinsight.com/">spinsight.com</a>)</td><td>Spin measurement on iPhone 13+, online, its own balls (an Android app is listed; how far it measures there is unclear)</td><td class="n">€60/yr or €10/mo</td><td class="n">2,100</td></tr>
+        <tr><td>Spinsight balls and kits (<a href="https://spinsight.com/shop/">shop</a>)</td><td>24 balls €65; Player starter kit €95 (24 balls, 4 months)</td><td class="n">€65 / €95</td><td class="n">2,275 / 3,325</td></tr>
+        <tr><td>Tom's TT Academy (<a href="https://tomsttacademy.com">site</a>)</td><td>Video courses</td><td class="n">£49/yr</td><td class="n">2,000</td></tr>
+        <tr><td>TTD NOVI Pro (<a href="https://ttnovi.com/">site</a>)</td><td>Courses plus 3 coach reviews a month</td><td class="n">£139.99/yr</td><td class="n">5,740</td></tr>
+        <tr><td>PingSkills Premium (<a href="https://www.pingskills.com/choose-plan">site</a>)</td><td>Coaching videos and programs</td><td class="n">US$270/yr</td><td class="n">8,640</td></tr>
+        <tr><td>SwingVision Pro (tennis, <a href="https://apps.apple.com/us/app/swingvision-tennis-pickleball/id989461317">App Store</a>)</td><td>Video analysis, the closest analogue in another sport</td><td class="n">US$179.99/yr</td><td class="n">5,760</td></tr>
+        <tr><td>Private lesson in Taiwan (<a href="https://www.pro360.com.tw/price/table_tennis_lesson">Pro360</a>)</td><td>One-to-one, about 60 minutes</td><td class="n">NT$700–1,200</td><td class="n">per lesson</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted">Payment path: Google Play Billing for subscriptions (15% fee). The kit is a physical product sold through our own shop or Shopee, with an activation code. Check Google Play's policy on codes bought outside the app before launch.</p>
+  </section>
+
+  <section id="metrics">
+    <h2>8 · Metrics to watch every week</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Stage</th><th>Metric</th><th>Week-13 target <span class="est">Est.</span></th><th>If it misses</th></tr></thead>
+      <tbody>
+        <tr><td>See</td><td>Views per channel; landing visits; visits per post or video</td><td>4,000 visits</td><td>Change hooks; lean on creators</td></tr>
+        <tr><td>Sign up</td><td>Sign-up rate; mix by segment and source; cost per sign-up by channel</td><td>20%; under NT$60 per sign-up</td><td>Rewrite the hero; cut the weakest channel</td></tr>
+        <tr><td>Phone</td><td>Share of sign-ups that pass, are on iPhone, on Samsung or untested; the passing-models list</td><td>≥ 30% pass or try</td><td>Decision 1 (iOS) comes forward</td></tr>
+        <tr><td>Try</td><td>Activation (10+ serves); setup time; unreadable-serve rate</td><td>≥ 70%; setup &lt; 5 min; unreadable &lt; 15%</td><td>Fix setup guidance; more kits</td></tr>
+        <tr><td>Keep</td><td>Serves per active user per week; week-1 and week-4 retention</td><td>≥ 60 serves a week; W4 ≥ 50%</td><td>Drills, weekly challenge prompts</td></tr>
+        <tr><td>Pay</td><td>Free → paid; kit orders; refunds; creator-code sales</td><td>25% of activated; 30 kits</td><td>Test the price or the free-tier limit</td></tr>
+        <tr><td>Spread</td><td>Challenge entries; referrals sent and used; creator replies</td><td>80 entries; 3 creator videos</td><td>Bigger prizes; more outreach</td></tr>
+        <tr><td>Trust</td><td>Accuracy complaints; support tickets per 100 users</td><td>Falling week on week</td><td>Publish more validation</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="sources">
+    <h2>Sources and notes</h2>
+    <ul class="muted" style="font-size:14.5px">
+      <li>Phones: <a href="https://gs.statcounter.com/os-market-share/mobile/taiwan">StatCounter Taiwan mobile OS</a> (iOS 51.6% in Oct 2026; 57–60% mid-2026); <a href="https://news.cnyes.com/news/id/6327054">鉅亨網</a> (Dec 2025 retail: Apple 50.0%, Samsung 19.2%, OPPO 9.6%, vivo 8.6%, Google 3%); <a href="https://uanalyze.com.tw/articles/9244534338">uanalyze</a>.</li>
+      <li>Taiwan participation: <a href="https://focustaiwan.tw/sports/202512220024">Focus Taiwan</a> and <a href="https://www.cna.com.tw/news/aspt/202212290282.aspx">CNA</a> on the national sports survey; <a href="https://www.sport.taichung.gov.tw/media/1291159/114年統計通報-國民運動中心使用情形.pdf">Taichung sports centre usage, H1 2025</a>; <a href="https://www.cttta.org.tw/files/News/202622312380.pdf">CTTTA 2026 coach plan</a>.</li>
+      <li>Communities: <a href="https://www.ptt.cc/bbs/tabletennis/index.html">PTT tabletennis</a>; <a href="https://www.dcard.tw/f/table_tennis">Dcard table_tennis</a>; <a href="https://www.mobile01.com/topiclist.php?f=696">Mobile01</a>. Facebook group and LINE OpenChat member counts could not be checked (both block automated access). The founder should list the 5 largest groups by hand in week 1.</li>
+      <li>Creators: YouTube channel pages, checked 12 Nov 2026; see the launch kit.</li>
+      <li>Competitor prices: <a href="https://www.spinsight.com/">Spinsight</a>, <a href="https://spinsight.com/shop/">Spinsight shop</a>, and the earlier <code>business_model.md</code> and <code>spinsight_deep_dive.md</code>.</li>
+      <li>Lunar New Year 2027 falls on 6 February. School winter-break dates are approximate <span class="est">Est.</span>.</li>
+      <li>Not found: a 桌球 figure in the national survey, CTTTA player counts, senior player counts.</li>
+    </ul>
+  </section>
+</main>

@@ -71,7 +71,47 @@ same columns for both and the sampling bias is common-mode and cancels. That is 
 measurement, so it is being measured on the rendered clips before it is built — stride 1, 4, 8,
 16, 32, against the whole-crop reading.
 
+## What the experiments said
+
+**The windowed read still agrees.** The format was validated at 0.9.5 and the engine has changed
+since. Re-run on 13 rendered clips: 13 of 13 within 0.5 rev/s of the whole crop, drift 0.00 on
+seven and 0.05 on six. The signed gyro drifts at most 0.46 rev/s and `gyroDirKnown` agrees on all
+13. Bytes 7–18× smaller, median 12×.
+
+**The stride is free, and the correction is not optional.** The first run of this tested nothing:
+spinsim renders no flicker, so `rowBright` is 1 everywhere and no stride can fail. Rolling-shutter
+bands were injected instead — 100 Hz light at 240 fps — applied identically before both reads,
+with a control that left the correction out altogether:
+
+| flicker | strides 1, 4, 8, 16, 32 | no correction at all |
+|---|---|---|
+| 10% | max drift 0.05, 13/13 clear | max 0.05, 13/13 clear |
+| 25% | max drift 0.05, 13/13 clear | max 26.15, 11/13 clear |
+| 25% + a wall gradient | max drift 0.05, 13/13 clear | max 66.25, 11/13 clear |
+
+So the correction earns its place — leaving it out wrecks two clips in three — and subsampling it
+costs nothing up to every 32nd column. The common-mode argument holds.
+
+**The limit of that test, which matters.** Synthetic flicker is perfectly uniform along a row,
+which is exactly the assumption the stride rests on, so this cannot contradict it. A real row has
+a player moving across part of it, and a mean over sampled columns is pulled by wherever the body
+falls while the full-row mean is pulled differently. The guard is to take the **median** of the
+sampled columns rather than the mean, which ignores a body covering a minority of them. That is
+what `Windows.rowLevel` now does, at every 16th column. It is untested on real footage: the first
+session with windows should log stride 1 beside stride 16.
+
+**End to end through the real writer and reader.** The desktop runner cut two rendered serves both
+ways and `cap.mjs --pair` measured each: 30.05 against 30.00, and 45.05 against 45.05 — drift 0.05
+and 0.00 rev/s, at 20× and 21× fewer bytes (24.3 MB → 1.2 MB). That is Kotlin's `Windows.write`
+and the engine's own reader, not a simulation of them.
+
+**What the window buys the engine is small, and that is fine.** Measuring the same pixels both
+ways: whole crop median 671 ms, windowed 604 ms, a ratio of 1.13×. These crops are 9–24 MB where
+real ones are 24–786 MB, so it is a floor. The engine was never the prize. The prize is the phone
+not cutting, writing and serving the whole crop, and no desktop test can measure that.
+
 ## Order of work
+
 
 1. **Measure.** One session at home; read `answerMs`, `writeMs`, `fetchMs`, `engineSeconds` per
    serve. No code.

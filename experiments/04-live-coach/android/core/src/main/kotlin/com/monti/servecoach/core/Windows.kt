@@ -102,28 +102,44 @@ object Windows {
         return bg
     }
 
-    /** how bright each row of a frame is against the background: one number a row */
-    fun rowBright(frame: ByteArray, bgRowMean: DoubleArray, rect: IntArray): FloatArray {
-        val w = rect[2]; val h = rect[3]
-        val out = FloatArray(h)
-        for (y in 0 until h) {
-            var s = 0L
-            val o = y * w
-            for (x in 0 until w) s += (frame[o + x].toInt() and 255)
-            out[y] = (s.toDouble() / w / bgRowMean[y]).toFloat()
-        }
-        return out
-    }
+    /** every 16th column: see rowLevel for why that is free, and why it is worth taking */
+    const val ROW_STRIDE = 16
 
-    fun rowMeans(frame: ByteArray, rect: IntArray): DoubleArray {
+    /**
+     * How bright a row is, from a sample of its columns, as a median rather than a mean.
+     *
+     * The stride is where most of a windowed capture's remaining cost goes. This is the one part
+     * that still reads the whole crop -- about 14 million pixels a serve at full width -- and
+     * measurement says every 16th column reads the same as every one: over 13 rendered clips with
+     * rolling-shutter flicker injected at 10% and 25%, strides of 1, 4, 8, 16 and 32 all landed
+     * within 0.05 rev/s of the whole-crop reading. The reason they can is that rowBright is a
+     * RATIO to the background's level, so sampling the same columns on both sides makes the bias
+     * common-mode and it cancels. Leaving the correction out entirely is not free: at 25% flicker
+     * that wrecked 2 of the 13.
+     *
+     * The median rather than the mean is a guard those clips could not test. Their flicker is
+     * uniform along a row, which is the very assumption the stride rests on; a real row has a
+     * player moving across part of it, and a mean over sampled columns is pulled by wherever the
+     * body falls. A median ignores a body covering a minority of the sample. Untested on real
+     * footage: the first session with windows should log stride 1 beside stride 16.
+     */
+    fun rowLevel(frame: ByteArray, rect: IntArray, stride: Int = ROW_STRIDE): DoubleArray {
         val w = rect[2]; val h = rect[3]
+        val buf = IntArray((w + stride - 1) / stride)
         return DoubleArray(h) { y ->
-            var s = 0L
             val o = y * w
-            for (x in 0 until w) s += (frame[o + x].toInt() and 255)
-            val m = s.toDouble() / w
+            var k = 0; var x = 0
+            while (x < w) { buf[k++] = frame[o + x].toInt() and 255; x += stride }
+            java.util.Arrays.sort(buf, 0, k)
+            val m = buf[k / 2].toDouble()
             if (m < 1.0) 1.0 else m
         }
+    }
+
+    /** how bright each row of a frame is against the background: one number a row */
+    fun rowBright(frame: ByteArray, bgLevel: DoubleArray, rect: IntArray, stride: Int = ROW_STRIDE): FloatArray {
+        val lv = rowLevel(frame, rect, stride)
+        return FloatArray(rect[3]) { (lv[it] / bgLevel[it]).toFloat() }
     }
 
     /**
@@ -132,13 +148,16 @@ object Windows {
      * no window and reads as background alone.
      */
     fun write(file: File, cap: Capture, tracks: List<List<FloatArray>>, extra: String = "",
-              radii: Double = DEFAULT_RADII): Int {
+              radii: Double = DEFAULT_RADII, bg: ByteArray? = null): Int {
         val side = boxFor(tracks, radii)
         val n = cap.frames.size
         val rect = cap.rect
         val at = offsets(tracks, rect, n, side)
-        val bg = background(cap.frames, cap.frameBytes)
-        val bgRow = rowMeans(bg, rect)
+        // the background can come from outside: on the phone, from frames taken BEFORE the serve,
+        // where the scene is the same (a tripod, a static room), the ball is not crossing it, and
+        // the work sits off the path between the serve and the answer
+        val back = bg ?: background(cap.frames, cap.frameBytes)
+        val bgLevel = rowLevel(back, rect)
         val wins = StringBuilder("[")
         for (i in 0 until n) {
             if (i > 0) wins.append(',')
@@ -148,8 +167,8 @@ object Windows {
         val head = cap.header(""","winW":$side,"winH":$side,"windows":$wins""" + extra).toByteArray()
         DataOutputStream(FileOutputStream(file).buffered(1 shl 20)).use { out ->
             out.writeInt(head.size); out.write(head)
-            out.write(bg)
-            for (i in 0 until n) for (v in rowBright(cap.frames[i], bgRow, rect)) out.writeInt(java.lang.Float.floatToIntBits(v))
+            out.write(back)
+            for (i in 0 until n) for (v in rowBright(cap.frames[i], bgLevel, rect)) out.writeInt(java.lang.Float.floatToIntBits(v))
             for (i in 0 until n) at[i]?.let { out.write(cut(cap.frames[i], rect, it, side)) }
         }
         return side

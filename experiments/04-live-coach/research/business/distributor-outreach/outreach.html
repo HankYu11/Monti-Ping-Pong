@@ -1,0 +1,535 @@
+<title>台灣經銷商聯絡清單</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a working sheet. Summary + ranked table, then dated contact plan, then one letter block per target with copy buttons. */
+:root{
+  --bg:#f4f6f8; --surface:#ffffff; --fg:#14202b; --muted:#566573; --line:#d6dde4;
+  --table:#1f4f86;           /* ITTF table blue */
+  --rubber:#c42a2a;          /* red rubber */
+  --ok:#1d7a4c; --warn:#a86700; --soft:#e8eef5;
+  --sans:"Noto Sans TC",system-ui,-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0e141a; --surface:#151d25; --fg:#e4eaf0; --muted:#97a6b4; --line:#26323d;
+  --table:#7fb0ea; --rubber:#ff7a6e; --ok:#5fd09a; --warn:#f0b54a; --soft:#1b2833; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e141a; --surface:#151d25; --fg:#e4eaf0; --muted:#97a6b4; --line:#26323d;
+  --table:#7fb0ea; --rubber:#ff7a6e; --ok:#5fd09a; --warn:#f0b54a; --soft:#1b2833; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.65;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+.wrap{max-width:1080px;margin:0 auto;display:grid;gap:40px}
+a{color:var(--table)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--rubber);outline-offset:2px}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.3}
+h1{font-size:1.9rem;font-weight:900}
+h2{font-size:1.3rem;font-weight:900;display:flex;gap:10px;align-items:baseline}
+h2 small{font:500 .78rem var(--mono);color:var(--muted);letter-spacing:.04em}
+h3{font-size:1.1rem;font-weight:700}
+p{margin:0;max-width:72ch}
+.eyebrow{font:500 .75rem var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--rubber)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+section{display:grid;gap:16px;min-width:0}
+
+/* header */
+header{display:grid;gap:12px}
+.links{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:.92rem}
+.note{background:var(--soft);border-left:3px solid var(--warn);padding:10px 14px;border-radius:0 6px 6px 0;font-size:.92rem;max-width:80ch}
+
+/* ranked table */
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:860px;font-size:.9rem}
+th,td{padding:10px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+th{font:500 .72rem var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--soft)}
+tr:last-child td{border-bottom:0}
+td.rank{font:500 1.05rem var(--mono);color:var(--table);width:36px}
+td .name{font-weight:700}
+.addr{font-family:var(--mono);font-size:.85rem;word-break:break-all}
+.chip{display:inline-block;font:500 .7rem var(--mono);letter-spacing:.04em;padding:1px 7px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.c-ok{color:var(--ok)} .c-warn{color:var(--warn)} .c-no{color:var(--rubber)}
+.fit{color:var(--rubber);letter-spacing:2px;white-space:nowrap}
+
+/* plan */
+.plan{display:grid;gap:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.step{display:grid;grid-template-columns:120px 1fr auto;gap:14px;padding:12px 14px;border-bottom:1px solid var(--line);align-items:start}
+.step:last-child{border-bottom:0}
+.step .date{font:500 .9rem var(--mono);color:var(--table)}
+.step .date span{display:block;font-size:.72rem;color:var(--muted)}
+.step ul{margin:0;padding-left:1.1em}
+.step.done{opacity:.55}
+.tick{display:flex;gap:6px;align-items:center;font-size:.8rem;color:var(--muted);white-space:nowrap}
+@media (max-width:620px){.step{grid-template-columns:1fr}.tick{justify-content:flex-start}}
+
+/* letters */
+.jump{display:flex;flex-wrap:wrap;gap:6px}
+.jump a{font-size:.85rem;text-decoration:none;padding:3px 10px;border:1px solid var(--line);border-radius:99px;background:var(--surface);color:var(--fg)}
+.jump a:hover{border-color:var(--table)}
+.target{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;display:grid;gap:16px;scroll-margin-top:16px}
+.thead{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:baseline;justify-content:space-between}
+.why{font-size:.92rem;color:var(--muted);max-width:80ch}
+.to{display:grid;gap:6px;font-size:.88rem}
+.to div{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
+.to b{font-weight:500;color:var(--muted);min-width:5.5em}
+.msgs{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px}
+@media (max-width:820px){.msgs{grid-template-columns:minmax(0,1fr)}}
+.msg{display:grid;gap:8px;min-width:0;align-content:start}
+.msg .bar{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.msg .lbl{font:500 .72rem var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:var(--sans);font-size:.9rem;line-height:1.7;
+  background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:14px;max-height:520px;overflow:auto}
+button.copy{font:500 .78rem var(--sans);padding:4px 12px;border-radius:6px;border:1px solid var(--table);background:transparent;color:var(--table);cursor:pointer}
+button.copy:hover{background:var(--table);color:var(--surface)}
+button.copy.done{border-color:var(--ok);color:var(--ok);background:transparent}
+button.mini{padding:1px 8px;font-size:.72rem}
+.src{font-size:.85rem}
+.src li{margin-block:2px}
+footer{font-size:.85rem;color:var(--muted);display:grid;gap:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">奇斯科技 QI SI TECHNOLOGY · Serve Coach Live · 2026-11-12</span>
+  <h1>台灣經銷商聯絡清單</h1>
+  <p>12 個對象依合適度排序，附上可直接寄出的信件、LINE／Facebook 短訊、來源連結與追蹤日期。所有 Email 都是在列出的網頁上親眼看到的；沒有公開 Email 的對象，只列表單、電話或 LINE。</p>
+  <div class="links">
+    <a href="https://claude.ai/artifact/3tcsqfdx3nkEZovdFj4hQU">台灣經銷合作提案（pitch page）</a>
+    <a href="https://claude.ai/artifact/AFaXQNUBPGA8FacucgqeiH">60 秒介紹影片</a>
+    <a href="https://qisi.handyla.co/">qisi.handyla.co</a>
+    <span class="mono">寄件人：support@handyla.co</span>
+  </div>
+  <p class="note"><b>寄出前：</b>提案頁和影片頁目前是私人連結，收件人打不開。請先在兩個頁面的 Share 選單開放「知道連結的人可檢視」。信末的「[姓名／職稱]」請換成您的署名。12 個月台灣獨家只能給一家，所以同一時間只與一家談獨家條款。</p>
+</header>
+
+<section id="ranking">
+  <h2>排序清單 <small>RANKED TARGETS</small></h2>
+  <div class="tablebox">
+  <table>
+    <thead><tr><th>#</th><th>對象</th><th>代理品牌</th><th>為何合適</th><th>聯絡方式</th><th>可信度</th><th>合適度</th></tr></thead>
+    <tbody>
+    <tr><td class="rank">1</td><td><span class="name">JOOLA 台灣</span><br>優拉台灣有限公司</td><td>JOOLA（品牌分公司）</td><td>JOOLA 自製雙色 Spinball 卻沒有配套 App；蝦皮通路</td><td><span class="addr">operations@joola.tw</span><br><a href="https://joola.tw/contact-us/">joola.tw/contact-us</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★★</td></tr>
+    <tr><td class="rank">2</td><td><span class="name">東暎體育 XGear 極棧</span><br>台南</td><td>Nittaku · Yasaka · DHS 紅雙喜</td><td>1984 年起的代理商，賣球給學校與球隊，DHS 三星球</td><td><span class="addr">xgeartw@gmail.com</span><br>LINE @cjt6563x · 06-3360131<br><a href="https://www.xgear.com.tw/contact.html">xgear.com.tw/contact</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★★</td></tr>
+    <tr><td class="rank">3</td><td><span class="name">生明貿易</span><br>SHEN MIN TRADING</td><td>Butterfly 蝴蝶</td><td>台灣最大品牌、林昀儒系列；1975 年老牌貿易商</td><td>只有表單＋電話 02-2652-1000<br><a href="https://1202132563120.web66.tw/">生明官網表單</a> · <a href="https://www.butterfly-global.com/shop/chinese_taipei/">Butterfly 官方據點</a></td><td><span class="chip c-warn">表單／電話</span></td><td class="fit">★★★</td></tr>
+    <tr><td class="rank">4</td><td><span class="name">CAAD 卡特運動用品館</span><br>新竹</td><td>TIBHAR 挺拔（自稱總代理）</td><td><b>自己印製雙色訓練球</b>（最低 2,400 顆），可直接印標記點，省去手工</td><td><span class="addr">caad@caad.com.tw</span><br>LINE caad520 · 0908-896-896<br><a href="http://www.caad.com.tw/">caad.com.tw</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★</td></tr>
+    <tr><td class="rank">5</td><td><span class="name">蛋牌 the egg</span><br>森欣實業，新竹新豐</td><td>自有品牌（台灣木材球拍）</td><td>2026 年 7 月 T 聯賽新竹開幕賽；台灣製球拍＋台灣 AI App 故事</td><td><span class="addr">info@eggdesign.com.tw</span><br>03-5689858 · <a href="https://www.facebook.com/theeggdesign886">FB</a><br><a href="https://taiwanwood.forest.gov.tw/zh-tw/vendor/3/">林業署廠商頁</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★</td></tr>
+    <tr><td class="rank">6</td><td><span class="name">銪福國際</span><br>Akkadi Pro Trading · 長城桌球</td><td>DONIC 多尼克</td><td>德國品牌總代理，台北南昌路門市＋蝦皮旗艦店</td><td><span class="addr">info@donic.com.tw</span><br>02-2368-6613<br><a href="https://tsga.org.tw/profiles/0995-%E9%8A%AA%E7%A6%8F%E5%9C%8B%E9%9A%9B%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8">體育用品公會資料</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★</td></tr>
+    <tr><td class="rank">7</td><td><span class="name">唐橋桌球專賣店</span><br>Maxwell Sports Trading，台北</td><td>andro（官方經銷商名單）· STIGA 經銷</td><td>自稱「台北市最大桌球專賣店」，有賣發球機；適合門市示範與試辦</td><td><span class="addr">info@tabletennis.com.tw</span><br>02-2518-2910<br><a href="https://www.andro.de/en/find-your-dealer">andro 經銷商名單</a> · <a href="https://15889.web66.tw/">唐橋官網表單</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★★</td></tr>
+    <tr><td class="rank">8</td><td><span class="name">賓樂達 Synerter</span><br>翔睿德股份有限公司</td><td>自有發球機</td><td>App 控制發球機賣進學校；可用我們的 App 實測發球機轉速</td><td><span class="addr">contact@synerter.com</span><br>02-8866-6008 · <a href="https://www.synerter.com/support/contactus">聯絡表單</a></td><td><span class="chip c-ok">Email 已確認</span>*</td><td class="fit">★★</td></tr>
+    <tr><td class="rank">9</td><td><span class="name">乒乓世界</span><br>STIGA 台灣總代理，新北中和</td><td>STIGA</td><td>19 家經銷門市；主打兒童桌球</td><td>無 Email · <a href="https://lin.ee/2GVUWi3">LINE</a> · <a href="https://www.facebook.com/STIGA.TAIWAN">FB</a> · 02-2243-6346<br><a href="https://www.stiga.com.tw/">stiga.com.tw</a></td><td><span class="chip c-warn">LINE／電話</span></td><td class="fit">★</td></tr>
+    <tr><td class="rank">10</td><td><span class="name">XIOM 總部</span><br>韓國</td><td>XIOM（台灣無代理）</td><td>官方經銷頁「Taiwan」是空白；台灣市場沒人負責</td><td><span class="addr">xiom@xiom.tt</span><br><a href="https://m.xiom.global/">m.xiom.global</a> · <a href="https://m.xiom.global/add/distributor/index.html">經銷頁</a></td><td><span class="chip c-ok">Email 已確認</span></td><td class="fit">★</td></tr>
+    <tr><td class="rank">11</td><td><span class="name">波爾桌球用品專賣店</span><br>新北中和</td><td>零售（Butterfly、Tibhar、XIOM、Donic 等）</td><td>露天約 2 萬則好評；試辦或零售通路</td><td>只有電話 (02) 3151-7171<br><a href="https://www.threads.com/@boll_tabletennis">Threads</a> · <a href="https://www.ruten.com.tw/store/boll31517171/list">露天賣場</a></td><td><span class="chip c-warn">電話</span></td><td class="fit">★</td></tr>
+    <tr><td class="rank">12</td><td><span class="name">登吉桌球 DANGE</span><br>高雄岡山</td><td>零售（Nittaku、Donic、JOOLA、TSP）</td><td>2008 年起的網購店，南部通路</td><td>只有電話 07-6218952<br><a href="https://www.stiga.com.tw/physical_store.php">STIGA 門市名單</a></td><td><span class="chip c-warn">電話</span></td><td class="fit">★</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted" style="font-size:.85rem">* Synerter 網站用 JavaScript 產生內容，Email 是從網站本身的程式碼頁尾讀到的，不是搜尋摘要。合適度是我的判斷 [估計]。各品牌的 HQ 聯絡方式見下方信件區。</p>
+</section>
+
+<section id="plan">
+  <h2>聯絡順序與追蹤日期 <small>CONTACT ORDER</small></h2>
+  <p class="muted">目標：12 月 11 日前選定試辦夥伴，2027 年 1 月開始 3 個月試辦，趕在春節（2027 年 2 月 6 日）前完成前 4 週。勾選狀態只存在您這台瀏覽器。</p>
+  <div class="plan" id="planList"></div>
+</section>
+
+<section id="letters">
+  <h2>信件與短訊 <small>LETTERS · COPY READY</small></h2>
+  <nav class="jump" id="jump" aria-label="跳到對象"></nav>
+  <div id="targets" style="display:grid;gap:20px"></div>
+</section>
+
+<section id="gaps">
+  <h2>沒找到的與待確認的 <small>GAPS</small></h2>
+  <ul class="src">
+    <li><b>Butterfly／生明貿易：</b>官網 Email 被遮成「s******@ms26.hinet.net」，所以不列出，只用表單和電話。</li>
+    <li><b>TIBHAR：</b>CAAD 自稱台灣總代理，蝦皮也有其他賣家這樣自稱；德國總部沒有公開經銷名單可以對照。總部聯絡：info@tibhar.de（<a href="https://tibhar.info/en/kontakt/">tibhar.info/en/kontakt</a>）。</li>
+    <li><b>andro：</b>andro 官網名單寫的是「經銷商」，不代表獨家代理。唐橋與 Maxwell Sports 的電話（02-2518-2910）和松江路 23 之 2 號地址相同，所以我判斷是同一家 [估計]。</li>
+    <li><b>DONIC：</b>「台灣總代理商銪福國際」出自 DONIC Taiwan FB 粉專的搜尋摘要；粉專本身需要登入才能看。donic.com.tw 開不了（503）。</li>
+    <li><b>DHS：</b>東暎官網寫 2015 年起代理 DHS，但沒寫「獨家」，市面上也有從中國進貨的平行輸入。</li>
+    <li><b>XIOM：</b>找不到台灣代理。韓國網站另有 cs@xiom.tt 和 KakaoTalk 合作窗口（<a href="https://www.xiom.co.kr">xiom.co.kr</a>）。</li>
+    <li><b>STIGA 總部：</b>stiga@stigasports.se 只處理瑞典零售業務（<a href="https://www.stigasports.com/en/legal/contact-us">來源</a>），台灣請找乒乓世界。</li>
+    <li><b>JOOLA Spinball：</b>joola.tw 和搜尋結果都沒有台灣販售紀錄。App 目前沒測過 Spinball 的橘色半球，信裡只提「一起測試」。</li>
+    <li><b>沒採用（只在搜尋摘要出現）：</b>波爾桌球與登吉桌球的 Gmail、JOOLA 台灣 FB 上的電話。寄信前請到對方頁面親自確認。</li>
+  </ul>
+</section>
+
+<footer>
+  <span>研究日期 2026-11-12。來源都附在連結裡；標記 [估計] 的是推論。這份頁面不會寄出任何東西。</span>
+  <span>原始檔：experiments/04-live-coach/research/business/distributor-outreach/outreach.html</span>
+</footer>
+</div>
+
+<script>
+const PITCH = "https://claude.ai/artifact/3tcsqfdx3nkEZovdFj4hQU";
+const VIDEO = "https://claude.ai/artifact/AFaXQNUBPGA8FacucgqeiH";
+
+const PRODUCT_ZH =
+`Serve Coach Live 是我們開發的 Android App：手機架在三腳架上以 240 fps 拍攝，每發一球，App 立刻用語音報出轉速（RPM）、旋轉種類與強度等級，並以世界級選手平均 2,760 RPM 作為參考線。
+・完全離線，不需要網路
+・不需要專用球：一般練習球塗上黑色半球，再點上紅、綠、藍三個點；用 3D 列印的標記杯和模板，一顆約一分鐘
+・目前只有 Android 版，語音播報為英文`;
+
+const MODEL_ZH =
+`合作方式很單純：我們提供 App，貴公司負責通路。
+・貴公司販售「轉速訓練組」：12–24 顆標記球、標記杯與模板、12 個月啟用碼，建議售價 NT$990–1,490
+・貴公司保有 30–50% 毛利；我們每組收取啟用碼費用 NT$300–500
+・先做 3 個月免費試辦，在 5 個教學場地實際使用
+・試辦順利，可簽 12 個月台灣獨家經銷，條件是最低銷量（例如 500 組）
+
+目前唯一的同類產品是德國的 Spinsight（ESN 旗下）：只支援 iPhone 13 以上、需要網路、要買專用球（每顆約 €2.70），在亞洲沒有經營。`;
+
+const LINKS_ZH = `合作提案：${PITCH}\n60 秒介紹影片：${VIDEO}`;
+
+const SIGN_ZH =
+`奇斯科技 QI SI TECHNOLOGY
+[姓名／職稱]
+support@handyla.co
+https://qisi.handyla.co`;
+
+const ASK_ZH = (extra) =>
+`想請問您是否方便給我們 30 分鐘，到貴公司（或視訊）現場示範：一支手機、幾顆球，當場量給您看。${extra || "下週或下下週任何平日都可以，看您方便。"}`;
+
+const zhLetter = (greet, open, extra) =>
+`${greet}
+
+${open}
+
+${PRODUCT_ZH}
+
+${MODEL_ZH}
+
+${LINKS_ZH}
+
+${ASK_ZH(extra)}
+
+謝謝您撥冗閱讀，期待您的回覆。
+
+${SIGN_ZH}`;
+
+const PRODUCT_EN =
+`Serve Coach Live is an Android app. A phone on a tripod films at 240 fps, and after every serve the app speaks the spin rate (RPM), the spin type and a strength band, with the world-class average of 2,760 RPM as a reference line.
+- Works fully offline.
+- No special balls: ordinary training balls get a black half plus a red, a green and a blue dot, using a 3D-printed marker cup and stencil (about one minute per ball).
+- Android only for now; the voice is in English.`;
+
+const MODEL_EN =
+`The model: we provide the app, the partner distributes.
+- The partner sells a "Spin Training Kit": 12-24 marked balls, the marker cup and stencil, and a 12-month activation code. Suggested retail NT$990-1,490 (about EUR 28-43).
+- The partner keeps a 30-50% margin; we charge NT$300-500 per activation code.
+- We start with a free 3-month pilot at 5 coaching sites.
+- After the pilot, 12 months of Taiwan exclusivity against a minimum volume (e.g. 500 kits).
+
+The only comparable product is Spinsight (Germany, part of ESN): iPhone 13+ only, needs internet, its own balls at about EUR 2.70 each, and no activity in Asia.`;
+
+const SIGN_EN =
+`QI SI TECHNOLOGY (奇斯科技), Taipei
+[Name / title]
+support@handyla.co
+https://qisi.handyla.co`;
+
+const T = [
+{
+  id:"joola", rank:1, name:"JOOLA 台灣（優拉台灣有限公司）",
+  why:"JOOLA 自己做雙色 Spinball 這種「看得見旋轉」的訓練球，但沒有能量轉速的 App。我們給 JOOLA 的訓練球一個量化的理由，台灣試辦也可以成為 JOOLA 總部的案例。",
+  to:[["Email","operations@joola.tw","https://joola.tw/contact-us/","joola.tw/contact-us"],
+      ["表單","https://joola.tw/contact-us/","https://joola.tw/contact-us/","同頁"],
+      ["IG","@joolataiwan","https://www.instagram.com/joolataiwan/","instagram.com/joolataiwan"],
+      ["蝦皮","joolataiwanofficial","https://shopee.tw/joolataiwanofficial","shopee.tw"]],
+  subject:"JOOLA 訓練球 × 發球轉速 App：台灣試辦合作邀請",
+  letter: zhLetter("JOOLA 台灣 團隊您好：",
+`我是奇斯科技的[姓名]。我們做了一個能「聽見」發球轉速的 App，第一個想到的合作對象就是 JOOLA。
+JOOLA 的 Spinball 讓球員看見旋轉，我們的 App 則把旋轉變成數字：每一球幾 RPM、什麼旋轉、強度在哪一級。JOOLA 目前沒有配套的 App，我們希望和 JOOLA 台灣一起推出一組「轉速訓練組」，讓 JOOLA 的訓練球多一個買的理由。
+（說明：App 目前讀的是黑色半球加三色點的標記球；Spinball 的橘色半球我們還沒有測過，希望能和貴公司一起測試。）`),
+  short:
+`JOOLA 台灣您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 Android App（240 fps、離線、語音報 RPM），想和 JOOLA 一起推出「轉速訓練組」，讓 JOOLA 訓練球有配套 App。先做 3 個月免費試辦。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘現場示範嗎？Email：support@handyla.co`,
+  en:{label:"JOOLA HQ（英文版）",
+    to:[["JOOLA Europe","kontakt@joola.de","https://www.joola.de/kontakt","joola.de/kontakt"],
+        ["JOOLA USA","info@joola.com","https://joola.com/pages/contact","joola.com/pages/contact"],
+        ["經銷詢問","表單＋(301) 816-3060","https://joola.com/pages/distributor","joola.com/pages/distributor"]],
+    when:"只在 JOOLA 台灣表示需要總部同意，或 11/23 仍無回覆時寄出。",
+    subject:"An app for JOOLA training balls: Taiwan pilot proposal",
+    letter:
+`Dear JOOLA team,
+
+We are QI SI TECHNOLOGY, a small product studio in Taipei. We have built an app that measures the spin of every serve, and we would like JOOLA to be the brand behind it in Taiwan.
+
+JOOLA's Spinball lets players see spin. Our app turns spin into a number: how many RPM, which spin, which strength band. JOOLA has no app for this today. We are proposing a JOOLA "Spin Training Kit" for Taiwan, sold through JOOLA Taiwan (優拉台灣有限公司), which we have contacted as well.
+(To be precise: the app currently reads balls with a black half and three coloured dots. We have not yet tested the orange half of the Spinball, and would like to test it with you.)
+
+${PRODUCT_EN}
+
+${MODEL_EN}
+
+Proposal (Chinese): ${PITCH}
+60-second video: ${VIDEO}
+
+Could we have 30 minutes for a live demo by video call? One phone, a few balls, measured in front of you.
+
+Best regards,
+
+${SIGN_EN}`}
+},
+{
+  id:"xgear", rank:2, name:"東暎體育 XGear 極棧（Nittaku · Yasaka · DHS）",
+  why:"40 年的代理商，已經把球賣進學校、球隊和教練手上。Nittaku 或 DHS 的「標記訓練球」可以掛貴公司品牌，加上 App，是球之外第一個數位商品。",
+  to:[["Email","xgeartw@gmail.com","https://www.xgear.com.tw/contact.html","xgear.com.tw/contact"],
+      ["LINE","@cjt6563x","https://www.xgear.com.tw/contact.html","同頁"],
+      ["電話","06-3360131","https://www.xgear.com.tw/contact.html","同頁"]],
+  subject:"Nittaku／DHS 訓練球 × 發球轉速 App：經銷合作邀請",
+  letter: zhLetter("東暎體育 您好：",
+`我是奇斯科技的[姓名]。貴公司從 1984 年起代理 Nittaku、Yasaka，2015 年再加入 DHS，學校、球隊和教練都買貴公司的球。我們想請您看一個能讓「球」多賣一層價值的東西。
+我們的 App 用手機量出每一球發球的轉速。它用的是一般練習球加上標記，所以「轉速訓練組」裡的球可以是 Nittaku 或 DHS 的球，由貴公司出貨、掛貴公司的品牌。對教練來說，這是第一次能用數字確認學生的發球有沒有進步。`),
+  short:
+`東暎體育您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 App（240 fps、離線、語音報 RPM），用一般練習球加標記就能量。想和貴公司推出 Nittaku／DHS 球的「轉速訓練組」，賣進學校與球隊，先免費試辦 3 個月。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘示範嗎？我們可以到台南。Email：support@handyla.co`
+},
+{
+  id:"shenmin", rank:3, name:"生明貿易（Butterfly 蝴蝶 台灣代理）",
+  why:"Butterfly 是台灣最多人用的品牌，生明從 1975 年經營到現在。沒有公開 Email，所以下面的信是寫給官網「產品詢價與合作洽詢」表單的版本，表單送出後隔天打電話確認。",
+  to:[["表單","產品詢價與合作洽詢","https://1202132563120.web66.tw/","生明官網"],
+      ["電話","02-2652-1000","https://www.butterfly-global.com/shop/chinese_taipei/","Butterfly 官方據點頁"],
+      ["地址","台北市南港區忠孝東路六段 81 巷 18 號 3 樓","https://1202132563120.web66.tw/","生明官網"]],
+  subject:"（表單主旨）發球轉速 App 經銷合作洽詢",
+  letter: zhLetter("生明貿易 您好：",
+`我是奇斯科技的[姓名]。Butterfly 的球拍和膠皮是台灣選手最常用的，林昀儒系列也很受歡迎。我們想請貴公司看一樣能幫球員「看見」膠皮效果的工具。
+我們的 App 用手機量出每一球發球的轉速。球員換了新膠皮、練了新發球，可以用數字確認轉速有沒有提升；這對推薦膠皮的門市和教練來說，是很直接的銷售工具。`,
+"我也會在送出表單後打電話給貴公司，確認收到。"),
+  short:
+`（電話開場）您好，我是奇斯科技 [姓名]，剛剛在貴公司網站的合作洽詢表單留言。我們做了一個用手機量發球轉速的 App，想找蝴蝶的代理商一起推出「轉速訓練組」，先免費試辦 3 個月。請問合作洽詢應該找哪一位？方便的話我們可以到南港做 30 分鐘示範。`
+},
+{
+  id:"caad", rank:4, name:"CAAD 卡特運動用品館（TIBHAR 挺拔）",
+  why:"CAAD 自己印製客製雙色訓練球。我們的標記球如果能在工廠直接印好黑色半球和三個色點，就不用每顆手工一分鐘，訓練組成本和品質都會更好。再加上 TIBHAR 的代理身分，CAAD 可以同時是供應商和通路。",
+  to:[["Email","caad@caad.com.tw","http://www.caad.com.tw/","caad.com.tw"],
+      ["LINE","caad520","http://www.caad.com.tw/","同頁"],
+      ["電話","0908-896-896","http://www.caad.com.tw/","同頁"],
+      ["TIBHAR 總部","info@tibhar.de","https://tibhar.info/en/kontakt/","tibhar.info/en/kontakt"]],
+  subject:"客製印刷訓練球 × 發球轉速 App：合作詢問",
+  letter: zhLetter("CAAD 卡特運動用品館 您好：",
+`我是奇斯科技的[姓名]。在貴公司網站看到你們做客製印刷的 ABS 40+ 雙色訓練球，也是 TIBHAR 的台灣總代理，所以想請教兩件事。
+第一，我們的 App 讀的是「黑色半球加紅、綠、藍三個點」的球，目前是手工標記。請問貴公司能不能直接印出這種球？若可以，想請您報價並提供樣品（我們會附上精確的圖面）。
+第二，如果貴公司有興趣，也歡迎把整個「轉速訓練組」放進 TIBHAR 的通路一起賣。`,
+"若方便，可以先用 LINE 約時間，我們帶手機和球到新竹。"),
+  short:
+`CAAD 您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 App，需要「黑色半球＋紅綠藍三點」的標記球。看到貴公司做客製印刷訓練球，想詢問能否直接印製、報價與樣品；也歡迎談 TIBHAR 通路一起賣訓練組。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘示範嗎？`
+},
+{
+  id:"egg", rank:5, name:"蛋牌 the egg（森欣實業）",
+  why:"蛋牌把 T 聯賽開幕賽帶到新竹，是很會做行銷的台灣品牌。「台灣木材球拍＋台灣團隊做的 AI 發球 App」是一個好講的故事，也能放進活動與球拍組合。",
+  to:[["Email","info@eggdesign.com.tw","https://taiwanwood.forest.gov.tw/zh-tw/vendor/3/","林業署台灣木材廠商頁"],
+      ["FB","theeggdesign886","https://www.facebook.com/theeggdesign886","官網「聯絡我們」連到這裡"],
+      ["電話","03-5689858","https://taiwanwood.forest.gov.tw/zh-tw/vendor/3/","同上"]],
+  subject:"台灣製球拍 × 台灣製發球轉速 App：合作邀請",
+  letter: zhLetter("蛋牌 the egg 團隊您好：",
+`我是奇斯科技的[姓名]。今年 7 月 T 聯賽在新竹開幕，蛋牌是幕後推手之一，讓人印象很深。我們是台北的小團隊，做了一個用手機量發球轉速的 App，很想和同樣「在台灣做」的蛋牌合作。
+我們想到的做法：在蛋牌的球拍組或活動中加入「轉速訓練組」，現場讓球員發球、聽到自己的轉速。台灣木材做的球拍，配上台灣團隊做的 AI App，這個故事很好說。`),
+  short:
+`蛋牌您好，我是奇斯科技 [姓名]。我們是台北團隊，做了一個用手機量發球轉速的 App（240 fps、離線、語音報 RPM）。想和蛋牌一起推出「台灣球拍＋台灣 AI App」的轉速訓練組，也能用在活動現場。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘到新竹示範嗎？Email：support@handyla.co`
+},
+{
+  id:"donic", rank:6, name:"銪福國際（DONIC 多尼克 台灣總代理）",
+  why:"DONIC 是德國品牌；德國市場已經有 Spinsight 在推轉速訓練，台灣還沒有。銪福可以搶先在台灣用 Android、離線、免專用球的版本補上這一塊。",
+  to:[["Email","info@donic.com.tw","https://tsga.org.tw/profiles/0995-%E9%8A%AA%E7%A6%8F%E5%9C%8B%E9%9A%9B%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8","體育用品公會會員資料"],
+      ["電話","02-2368-6613","https://tsga.org.tw/profiles/0995-%E9%8A%AA%E7%A6%8F%E5%9C%8B%E9%9A%9B%E6%9C%89%E9%99%90%E5%85%AC%E5%8F%B8","同上"],
+      ["FB","DONIC.Taiwan","https://www.facebook.com/DONIC.Taiwan/","粉專（需登入）"]],
+  subject:"德國已經在量發球轉速，台灣還沒有：DONIC 經銷合作邀請",
+  letter: zhLetter("銪福國際 您好：",
+`我是奇斯科技的[姓名]。DONIC 來自德國，而德國的教練和俱樂部這兩年已經開始用 Spinsight 量發球轉速。台灣目前還沒有人在賣這類工具。
+我們做的 Serve Coach Live 是更適合台灣的版本：用 Android 手機、不用網路、不用買專用球。我們希望 DONIC 台灣可以第一個把它帶進門市和球隊。`),
+  short:
+`銪福國際您好，我是奇斯科技 [姓名]。德國已有教練用 App 量發球轉速，台灣還沒有。我們做了 Android、離線、免專用球的版本，想和 DONIC 台灣推出「轉速訓練組」，先免費試辦 3 個月。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘到南昌路示範嗎？`
+},
+{
+  id:"tangqiao", rank:7, name:"唐橋桌球專賣店（Maxwell Sports，andro 經銷商）",
+  why:"台北最大的桌球專賣店之一，有賣發球機，客人會在店裡試打。門市是最好的示範點，也適合當 5 個試辦場地之一；唐橋比較像零售夥伴，不一定是獨家經銷。",
+  to:[["Email","info@tabletennis.com.tw","https://www.andro.de/en/find-your-dealer","andro 官方經銷商名單"],
+      ["電話","02-2518-2910（陳小姐）","https://15889.web66.tw/","唐橋官網"],
+      ["表單","產品詢價與合作洽詢","https://15889.web66.tw/","唐橋官網"]],
+  subject:"讓客人在店裡聽見自己的發球轉速：門市試辦邀請",
+  letter: zhLetter("唐橋桌球 您好：",
+`我是奇斯科技的[姓名]。唐橋是台北最大的桌球專賣店之一，客人常在店裡挑膠皮、看發球機。我們想邀請唐橋成為第一批試辦門市。
+做法很簡單：店裡放一支手機和一組標記球，客人發幾球，App 立刻用語音報出轉速。客人可以比較換膠皮前後的差別，也可以直接買「轉速訓練組」回家練。`,
+"我們也可以直接到店裡示範，大約 30 分鐘。"),
+  short:
+`唐橋您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 App，想邀請唐橋當第一批試辦門市：客人在店裡發球就聽到自己的轉速，也能買「轉速訓練組」回家練。3 個月免費。
+提案：${PITCH}
+影片：${VIDEO}
+方便讓我們到店裡示範 30 分鐘嗎？`
+},
+{
+  id:"synerter", rank:8, name:"賓樂達 Synerter（翔睿德）",
+  why:"賓樂達的發球機用 App 設定，賣進學校。我們的 App 可以實際量出發球機打出的轉速，讓「設定值」變成「實測值」，也能和發球機一起賣給學校。",
+  to:[["Email","contact@synerter.com","https://www.synerter.com/","synerter.com 頁尾（程式碼內）"],
+      ["表單","聯絡我們","https://www.synerter.com/support/contactus","synerter.com/support/contactus"],
+      ["電話","02-8866-6008","https://www.synerter.com/","同上"]],
+  subject:"實測發球機轉速 × 學校訓練組：合作邀請",
+  letter: zhLetter("賓樂達 團隊您好：",
+`我是奇斯科技的[姓名]。賓樂達的發球機用 App 控制，已經進到很多學校。我們做的 App 能量出每一顆球的實際轉速，所以想到兩個合作方向。
+第一，用我們的 App 實測發球機每個設定打出的轉速，讓教練知道「這一檔」到底是多少 RPM。
+第二，學校買發球機時，加購「轉速訓練組」，讓學生練完發球機也能量自己的發球。`),
+  short:
+`賓樂達您好，我是奇斯科技 [姓名]。我們做了一個用手機量轉速的 App（240 fps、離線）。想和賓樂達合作：實測發球機每個設定的真實 RPM，並和發球機一起賣「轉速訓練組」給學校。
+提案：${PITCH}
+影片：${VIDEO}
+方便約 30 分鐘示範嗎？`
+},
+{
+  id:"stiga", rank:9, name:"乒乓世界（STIGA 台灣總代理）",
+  why:"沒有公開 Email，只有 LINE、FB 和電話，所以只寫短訊。STIGA 主打兒童桌球，19 家經銷門市可以當示範點。",
+  to:[["LINE","lin.ee/2GVUWi3","https://lin.ee/2GVUWi3","stiga.com.tw 首頁"],
+      ["FB","STIGA.TAIWAN","https://www.facebook.com/STIGA.TAIWAN","stiga.com.tw 首頁"],
+      ["電話","02-2243-6346（平日 9–18 點）","https://www.stiga.com.tw/","stiga.com.tw"]],
+  subject:null, letter:null,
+  short:
+`乒乓世界／STIGA 台灣您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 App（240 fps、離線、語音報 RPM），用一般練習球加標記就能量。想和 STIGA 台灣談「轉速訓練組」，放在經銷門市和兒童課程裡，先免費試辦 3 個月。
+提案：${PITCH}
+影片：${VIDEO}
+請問合作洽詢可以找哪一位？方便約 30 分鐘示範嗎？Email：support@handyla.co`
+},
+{
+  id:"xiom", rank:10, name:"XIOM 總部（韓國，台灣沒有代理）",
+  why:"XIOM 官方經銷頁上「Taiwan」是空白。台灣的 XIOM 都是零售店自行進貨。這封英文信問 XIOM 是否想用訓練組打開台灣市場，或願意推薦台灣的進口商。",
+  to:[["Email","xiom@xiom.tt","https://m.xiom.global/","m.xiom.global 頁尾"],
+      ["經銷頁","Taiwan 為空白","https://m.xiom.global/add/distributor/index.html","m.xiom.global/add/distributor"]],
+  subject:null, letter:null,
+  short:
+`Hello XIOM team, this is QI SI TECHNOLOGY in Taipei. We built an Android app that measures the spin of every serve (240 fps, offline, spoken RPM). Your distributor page has no partner for Taiwan. Would XIOM like to open Taiwan with a "Spin Training Kit"? Proposal: ${PITCH} · Video: ${VIDEO} · support@handyla.co`,
+  en:{label:"XIOM HQ（英文版）",
+    to:[["XIOM global","xiom@xiom.tt","https://m.xiom.global/","m.xiom.global"],
+        ["XIOM Korea","cs@xiom.tt","https://www.xiom.co.kr","xiom.co.kr"]],
+    when:"第三波寄出；回覆率預期低 [估計]。",
+    subject:"Taiwan: a spin-measuring training kit for XIOM",
+    letter:
+`Dear XIOM team,
+
+We are QI SI TECHNOLOGY, a small product studio in Taipei. Your global distributor page lists Taiwan but names no partner, and in Taiwan XIOM is sold only by independent shops. We would like to suggest a way in.
+
+${PRODUCT_EN}
+
+${MODEL_EN}
+
+Two questions:
+1. Would XIOM like to work with us on a XIOM "Spin Training Kit" for Taiwan?
+2. If not, is there a Taiwan importer you would recommend we speak to?
+
+Proposal (Chinese): ${PITCH}
+60-second video: ${VIDEO}
+
+We would be glad to give a 30-minute live demo by video call.
+
+Best regards,
+
+${SIGN_EN}`}
+},
+{
+  id:"retail", rank:"11–12", name:"波爾桌球（新北中和）· 登吉桌球（高雄岡山）",
+  why:"兩家都只有電話是確認過的。用下面的電話開場；有興趣再請對方給 Email，寄上方唐橋那封信（把店名換掉）。",
+  to:[["波爾","(02) 3151-7171","https://www.threads.com/@boll_tabletennis","Threads"],
+      ["登吉","07-6218952","https://www.stiga.com.tw/physical_store.php","STIGA 門市名單"]],
+  subject:null, letter:null,
+  short:
+`（電話開場）您好，我是奇斯科技 [姓名]。我們做了一個用手機量發球轉速的 App，想邀請貴店當試辦門市：客人在店裡發球就能聽到自己的轉速，3 個月免費。方便給我一個 Email 或 LINE，讓我寄提案和 60 秒影片給您嗎？`
+}
+];
+
+const PLAN = [
+ {d:"2026-11-16",w:"週一",items:["JOOLA 台灣：Email","東暎 XGear：Email＋LINE 短訊"]},
+ {d:"2026-11-18",w:"週三",items:["生明（Butterfly）：官網表單；11/19 打電話確認","CAAD（TIBHAR）：Email＋LINE，詢問印球報價","蛋牌：Email＋FB 訊息"]},
+ {d:"2026-11-23",w:"週一",items:["第一次追蹤：JOOLA（IG 私訊）、東暎（打電話）","JOOLA 沒回覆，或回覆要總部同意 → 寄 JOOLA HQ 英文信"]},
+ {d:"2026-11-25",w:"週三",items:["第一次追蹤：生明、CAAD、蛋牌（電話／LINE）","第三波：DONIC 銪福、唐橋、賓樂達 Email；STIGA 乒乓世界 LINE"]},
+ {d:"2026-11-30",w:"週一",items:["第二次追蹤：JOOLA、東暎","XIOM 總部英文信","波爾、登吉：電話開場"]},
+ {d:"2026-12-02",w:"週三",items:["第二次追蹤：生明、CAAD、蛋牌","第一次追蹤：DONIC、唐橋、賓樂達、STIGA"]},
+ {d:"2026-12-07",w:"週一",items:["最後一次追蹤所有未回覆者","排定 12/7–12/11 的 30 分鐘示範"]},
+ {d:"2026-12-11",w:"週五",items:["選定 1 家獨家候選＋最多 5 個試辦場地","2027 年 1 月開始試辦"]}
+];
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+async function copyText(text, btn){
+  const label = btn.textContent;
+  try{ await navigator.clipboard.writeText(text); }
+  catch(e){
+    const pre = btn.closest(".msg")?.querySelector("pre");
+    if(pre){ const r=document.createRange(); r.selectNodeContents(pre); const s=getSelection(); s.removeAllRanges(); s.addRange(r); }
+    btn.textContent="已選取，請按 Ctrl/⌘+C"; setTimeout(()=>btn.textContent=label,2400); return;
+  }
+  btn.textContent="已複製"; btn.classList.add("done");
+  setTimeout(()=>{btn.textContent=label;btn.classList.remove("done")},1600);
+}
+
+const store = { get(k){try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}},
+                set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}} };
+
+const COPY = []; // index -> text
+function copyBtn(text, label, mini){ COPY.push(text); return `<button type="button" class="copy${mini?" mini":""}" data-i="${COPY.length-1}">${label||"複製"}</button>`; }
+
+function toRows(rows){
+  return rows.map(([k,v,url,src])=>{
+    const isAddr = /@/.test(v) && !/^@/.test(v) && !/\s/.test(v);
+    return `<div><b>${esc(k)}</b><span class="${isAddr?"addr":""}">${esc(v)}</span>${isAddr?copyBtn(v,"複製",true):""}<a class="muted" href="${url}">來源：${esc(src)}</a></div>`;
+  }).join("");
+}
+
+function msgBlock(label, text){
+  return `<div class="msg"><div class="bar"><span class="lbl">${label}</span>${copyBtn(text)}</div><pre>${esc(text)}</pre></div>`;
+}
+
+document.getElementById("jump").innerHTML = T.map(t=>`<a href="#t-${t.id}">${t.rank}. ${esc(t.name.split("（")[0])}</a>`).join("");
+
+document.getElementById("targets").innerHTML = T.map(t=>{
+  let main = "";
+  if(t.letter){
+    main += `<div class="msgs">${msgBlock("Email 全文", `主旨：${t.subject}\n\n${t.letter}`)}${msgBlock(t.id==="shenmin"||t.id==="retail"?"電話開場":"LINE／FB 短訊", t.short)}</div>`;
+  } else {
+    main += `<div class="msgs">${msgBlock(t.id==="retail"?"電話開場":(t.id==="xiom"?"短訊（英文）":"LINE／FB 短訊"), t.short)}</div>`;
+  }
+  let en = "";
+  if(t.en){
+    en = `<div class="target" style="background:var(--bg);padding:16px">
+      <div class="thead"><h3>${esc(t.en.label)}</h3><span class="muted" style="font-size:.85rem">${esc(t.en.when)}</span></div>
+      <div class="to">${toRows(t.en.to)}</div>
+      ${msgBlock("English email", `Subject: ${t.en.subject}\n\n${t.en.letter}`)}</div>`;
+  }
+  return `<article class="target" id="t-${t.id}">
+    <div class="thead"><h3><span class="mono" style="color:var(--table)">${t.rank}</span>　${esc(t.name)}</h3></div>
+    <p class="why"><b style="color:var(--fg)">對方的好處：</b>${esc(t.why)}</p>
+    <div class="to">${toRows(t.to)}</div>
+    ${main}${en}
+  </article>`;
+}).join("");
+
+const done = store.get("plan-done") || {};
+document.getElementById("planList").innerHTML = PLAN.map((p,i)=>
+  `<div class="step${done[p.d]?" done":""}" data-d="${p.d}">
+     <div class="date">${p.d.slice(5).replace("-","/")}<span>${p.w} · ${p.d.slice(0,4)}</span></div>
+     <ul>${p.items.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>
+     <label class="tick"><input type="checkbox" id="plan-${i}" ${done[p.d]?"checked":""}> 完成</label>
+   </div>`).join("");
+
+document.getElementById("planList").addEventListener("change",e=>{
+  const step=e.target.closest(".step"); if(!step) return;
+  done[step.dataset.d]=e.target.checked; step.classList.toggle("done",e.target.checked); store.set("plan-done",done);
+});
+document.addEventListener("click",e=>{
+  const b=e.target.closest("button.copy"); if(!b) return;
+  copyText(COPY[+b.dataset.i], b);
+});
+</script>

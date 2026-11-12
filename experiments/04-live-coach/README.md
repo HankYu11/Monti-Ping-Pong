@@ -795,6 +795,31 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.11.1: one median instead of three passes
+
+Windows worked. Four serves on a table at 0.11.0: **1.83, 2.08, 2.24 and 3.69 s**, median 2.16
+against the 6.18 that 0.10.7 measured, all four measured along their own track with no searches
+and no errors. Parsing the capture went from 1.4-2.0 s to **19-54 ms**, the engine from 1.0-2.5 s
+to 0.37-0.62, and cutting from 1.0-5.1 s to 0.26-0.76.
+
+What that left standing was the one stage windows added: building the file. It ran 433 to 1553 ms
+and scaled with the crop, because it took two per-pixel medians over the fifteen background frames
+— one raw, one after each had been corrected — with a sort at every pixel, and materialised
+fifteen corrected crops in between.
+
+The raw one is not needed at full size. It exists only to give each kept frame its row
+brightness, and that is read on the sampled columns alone, so the samples can be medianed instead
+of the crops: taking a column out before or after a median over frames is the same number, and
+it is sixteen times less of it. The corrected median then runs in one pass with the division
+inline, so nothing is materialised. Both medians quickselect rather than sort, since a median
+wants one place in the order and not the whole order.
+
+Three full-crop passes become one. Measured on two real captures: **946 ms to 531 and 1117 to
+636**, about 1.8x, and the files are byte for byte what they were — which is the point of saying
+the two are the same number rather than hoping.
+
+Decode is now the largest piece at 0.58 to 0.82 s, and only the GPU window ring takes that away.
+
 ## 0.11.0: the phone writes windows
 
 The capture stops being the whole crop. Each frame is reduced, as it comes off the chip, to a

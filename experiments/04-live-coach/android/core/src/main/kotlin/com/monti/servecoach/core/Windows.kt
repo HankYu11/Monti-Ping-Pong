@@ -88,6 +88,41 @@ object Windows {
         return out
     }
 
+    /**
+     * The middle value of the first [n], the same one a sort would leave at n/2, by quickselect:
+     * a median wants one place in the order, not the whole order. A windowed capture takes one
+     * per pixel of the crop over the frames the background is medianed from, and one per row of
+     * every frame, which is tens of millions of them.
+     */
+    fun medianOf(a: IntArray, n: Int): Int {
+        var lo = 0; var hi = n - 1; val k = n / 2
+        while (hi > lo) {
+            val piv = a[(lo + hi) ushr 1]
+            var i = lo; var j = hi
+            while (i <= j) {
+                while (a[i] < piv) i++
+                while (a[j] > piv) j--
+                if (i <= j) { val t = a[i]; a[i] = a[j]; a[j] = t; i++; j-- }
+            }
+            if (k <= j) hi = j else if (k >= i) lo = i else return a[k]
+        }
+        return a[k]
+    }
+    fun medianOf(a: DoubleArray, n: Int): Double {
+        var lo = 0; var hi = n - 1; val k = n / 2
+        while (hi > lo) {
+            val piv = a[(lo + hi) ushr 1]
+            var i = lo; var j = hi
+            while (i <= j) {
+                while (a[i] < piv) i++
+                while (a[j] > piv) j--
+                if (i <= j) { val t = a[i]; a[i] = a[j]; a[j] = t; i++; j-- }
+            }
+            if (k <= j) hi = j else if (k >= i) lo = i else return a[k]
+        }
+        return a[k]
+    }
+
     /** the background: what most frames show at each pixel, from a spread of up to [take] of them */
     fun background(frames: List<ByteArray>, frameBytes: Int, take: Int = BG_FRAMES): ByteArray {
         val n = frames.size
@@ -260,26 +295,42 @@ object Windows {
          */
         fun writeBody(out: DataOutputStream) {
             val frameBytes = w * h + 2 * (w / 2) * (h / 2)
-            val kept = bgWanted.mapNotNull { bgKept[it] }
+            val keptAt = bgWanted.filter { bgKept[it] != null }
+            val kept = keptAt.map { bgKept[it]!! }
             val back = given ?: if (kept.isEmpty()) ByteArray(frameBytes) else run {
-                val raw = background(kept, frameBytes, kept.size)
-                val rawRow = sampleRows(raw)
-                val flat = kept.map { f ->
-                    val rows = rowsAgainst(sampleRows(f), rawRow)
-                    val o = ByteArray(frameBytes)
-                    System.arraycopy(f, w * h, o, w * h, 2 * (w / 2) * (h / 2))   // chroma as it was
-                    for (y in 0 until h) {
-                        val r = rows[y]; val base = y * w
-                        for (x in 0 until w) {
-                            val v = ((f[base + x].toInt() and 255) / r).toInt()
-                            o[base + x] = (if (v > 255) 255 else if (v < 0) 0 else v).toByte()
-                        }
-                    }
-                    o
+                val m = kept.size
+                // The raw background exists only to give each kept frame its row brightness, and
+                // that is read on the sampled columns alone. So median the samples, not the
+                // crops: taking a column out before or after a median over frames is the same
+                // number, and it is `stride` times less of it -- on a 1448x660 crop, 0.9 M
+                // comparisons instead of 14 M.
+                val rawRow = ByteArray(h * cols)
+                val buf = IntArray(m)
+                for (p in 0 until h * cols) {
+                    for (k in 0 until m) buf[k] = rows[keptAt[k]][p].toInt() and 255
+                    rawRow[p] = medianOf(buf, m).toByte()
                 }
-                val lit = background(flat, frameBytes, flat.size)
-                System.arraycopy(raw, w * h, lit, w * h, 2 * (w / 2) * (h / 2))   // colour from the raw median
-                lit
+                // then the median of the frames once each has had its own row brightness divided
+                // out, in one pass: that is the background the engine compares a frame against
+                val lit = kept.indices.map { rowsAgainst(rows[keptAt[it]], rawRow) }
+                val out = ByteArray(frameBytes)
+                for (y in 0 until h) {
+                    val base = y * w
+                    for (x in 0 until w) {
+                        val p = base + x
+                        for (k in 0 until m) {
+                            val t = ((kept[k][p].toInt() and 255) / lit[k][y]).toInt()
+                            buf[k] = if (t > 255) 255 else if (t < 0) 0 else t
+                        }
+                        out[p] = medianOf(buf, m).toByte()
+                    }
+                }
+                // colour is never corrected, so its background is the median of the raw frames
+                for (p in w * h until frameBytes) {
+                    for (k in 0 until m) buf[k] = kept[k][p].toInt() and 255
+                    out[p] = medianOf(buf, m).toByte()
+                }
+                out
             }
             out.write(back)
             val bgRow = sampleRows(back)
@@ -296,8 +347,7 @@ object Windows {
                     val b = (bgSample[o + x].toInt() and 255).toDouble()
                     tmp[x] = (sample[o + x].toInt() and 255) / (if (b < 1.0) 1.0 else b)
                 }
-                java.util.Arrays.sort(tmp, 0, cols)
-                tmp[cols / 2].toFloat()
+                medianOf(tmp, cols).toFloat()
             }
         }
     }

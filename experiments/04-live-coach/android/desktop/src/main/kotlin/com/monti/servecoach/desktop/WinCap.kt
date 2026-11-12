@@ -67,13 +67,19 @@ fun main(argv: Array<String>) {
     // go, which is how the phone has to do it. The two should come out byte for byte the same.
     if (stream) {
         val b = Windows.Builder(cap.rect, cap.frames.size, tracks, radii)
+        val tAdd = System.nanoTime()
         for (f in cap.frames) b.add(f)
+        val addMs = (System.nanoTime() - tAdd) / 1_000_000
         val head = cap.header(b.headerExtra() + extra.toString(), b.count).toByteArray()
+        val tBody = System.nanoTime()
         java.io.DataOutputStream(File(args[1]).outputStream().buffered(1 shl 20)).use { o ->
             o.writeInt(head.size); o.write(head); b.writeBody(o)
         }
+        val bodyMs = (System.nanoTime() - tBody) / 1_000_000
         val f = File(args[1])
-        println("${f.name}: ${b.side}x${b.side} windows (streamed), ${f.length() / 1000} kB against ${src.length() / 1000} kB")
+        val px = cap.rect[2] * cap.rect[3]
+        println("${f.name}: ${b.side}x${b.side} windows, ${f.length() / 1000} kB against ${src.length() / 1000} kB | " +
+            "per frame $addMs ms, body $bodyMs ms (${"%.2f".format(bodyMs * 1000.0 / px)} us per crop pixel)")
         return
     }
     val out = File(args[1])

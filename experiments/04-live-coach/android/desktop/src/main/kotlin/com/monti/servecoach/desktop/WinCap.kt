@@ -27,12 +27,13 @@ fun main(argv: Array<String>) {
     // the whole capture. It is how the span was shown to matter: a capture holds the swing as
     // well as the flight, and a background medianed across the swing has the arm in it wherever
     // the arm went -- which is exactly where the ball goes next.
-    var bgFrom = -1; var bgTo = -1; var stream = false
+    var bgFrom = -1; var bgTo = -1; var stream = false; var span = 1.0
     val args = ArrayList<String>()
     var i = 0
     while (i < argv.size) {
         if (argv[i] == "--bg") { bgFrom = argv[i + 1].toInt(); bgTo = argv[i + 2].toInt(); i += 3 }
         else if (argv[i] == "--stream") { stream = true; i++ }
+        else if (argv[i] == "--span") { span = argv[i + 1].toDouble(); i += 2 }
         else args.add(argv[i++])
     }
     if (args.size < 2) { System.err.println("usage: WinCapKt [--bg first last] in.cap out.win.cap [radii]"); return }
@@ -66,7 +67,10 @@ fun main(argv: Array<String>) {
     // --stream builds the same file through Windows.Builder, one crop at a time and letting each
     // go, which is how the phone has to do it. The two should come out byte for byte the same.
     if (stream) {
-        val b = Windows.Builder(cap.rect, cap.frames.size, tracks, radii)
+        // --span takes the row-brightness sample over that fraction of each row, centred, instead
+        // of the whole of it. The live pass sees whole frames and not the serve's crop, so the
+        // sample it could take covers a different span; this says whether the span matters.
+        val b = Windows.Builder(cap.rect, cap.frames.size, tracks, radii, Windows.ROW_STRIDE, span)
         val tAdd = System.nanoTime()
         for (f in cap.frames) b.add(f)
         val addMs = (System.nanoTime() - tAdd) / 1_000_000

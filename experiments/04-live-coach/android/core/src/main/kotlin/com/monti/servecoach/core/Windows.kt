@@ -234,10 +234,14 @@ object Windows {
      * at the end is the one [rowBright] would have given.
      */
     class Builder(private val rect: IntArray, frames: Int, tracks: List<List<FloatArray>>,
-                  radii: Double = DEFAULT_RADII, private val stride: Int = ROW_STRIDE) {
+                  radii: Double = DEFAULT_RADII, private val stride: Int = ROW_STRIDE,
+                  /** the fraction of each row the brightness sample is taken over, centred */
+                  private val span: Double = 1.0) {
         val side = boxFor(tracks, radii)
         private val w = rect[2]; private val h = rect[3]
-        private val cols = (w + stride - 1) / stride
+        private val from = (w * (1 - span) / 2).toInt() and 1.inv()
+        private val wide = maxOf(stride, w - 2 * from)
+        private val cols = (wide + stride - 1) / stride
         private val at = offsets(tracks, rect, frames, side)
         /** the frames the background is medianed from: a spread of the ones a track covers */
         private val bgWanted: List<Int> = run {
@@ -266,8 +270,8 @@ object Windows {
         private fun sampleRows(crop: ByteArray): ByteArray {
             val out = ByteArray(h * cols)
             for (y in 0 until h) {
-                val o = y * w; var k = y * cols; var x = 0
-                while (x < w) { out[k++] = crop[o + x]; x += stride }
+                val o = y * w + from; var k = y * cols; var x = 0
+                while (x < wide) { out[k++] = crop[o + x]; x += stride }
             }
             return out
         }

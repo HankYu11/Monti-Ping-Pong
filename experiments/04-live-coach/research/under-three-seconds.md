@@ -210,6 +210,73 @@ A third thing was tested and was fine: the writer samples rows at every 16th col
 code's own comment flagged as untested on real footage. Strides of 2, 4, 8 and 16 on real serves
 move the reading by less than 0.1 rev/s. The estimator was the problem, not the stride.
 
+## The GPU window ring: what has been settled, and what has not
+
+The decode is the last large stage, 0.6 to 0.8 s of a two-second wait, and it exists only because
+the full-resolution pixels are thrown away while the serve happens and bought back from H.264
+afterwards. Cutting the ball's window as the frame goes past removes both the decode and the cut.
+Four things had to be true. Three are now measured.
+
+**The live pass has the room.** The graphics thread reports itself 55% busy of the 4.17 ms a
+frame gets at 240 a second, and its readback — 480x270 of RGBA every second frame — is 2.8 ms of
+that, which prices a readback at 5.5 us per KB. A 192 px window read back every frame is 144 KB,
+which takes the thread to about 74% busy *while a ball is up*, and that is a tenth of a session.
+Worth watching rather than assuming: the 0.10.5 session dropped 6.7% of its frames at 60% busy,
+where 0.11.0 dropped 0.2%.
+
+**A row sample taken over the whole frame is the same correction.** The live pass sees frames,
+not the serve's crop, so the row brightness it could measure spans 1920 columns where the
+capture's spans the crop's width. Over three real captures, taking the sample over the whole row,
+60% of it and 35% of it moves the reading by at most 0.03 rev/s and the gyro by 1.1. The
+correction does not care which columns it is read from, which is the same common-mode argument
+that made the stride free.
+
+**The window can be cut before anyone knows where the ball is.** It has to be: the tracker finds
+the ball in a readback that is two frames late and taken every second frame. `Predict` draws a
+straight line through the last three points that are old enough, and `PredictTest` scores it
+against every flight of the four recorded sessions — seventeen tracks, 618 points, real serves
+with the tracker's own noise and gaps:
+
+| | median | 90th | worst |
+|---|---|---|---|
+| two frames behind | 4.3 px | 11.4 | **45.4** |
+| four frames behind | 5.4 px | 14.8 | 97.3 |
+| six frames behind | 7.4 px | 18.9 | 149.2 |
+
+A 192 px window leaves 96 px round the 47 the measurement needs, so two frames behind has twice
+the margin it uses and four frames behind does not. **The lag is the thing to hold, not the window
+size**: keeping the readback prompt is cheaper than reading a bigger square every frame.
+
+Three things that look right and are not, each caught by that test rather than by argument:
+
+- *Fitting a curve.* A flight is a parabola, so a quadratic should beat a line. It is worse at
+  every lag, because over the handful of points in reach it fits the tracker's noise and not
+  gravity. Five points on a line are worse than three for the same reason: 102 px at worst
+  against 45.
+- *Trusting the first points of a track.* At the hit the ball merges with the bat and the blob
+  comes out two or three times too big. A line through those misses by 177 px. The engine throws
+  the same points away (`dropMerged`) and so must this.
+- *Taking the upper middle value as the ball's size.* With four points, two of them the paddle, a
+  median that leans high **is** the paddle, and the filter then keeps the paddle and throws the
+  ball away: 106 px. Leaning to the lower of the two middle values leans toward the ball, because
+  what spoils a young track makes blobs bigger and never smaller. That one change takes the worst
+  miss from 106 px to 45.
+
+A window is placed for 89% of tracked frames. The rest are the first few of each track, where
+there are not yet four points to draw a line through — and the engine skips the frames right after
+the hit anyway.
+
+**What is not settled is the pass itself.** Cropping on the chip, packing the window and the row
+sample into the one readback the tap already does, and ringing the result cannot be tried here:
+there is no phone, and no emulator can run this app. That part ships behind `windowRing`, off,
+with the frame counters to judge it by.
+
+### The one thing that does not change
+
+The background still wants whole frames, and the ring does not hold any. It keeps coming from the
+H.264 ring — but only the fifteen frames the median needs, which is 100 ms of decoding rather than
+the 600 to 800 ms of decoding all of them. The ring stays for that reason as well as as a fallback.
+
 ## What would break it, and the test that catches it
 
 **The background.** The engine's background is a per-pixel median across 15 frames precisely

@@ -11,7 +11,7 @@
     // the spin split, for the HUD's spin ball: lift is back (+) or top (-), curve bends right (+)
     // or left (-), gyro is signed and points away down the table when positive. marking says
     // whether the colour dots were read, which is what makes gyro's direction worth drawing.
-    lift: r.lift, curve: r.curve, gyro: r.gyro, marking: r.marking,
+    lift: r.lift, curve: r.curve, gyro: r.gyro, marking: r.marking, gyroDirKnown: !!r.gyroDirKnown,
     fit: r.fit, speed: r.flight && r.flight.launchSpeed, toward: r.flight && r.flight.towardCameraDeg,
     frames: r.nFrames, issues: (r.issues || []).map((i) => i.text), ballPx: r.ballRadiusPx ? 2 * r.ballRadiusPx : undefined,
   };

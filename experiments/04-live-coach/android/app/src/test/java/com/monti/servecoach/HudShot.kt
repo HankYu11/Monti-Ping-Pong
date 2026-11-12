@@ -40,11 +40,11 @@ class HudShot {
     @Test fun reading() {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(3, 1910, "backspin", "Strong backspin. Keep this contact.\nball 4.1 m/s · answer in 3.2 s",
-            Spin(lift = 29.9, curve = -3.1, gyro = 6.2, dots = true))
+            Spin(lift = 29.9, curve = -3.1, gyro = 6.2, dirKnown = true))
         s.noRead(4, "The ball turned only about 57% of a turn in this stretch, too little to tell the rate.")
         s.reading(5, 2770, "side-backspin (curves right)", "")
         s.reading(6, 2450, "backspin", "Strong backspin. Keep this contact.\nball 4.7 m/s · answer in 2.1 s",
-            Spin(lift = 38.6, curve = 8.4, gyro = -11.0, dots = true))
+            Spin(lift = 38.6, curve = 8.4, gyro = -11.0, dirKnown = true))
         paparazzi.snapshot(s.root)
     }
 
@@ -53,7 +53,7 @@ class HudShot {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(3, 3150, "topspin (curves left) + gyro",
             "Mostly gyro: it will look like a nothing ball and skid at the bounce.\nball 2.8 m/s · answer in 2.4 s",
-            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dots = true))
+            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = true))
         paparazzi.snapshot(s.root)
     }
 
@@ -62,16 +62,16 @@ class HudShot {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(12, 2560, "side-topspin (curves right) + gyro",
             "Read after the bounce, not off the bat.",
-            Spin(lift = -28.6, curve = 29.7, gyro = 11.4, dots = true, afterBounce = true))
+            Spin(lift = -28.6, curve = 29.7, gyro = 11.4, dirKnown = true, afterBounce = true))
         paparazzi.snapshot(s.root)
     }
 
-    /** the same serve off a half-marked ball: the ring stays, the chevrons go, and we say why */
+    /** filmed down the table, where a mirror could flip the drill: ring stays, chevrons go */
     @Test fun spinNoDots() {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(3, 3150, "topspin (curves left) + gyro",
             "Mostly gyro: it will look like a nothing ball and skid at the bounce.",
-            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dots = false))
+            Spin(lift = -21.3, curve = -12.2, gyro = 46.3, dirKnown = false))
         paparazzi.snapshot(s.root)
     }
 
@@ -79,7 +79,7 @@ class HudShot {
     @Test fun spinBackspin() {
         val s = screen(); s.running(true); s.state("Ready: serve")
         s.reading(7, 2700, "backspin", "Strong backspin. Keep this contact.",
-            Spin(lift = 45.0, curve = 0.0, gyro = 0.0, dots = true))
+            Spin(lift = 45.0, curve = 0.0, gyro = 0.0, dirKnown = true))
         paparazzi.snapshot(s.root)
     }
 

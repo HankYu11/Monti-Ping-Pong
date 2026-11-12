@@ -685,6 +685,44 @@ same stretch, so that is "not contradicted", not confirmed. Settling it needs a 
 server looking down the table, where the skid is left and right in the picture, and a handful of
 deliberate gyro serves both ways round with a dotted ball.
 
+## 0.9.9: the drill direction is shown whenever a mirror couldn't flip it
+
+0.9.7 drew the gyro's chevrons only on a colour-dot reading, and 0.9.7's own findings showed that
+meant never, in the field. The rule was stricter than the physics.
+
+The one thing the engine can get wrong about a half-marked ball is seeing it mirrored front to
+back (`mirrored()`). A mirror negates the spin axis's depth, so gyro -- the spin along the flight
+-- moves by `2*w_z*f_z`, and `f_z` is the sine of `towardCameraDeg`. **Filmed across the picture
+that term is nil: a mirror cannot touch the gyro's sign at all.** It is only a ball coming down
+the table at the camera whose direction a mirror can reverse.
+
+So the reading now carries `gyroDirKnown`, worked out per reading rather than from the marking:
+the dots settle it outright, and failing that the engine measures the same spin mirrored and asks
+whether the sign survived. The app draws the chevrons on that, not on `marking`.
+
+`web/test/gyrodir.mjs` holds it to that, over 36 spins at eight camera angles:
+
+| towardCameraDeg | worst gyro shift from a mirror | signs that flip | called known |
+|---|---|---|---|
+| 0 | 0.00 | 0 | 36 of 36 |
+| 10 | 15.02 | 0 | 36 of 36 |
+| 20 | 29.59 | 6 | 29 of 36 |
+| 60 | 74.91 | 18 | 18 of 36 |
+
+Side on, nothing moves and everything is shown. Down the table, half of them flip and the rule
+declines exactly those: **no spin whose sign a mirror would reverse is ever called known**, at any
+angle. The test takes no clips, because spinsim can only render a flight across the picture, so
+no synthetic clip can produce the case the rule exists for.
+
+The thirteen rendered clips, which are all side on, now read `dir known: yes` whether marked with
+dots or with the half alone, and all thirteen signs still match the truth. The one real
+measurement to hand -- a tossed ball re-staged by `test/toss.py` -- reads `gyroDirKnown: false`,
+because its view is 15 degrees off side-on and its gyro is only 5.4 rev/s, small enough for the
+mirror term to swamp. The rule is not a rubber stamp.
+
+**Still unproven, and unchanged by this:** which way a real ball actually skids. This widens when
+the direction is shown; it does not add evidence that the direction is right.
+
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and

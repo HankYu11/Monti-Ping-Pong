@@ -38,7 +38,7 @@ page.on('pageerror', (e) => console.log('page error:', e.message));
 await page.goto(`http://127.0.0.1:${srv.address().port}/`);
 await page.waitForFunction(() => window.SpinMeter && window.MP4Box);
 
-console.log(`${'clip'.padEnd(14)}${'true gyro'.padEnd(12)}${'measured'.padEnd(11)}${'rps'.padEnd(8)}marking  sign`);
+console.log(`${'clip'.padEnd(14)}${'true gyro'.padEnd(12)}${'measured'.padEnd(11)}${'rps'.padEnd(8)}${'marking'.padEnd(9)}${'toward'.padEnd(8)}${'dir known'.padEnd(11)}sign`);
 let bad = 0, seen = 0;
 for (const mp4 of files) {
   const name = path.basename(mp4, '.mp4');
@@ -56,6 +56,7 @@ for (const mp4 of files) {
         { captureFps: 240, serveDir: 'any', single: true, robust: true });
       const sv = (out.serves || [])[0] || out;
       return { rps: sv.rps, gyro: sv.gyro, marking: sv.marking, reliable: !!sv.reliable,
+               dirKnown: !!sv.gyroDirKnown, toward: sv.flight && sv.flight.towardCameraDeg,
                mirrored: !!sv.mirrored, error: sv.error || out.error || null };
     } catch (e) { return { error: String((e && e.message) || e) }; }
   }, { b64: bytes.toString('base64'), nm: path.basename(mp4) });
@@ -67,7 +68,8 @@ for (const mp4 of files) {
   const ok = Math.sign(r.gyro) === Math.sign(want);
   if (!ok) bad++;
   console.log(`${name.padEnd(14)}${want.toFixed(1).padEnd(12)}${r.gyro.toFixed(1).padEnd(11)}${r.rps.toFixed(1).padEnd(8)}` +
-    `${(r.marking || '?').padEnd(9)}${ok ? 'ok' : 'WRONG WAY'}${r.mirrored ? ' (mirrored)' : ''}${r.reliable ? '' : ' (low)'}`);
+    `${(r.marking || '?').padEnd(9)}${((r.toward ?? 0).toFixed(0) + '\u00b0').padEnd(8)}${(r.dirKnown ? 'yes' : 'no').padEnd(11)}` +
+    `${ok ? 'ok' : 'WRONG WAY'}${r.mirrored ? ' (mirrored)' : ''}${r.reliable ? '' : ' (low)'}`);
 }
 await browser.close(); srv.close();
 console.log(`\n${seen - bad}/${seen} drilled the way they were spun`);

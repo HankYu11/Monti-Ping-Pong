@@ -20,7 +20,12 @@ import kotlin.math.sqrt
 /**
  * A serve's spin split, in rev/s, exactly as the engine reports it: [lift] positive for backspin
  * and negative for topspin, [curve] positive for a ball that bends right, [gyro] signed, positive
- * when the spin points away down the table. [dots] is whether the colour dots were read.
+ * when the spin points away down the table. [dirKnown] is whether the gyro's DIRECTION can be
+ * trusted: the engine works it out per reading, and it is not the same question as whether the
+ * dots were read. The one thing it can get wrong about a half-marked ball is seeing it mirrored
+ * front to back, which negates the spin axis's depth and so moves gyro by 2*w_z*f_z. Filmed
+ * across the picture that term is nil and the direction is safe without any dots; filmed coming
+ * down the table it is the first thing to go, and then the drawing says nothing.
  *
  * [afterBounce] matters more than it looks. The three parts are measured against the ball's
  * direction of travel, and the bounce turns that direction: the ball arrives going down and
@@ -30,7 +35,7 @@ import kotlin.math.sqrt
  * camera's own frame — which the bounce does not turn — agree to 13 and 16 degrees. Nothing
  * mirrored; the frame moved. So the drawing has to say which stretch it is showing.
  */
-data class Spin(val lift: Double, val curve: Double, val gyro: Double, val dots: Boolean,
+data class Spin(val lift: Double, val curve: Double, val gyro: Double, val dirKnown: Boolean,
                 val afterBounce: Boolean = false)
 
 /**
@@ -157,9 +162,9 @@ internal object SpinMath {
  *  - the dashed ring is the gyro, the part turning about the line of flight. It moves the ball
  *    nowhere in the air and everything at the bounce. Its chevrons say which way round it goes.
  *
- * The chevrons only appear when the reading came from the colour dots. A half-marked ball cannot
- * tell front from back (engine.js, mirrored()), and with the front-to-back sign goes the answer to
- * which way the ball will skid, so it is better to say nothing than to point the wrong way.
+ * The chevrons appear only when the engine says the direction survives a front-to-back mirror
+ * (gyroDirKnown). Side on that is every reading, dots or no dots; down the table it is few, and
+ * then the ring is drawn bare rather than pointing the wrong way.
  */
 class SpinBall(ctx: Context) : View(ctx) {
     private val cyan = Hud.CYAN
@@ -182,14 +187,14 @@ class SpinBall(ctx: Context) : View(ctx) {
     /** how much slower than life the ball turns here: a 45 rev/s serve becomes about 0.8 a second */
     private val slow = 55.0
 
-    fun show(lift: Double, curve: Double, gyro: Double, dots: Boolean) = show(Spin(lift, curve, gyro, dots))
+    fun show(lift: Double, curve: Double, gyro: Double, dirKnown: Boolean) = show(Spin(lift, curve, gyro, dirKnown))
 
     fun show(spin: Spin) {
         val a = SpinMath.axisOf(spin)
         if (a == null) { clear(); return }
         axis = a
         rps = SpinMath.rateOf(spin)
-        gyroKnown = spin.dots
+        gyroKnown = spin.dirKnown
         lastNanos = 0L
         visibility = VISIBLE
         invalidate()

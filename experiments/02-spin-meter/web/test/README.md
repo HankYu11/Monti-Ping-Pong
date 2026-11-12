@@ -86,6 +86,19 @@ What none of this reaches is a real ball. A rendered dot is a clean disc of know
 painted one is ink on gloss under club light. These clips prove the arithmetic and the detector
 agree with each other, not that a hand-painted ball reads the same way.
 
+## gyrodir.mjs -- when the gyro's direction is worth showing
+
+`gyrosign.mjs` checks the sign is right. This checks when it can be *trusted*, which is a
+different question. A half-marked ball can be seen mirrored front to back; that negates the spin
+axis's depth, so gyro moves by `2*w_z*f_z`. Side on, `f_z` is nil and the mirror cannot touch the
+sign; down the table it can reverse it. `gyroDirKnown` on each reading is the engine's verdict,
+and this holds it to account over 36 spins at eight camera angles -- that at 0 degrees nothing
+moves, that far off side-on plenty flips so the rule isn't vacuous, and that a spin whose sign a
+mirror would reverse is never called known.
+
+It takes no clips on purpose: spinsim renders only flights across the picture, so every synthetic
+clip is side on and none of them can produce the case the rule is for.
+
 ## What these cannot tell you
 
 A rendered ball is sharper and more evenly lit than a real one, its background is plain, and

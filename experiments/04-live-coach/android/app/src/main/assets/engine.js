@@ -1782,6 +1782,15 @@
     const geo = flightGeometry(balls, fps, FW, hfov, [rx + ox - FW / 2, ry + oy - FH / 2], seg.hit != null ? seg.hit - seg.start : 0);
     const axis = matvec(geo.turn, r.axis);
     const c = spinComponents(r.rps, axis, geo.f);
+    // Which way the ball drills is worth drawing only when it survives the one thing the engine
+    // can get wrong about a half-marked ball: seeing it mirrored front to back (mirrored(), below).
+    // A mirror negates the axis's depth, so gyro moves by 2*w_z*f_z -- and f_z is the sine of
+    // towardCameraDeg. Filmed side on that term is nil, so the direction is as safe as the rest of
+    // the reading even without the dots; filmed down the table it is the first thing to go. This
+    // asks spinComponents rather than doing the arithmetic here, so the two can't drift apart.
+    const cMirror = spinComponents(r.rps, [axis[0], axis[1], -axis[2]], geo.f);
+    const gyroDirKnown = Math.abs(c.gyro) >= 1 &&
+      (r.method === "dots" || Math.sign(cMirror.gyro) === Math.sign(c.gyro));
     // Backspin lifts the ball, so it can't fall faster than gravity. When it seems to, the ball read
     // small (its shaded white side matched the wall) and so did every speed (synthetic test: up to
     // +10%, all fixed by this). Topspin pulls down too, so only backspin is checked; and only side-on
@@ -1799,7 +1808,7 @@
       // table, which is what decides whether the ball skids right or left off the bounce. The
       // sign is only real when the colour dots were read (marking: "dots"); a half-marked ball
       // cannot tell front from back, which is what mirrored() below is about.
-      gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt,
+      gyro: c.gyro, gyroDirKnown, lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
@@ -1848,9 +1857,11 @@
   // Colour dots show the turn directly, so a reading with them decides; without, neither is trusted.
   function mirrored(r) {                      // the same spin seen in a front-to-back mirror
     const axis = [r.axis[0], r.axis[1], -r.axis[2]], c = spinComponents(r.rps, axis, r.flight.dir);
+    const back = spinComponents(r.rps, [axis[0], axis[1], -axis[2]], r.flight.dir);
     Object.assign(r, { axis, spinType: spinLabel(r.rps, c), backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift),
       sidespin: Math.abs(c.curve), sideCurves: Math.abs(c.curve) >= 1 ? (c.curve > 0 ? "right" : "left") : "none",
-      gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true });
+      gyro: c.gyro, lift: c.lift, curve: c.curve, tilt: c.tilt, mirrored: true,
+      gyroDirKnown: Math.abs(c.gyro) >= 1 && (r.marking === "dots" || Math.sign(back.gyro) === Math.sign(c.gyro)) });
   }
   function mirrorCheck(readings) {
     const pad = readings.find((r) => r.phase === "paddle" && !r.error && r.reliable);

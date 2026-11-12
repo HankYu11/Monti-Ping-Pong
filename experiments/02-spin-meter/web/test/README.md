@@ -17,6 +17,7 @@ node test/guard.mjs      /tmp/clips/k_*.mp4 # what may be measured along a hande
 bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which way they drill
 node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
 
+python3 test/capsanity.py  Session_*/serve*.json                  # do the headers agree with themselves?
 python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
 node test/capcheck.mjs  serve01.json serve02.json ...             # does it still read what the phone read?
 node test/capcheck.mjs --ext .win.cap --split 4 serve01.json ... # ... and does the windowed cut of it?
@@ -120,6 +121,23 @@ rendered clips have no mains flicker, no motion blur, no player and no real mark
 
 `--rect X Y W H` cuts a different window out of the same clip. That is how the engine's cost was
 shown to scale with the area it is handed and with nothing else.
+
+## capsanity.py — the headers against themselves
+
+One second, no clips and no browser, on a session's `serve*.json`. It checks that the track in a
+capture's header lands inside that capture, and that the crop fits the frame on even pixels.
+
+It exists because nothing else could catch that class of fault. App 0.10.4 began trimming the
+capture to the tracked frames and went on numbering the track from the untrimmed start, so every
+track shipped shifted by however far the trim had moved it; the engine looked for the ball where
+the ball was not, measured what it found there, got nothing, and searched the whole crop instead.
+Session 20261112_215446 had 23% to 88% of each track outside its own capture and searched on 8 of
+10 serves, at about 9 s each. The two sessions before it: 0%, every serve, every track.
+
+The rebuild harness below is blind to it by construction. `capfromclip.py` finds a clip's offset
+by scoring the track's own predicted discs, so a shifted track is matched at a shifted offset and
+comes out looking perfect. The one thing it cannot see is the track being wrong relative to its
+capture, because it uses the track to place the capture.
 
 ## capcheck.mjs — real serves as a regression test
 

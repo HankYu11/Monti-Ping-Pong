@@ -795,6 +795,48 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.6: the track was pointing at the wrong frames
+
+0.10.5 made every serve slower, not faster. Ten serves on a table: every one of them searched the
+crop, and the wait ran 5.2 to 14.3 seconds, median 12.4. The readings were all correct, because
+the search is good at its job — it just costs about five seconds.
+
+The fault was mine and it was introduced in 0.10.4. The capture is now trimmed to the frames some
+track covers, which moves the frame the capture starts at. The track in the header counts its
+frames from that first frame — and it was still being numbered from the untrimmed start. So every
+track shipped shifted by however far the trim had moved things, up to 48 frames at 240 a second.
+The engine looked for the ball a fifth of a second from where it was, measured whatever was
+there, found nothing, and fell back to searching the crop.
+
+Measured: sessions before this had 0% of every track outside its own capture; this one had 23% to
+88% on eight of ten serves. The two it spared are the two short enough that no trimming happened.
+
+The 300 MB cap had carried the same fault since it was written, passing `serve.first` while
+having moved `first` itself. It fires rarely, so it had never shown. Trimming to the tracks fires
+on every serve, which is what brought it out.
+
+Fixed by telling the capture writer which frame the capture actually starts at. On the two serves
+rebuilt from their clips, measuring along the track gives 20.65 and 42.14 rev/s against the
+search's 20.55 and 42.11 — the same answers the phone reported — in 761 and 1153 ms against 3103
+and 3431.
+
+**What let it through.** The rebuild harness cannot see this class of fault, by construction:
+`test/capfromclip.py` finds a clip's offset by scoring the track's own predicted discs, so a
+shifted track is matched at a shifted offset and the rebuilt capture looks perfect. Every test
+that mattered ran on rebuilt captures, and the one thing they cannot test is the track being
+wrong relative to the capture, because they use the track to place the capture. The fix for that
+is `test/capsanity.py`: the headers checked against themselves, one second, no clips and no
+browser. It flags all eight and clears both earlier sessions.
+
+The report now also carries `trackSaid` and `trackUnclear`, which 0.10.5 recorded in the engine
+and then left out of the report — so a session can show what a track said before it was given up
+rather than leaving it to be worked out afterwards.
+
+**Still outstanding, and now the whole of it.** With the searches gone, what remains is the
+capture. Framed so the bounce is in view, these serves give crops of 1700x830 and up and captures
+of 200 to 300 MB, and cutting, writing and parsing those is 5 to 7 seconds. That is the cost the
+windowed capture was built for, and it is the next thing.
+
 ## 0.10.5: why the slow serves were slow
 
 Two serves of the table session were slow for two different reasons, and neither was the one

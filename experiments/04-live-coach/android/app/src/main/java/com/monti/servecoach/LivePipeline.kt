@@ -438,7 +438,7 @@ class LivePipeline(
         val id = ++captures
         onSpotted?.invoke(id)
         // the capture is written on its own thread, so the tracker keeps up
-        Thread({ writeCapture(id, serve, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
+        Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
     /** captures cut on the graphics chip (off after two failures) */
@@ -496,7 +496,20 @@ class LivePipeline(
     }
 
     /** the serve's frames, all of them, decoded again and cropped: a header (JSON) and the frames (one file) */
-    private fun writeCapture(id: Int, serve: ServeTracker.Serve, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int) {
+    /**
+     * [firstFrame] is the whole frame the capture starts at, which is NOT always
+     * serve.first * step: the span is trimmed to the tracks, and again if the crop is big
+     * enough that the frames would not fit in 300 MB. The track in the header counts its
+     * frames from the capture's first, so it has to be told which frame that is.
+     *
+     * 0.10.5 passed serve.first here and so shifted every track by however far the trimming
+     * had moved the start. The engine then looked for the ball up to 48 frames from where it
+     * was, measured what it found there, got nothing, and searched the crop instead: in
+     * session 20261112_215446 that happened on 8 of 10 serves and cost about 9 s each. The
+     * 300 MB trim had carried the same fault since it was written, but it fires rarely;
+     * trimming to the tracks fires on every serve, which is what brought it out.
+     */
+    private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int) {
         try {
             val t0 = SystemClock.elapsedRealtime()
             val frames = store.between(fromUs, toUs)
@@ -555,7 +568,7 @@ class LivePipeline(
                 lastCaptureBy = "copied out"
             }
             val c = cap ?: return
-            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), serve.first * step), n)
+            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame), n)
             writeHead(id, head)
             prog.finish()
             val writeMs = SystemClock.elapsedRealtime() - t0

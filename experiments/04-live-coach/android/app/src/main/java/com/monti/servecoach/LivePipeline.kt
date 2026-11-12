@@ -6,6 +6,8 @@ import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Quarter
 import com.monti.servecoach.core.ServeTracker
+import com.monti.servecoach.core.Windows
+import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.Callable
@@ -441,6 +443,11 @@ class LivePipeline(
         Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
+    /**
+     * Captures written as windows round the ball rather than the whole crop. Off falls back to
+     * the whole crop, which is what every version up to 0.10.7 wrote.
+     */
+    @Volatile var windowCaptures = true
     /** captures cut on the graphics chip (off after two failures) */
     @Volatile var gpuCaptures = true
     @Volatile var gpuFailures = 0; private set
@@ -526,21 +533,39 @@ class LivePipeline(
             val per = rect[2] * rect[3] + 2 * (rect[2] / 2) * (rect[3] / 2)
             val prog = Writing(per).also { writing[id] = it }
             val nGuess = frames.count { it.ptsUs in fromUs..toUs }
-            writeHead(id, Capture(w, h, rect, false, captureFps).header(""","id":$id,"partial":true""", nGuess))
+            // The crop is mostly empty table. A windowed capture keeps a window round the
+            // ball, one background frame and how bright each row was, which on these serves
+            // is a fiftieth of the bytes -- and cutting, writing, serving and parsing the
+            // crop was measured at about 25 ms a megabyte, seven of the nine seconds a
+            // 287 MB serve took. The tracks say where the windows go, so without one there
+            // is nothing to window and the whole crop is written as before.
+            val scale = w.toFloat() / (w / 4)
+            fun conv(t: List<FloatArray>) = t.map {
+                floatArrayOf((it[0] * step - firstFrame).toFloat(), it[1] * scale, it[2] * scale, it[3] * scale)
+            }
+            val tracks = (listOf(serve.track) + serve.near).map(::conv).filter { it.size >= 2 }
+            val builder = if (windowCaptures && tracks.isNotEmpty())
+                Windows.Builder(rect, nGuess + captureFps / 4, tracks) else null
+            writeHead(id, Capture(w, h, rect, false, captureFps).header(
+                ""","id":$id,"partial":true""" + (if (builder != null) ""","windowed":true""" else ""), nGuess))
             onCaptureStarted?.invoke(Capture.Info(id, nGuess, per, "", 0, fromUs, toUs))
             var cap: Capture? = null
             var n = 0
+            // where each crop goes: reduced into the windowed capture, or straight into the file
+            val out = if (builder == null) FrameCountingOut(bin, prog) else null
+            val sink: (ByteArray) -> Unit = if (builder != null) ({ builder.add(it) }) else ({ out!!.write(it) })
+            try {
             // on the graphics chip (CaptureGl), else the frames copied out by the processor
             if (assets != null && gpuCaptures) try {
                 val t1 = SystemClock.elapsedRealtime()
                 val reference = if (CaptureGl.calib == null) firstDecoded(frames, fmt, fromUs, toUs, rect, w, h) else null
                 val refMs = SystemClock.elapsedRealtime() - t1
-                val r = FrameCountingOut(bin, prog).use { out -> CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, out, reference?.let { it.first to it.second }) }
+                val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, sink, reference?.let { it.first to it.second })
                 if (r.frames > 0) {
                     cap = Capture(w, h, rect, reference?.third ?: r.fullRange, captureFps)
                     n = r.frames
                     // replaying a video (testing): the first 20 frames cut the old way too, compared
-                    if (blocking) { chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20); onNote("capture #$id, chip against copied: $chipCheck") }
+                    if (blocking && builder == null) { chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20); onNote("capture #$id, chip against copied: $chipCheck") }
                     lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
                     onNote("capture #$id: $lastCaptureBy")
                 }
@@ -553,22 +578,29 @@ class LivePipeline(
                 val dec = FrameDecoder(fmt)
                 // (a failure on the chip part way: the engine may have read its first frames already;
                 // the processor's copy of the rest matches them to within the fit, rms under 3)
-                FrameCountingOut(bin, prog).use { out ->
-                    var k = 0
-                    while (!dec.ended) {
-                        if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
-                        dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
-                            if (pts < fromUs || pts > toUs) return@drain
-                            val c = cap ?: Capture(w, h, rect, dec.fullRange, captureFps).also { cap = it }
-                            out.write(c.crop(yuv)); n++
-                        }
+                var k = 0
+                while (!dec.ended) {
+                    if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
+                    dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
+                        if (pts < fromUs || pts > toUs) return@drain
+                        val c = cap ?: Capture(w, h, rect, dec.fullRange, captureFps).also { cap = it }
+                        sink(c.crop(yuv)); n++
                     }
                 }
                 dec.release()
                 lastCaptureBy = "copied out"
             }
+            } finally { out?.close() }
             val c = cap ?: return
-            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
+            // the windowed capture is written in one go at the end: the background is a
+            // median of the frames, so it cannot be written before the last of them
+            if (builder != null) {
+                n = builder.count
+                DataOutputStream(FileOutputStream(bin).buffered(1 shl 20)).use { o -> builder.writeBody(o) }
+                lastCaptureBy += ", ${builder.side}x${builder.side} windows"
+            }
+            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" +
+                (builder?.headerExtra() ?: "") + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
             writeHead(id, head)
             prog.finish()
             val writeMs = SystemClock.elapsedRealtime() - t0

@@ -59,8 +59,13 @@ class CaptureGl(private val assets: AssetManager) {
      * keyframe), cropped to [rect], to [out] in the capture's layout. [reference]: the first
      * of them decoded the old way (its time and planes), when there's no fit yet.
      */
+    /**
+     * [sink] takes each cropped frame as it comes off the chip. It used to be an OutputStream and
+     * the crop went straight into the capture file; a windowed capture reduces each crop to a
+     * window and a row sample instead and never writes the crop at all, so the caller decides.
+     */
     fun write(frames: List<EncodedFrame>, format: MediaFormat, fromUs: Long, toUs: Long, rect: IntArray, W: Int, H: Int,
-              out: OutputStream, reference: Pair<Long, ByteArray>?): Result {
+              sink: (ByteArray) -> Unit, reference: Pair<Long, ByteArray>?): Result {
         check(calib != null || reference != null) { "no colour fit and no reference frame" }
         setUpGl()
         val reader = ImageReader.newInstance(W, H, ImageFormat.PRIVATE, 4, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
@@ -121,10 +126,10 @@ class CaptureGl(private val assets: AssetManager) {
                 // never the chip's own numbers unmapped: without a fit the capture is made the old way
                 val c = calib ?: throw IllegalStateException("no colour fit yet (the reference frame wasn't decoded)")
                 inFlight.addLast(targets.cut(c, bufW, bufH, rect, img))
-                while (inFlight.size > 2) { written += inFlight.removeFirst().takeOut(out) }
+                while (inFlight.size > 2) { written += inFlight.removeFirst().takeOut(sink) }
                 cutNs += System.nanoTime() - tc
             }
-            while (inFlight.isNotEmpty()) written += inFlight.removeFirst().takeOut(out)
+            while (inFlight.isNotEmpty()) written += inFlight.removeFirst().takeOut(sink)
         } finally {
             try { codec.stop() } catch (_: Exception) {}
             codec.release()
@@ -166,7 +171,7 @@ class CaptureGl(private val assets: AssetManager) {
 
     /** one frame's worth of read-back, in flight until the chip is done */
     private inner class Slot(val pbo: Int, val fence: Long, val bytes: Int, val img: Image) {
-        fun takeOut(out: OutputStream): Int {
+        fun takeOut(sink: (ByteArray) -> Unit): Int {
             GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L)
             GLES30.glDeleteSync(fence)
             img.close()
@@ -176,7 +181,7 @@ class CaptureGl(private val assets: AssetManager) {
             m.order(ByteOrder.nativeOrder()).position(0); m.get(a)
             GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-            out.write(a)
+            sink(a)
             return 1
         }
     }

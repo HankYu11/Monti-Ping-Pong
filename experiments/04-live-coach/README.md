@@ -795,6 +795,63 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.11.0: the phone writes windows
+
+The capture stops being the whole crop. Each frame is reduced, as it comes off the chip, to a
+window round the ball and a sample of how bright each row was, and dropped. The crops that the
+background needs a median of are kept and nothing else. On the serves measured that is **287 MB
+down to 4.6 MB, 228 to 3.5, 299 to 4.2** — fifty to seventy times less to cut, write, serve and
+parse, at the 25 ms a megabyte that was seven of those nine seconds.
+
+The background is the one thing that needs whole frames, so fifteen of them are held — about
+24 MB, against 287 MB of crops. The row brightness cannot be worked out as the frames arrive
+either, because it is a ratio to a background that is not known until the last of them has; what
+is kept instead is each row's sampled values, which is what the ratio is taken over, so the number
+that comes out at the end is the one the whole crop would have given.
+
+Streaming goes away with it. The crop used to be written while the engine read it, which was worth
+0.5 to 1.9 s a serve. At 4 MB the whole file writes and fetches in about 50 ms, so there is
+nothing left to overlap — and the background has to be written first and is a median of the
+frames, so the two could not have coexisted anyway.
+
+`engine.html` can read the format for the first time. The engine itself has read it since 0.10.3;
+the app only ever handed it whole frames, so the format it was built for was unreachable from the
+phone.
+
+**One fault found and fixed, and it mattered.** The background a windowed capture carries was the
+median of the raw frames. The engine's background is the median of frames it has *already*
+corrected for row brightness, and that is what it compares a frame against. Close, but not the
+same, and the difference lands exactly on the threshold between ball and background: on one serve
+it was 30 of 55 frames with a ball against 49, and with it whether the colour dots were seen often
+enough to say which way the ball drilled. The capture now carries the background the engine would
+have computed — deflickered for brightness, raw for colour, since chroma is never corrected.
+
+**What it costs, measured on fourteen real serves** against the same captures read whole:
+
+| | worst |
+|---|---|
+| rev/s | 0.30 |
+| lift | 1.34 |
+| curve | 4.27 |
+| gyro | 9.62 |
+
+The rate is untouched. The drift is in the split into lift, curve and gyro, and it comes through
+the flight's angle to the camera: windows perturb the ball's measured size a little, size against
+time is how the engine works out whether a serve comes toward it, and that angle is how the spin
+is divided up. Two of the fourteen move more than 2 rev/s on a component.
+
+One of the fourteen failed outright, and it is worth saying why it does not count. Its windows
+hold background: peak difference 23 where every capture that reads gives 116 to 165. The track
+and the pixels disagree in that *rebuilt* capture, whose alignment score was the worst of the set
+by a factor of two and a half. A phone takes its track and its pixels from the same frames.
+`test/wincheck.py` is now one command to tell the two apart if it ever happens for real.
+
+`Windows.write` goes through the same builder, so the batch path and the phone's cannot drift
+apart: before that change they were byte for byte identical on four real captures, which is how
+the builder was checked in the first place.
+
+The whole crop is still there behind `windowCaptures`, which is what every version to 0.10.7 did.
+
 ## 0.10.7: the capture is now the whole of it
 
 0.10.6's fix holds. Six serves on a table, **six measured along their own track**, no searches at

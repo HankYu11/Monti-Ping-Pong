@@ -26,6 +26,8 @@ import java.io.FileOutputStream
  */
 object Windows {
     const val DEFAULT_RADII = 3.0
+    /** frames the background is medianed from: enough for a median, few enough to hold */
+    const val BG_FRAMES = 15
 
     /** the window's size for a track's ball: a square of [radii] times the radius, even-sided */
     fun boxFor(tracks: List<List<FloatArray>>, radii: Double = DEFAULT_RADII, cap: Int = 512): Int {
@@ -87,7 +89,7 @@ object Windows {
     }
 
     /** the background: what most frames show at each pixel, from a spread of up to [take] of them */
-    fun background(frames: List<ByteArray>, frameBytes: Int, take: Int = 15): ByteArray {
+    fun background(frames: List<ByteArray>, frameBytes: Int, take: Int = BG_FRAMES): ByteArray {
         val n = frames.size
         if (n == 0) return ByteArray(frameBytes)
         val m = minOf(take, n)
@@ -177,43 +179,143 @@ object Windows {
     }
 
     /**
+     * Builds a windowed capture as the crops arrive, so no whole crop is ever written and only a
+     * fraction of them is ever held.
+     *
+     * [Windows.write] takes a Capture that already holds every crop, which is how the desktop
+     * runner uses it. The phone cannot afford that: a serve framed so the bounce is in view gives
+     * a crop of 1688x644 and 176 frames, which is 287 MB, and cutting, writing, serving and
+     * parsing that is seven of the nine seconds a serve took at 0.10.7.
+     *
+     * What a windowed capture needs from a frame is a window round the ball, and how bright each
+     * row of the crop was. So each crop is reduced to those as it arrives and then dropped. The
+     * background is the one thing that needs whole frames -- it is a per-pixel median -- so the
+     * spread of frames it medians is kept, and nothing else: about 24 MB, plus 12 MB of row
+     * samples and 4 MB of windows against 287 MB of crops.
+     *
+     * The row brightness cannot be worked out as the frames arrive, because it is a ratio to a
+     * background that is not known until the last of them has. What is kept instead is each
+     * row's sampled values, which is what the ratio is taken over, so the number that comes out
+     * at the end is the one [rowBright] would have given.
+     */
+    class Builder(private val rect: IntArray, frames: Int, tracks: List<List<FloatArray>>,
+                  radii: Double = DEFAULT_RADII, private val stride: Int = ROW_STRIDE) {
+        val side = boxFor(tracks, radii)
+        private val w = rect[2]; private val h = rect[3]
+        private val cols = (w + stride - 1) / stride
+        private val at = offsets(tracks, rect, frames, side)
+        /** the frames the background is medianed from: a spread of the ones a track covers */
+        private val bgWanted: List<Int> = run {
+            val lo = at.indexOfFirst { it != null }.let { if (it < 0) 0 else it }
+            val hi = at.indexOfLast { it != null }.let { if (it < 0) frames - 1 else it }
+            val m = minOf(BG_FRAMES, maxOf(1, hi - lo + 1))
+            (0 until m).map { lo + if (m == 1) 0 else Math.round(it.toDouble() * (hi - lo) / (m - 1)).toInt() }
+        }
+        private val bgKept = HashMap<Int, ByteArray>()
+        /** a background from outside, when there is one: see [Windows.write] */
+        var given: ByteArray? = null
+        private val rows = ArrayList<ByteArray>()
+        private val wins = ArrayList<ByteArray?>()
+        /** how many crops have been handed in */
+        val count get() = rows.size
+
+        /** one crop, in the capture's layout. It is read and then let go of, except for the few the background needs. */
+        fun add(crop: ByteArray) {
+            val i = rows.size
+            if (i in bgWanted) bgKept[i] = crop
+            rows.add(sampleRows(crop))
+            wins.add(at.getOrNull(i)?.let { cut(crop, rect, it, side) })
+        }
+
+        /** every [stride]th column of each row, which is what the brightness ratio is taken over */
+        private fun sampleRows(crop: ByteArray): ByteArray {
+            val out = ByteArray(h * cols)
+            for (y in 0 until h) {
+                val o = y * w; var k = y * cols; var x = 0
+                while (x < w) { out[k++] = crop[o + x]; x += stride }
+            }
+            return out
+        }
+
+        /** the header fragment naming the windows, for Capture.header */
+        fun headerExtra(): String {
+            val sb = StringBuilder(""","winW":$side,"winH":$side,"windows":[""")
+            for (i in wins.indices) { if (i > 0) sb.append(','); sb.append(at.getOrNull(i)?.let { "[${it[0]},${it[1]}]" } ?: "null") }
+            return sb.append(']').toString()
+        }
+
+        /**
+         * The bytes after the header: the background, then every frame's row brightness, then the
+         * windows.
+         *
+         * The background's brightness is the median of the kept frames **after** each has had its
+         * own row brightness divided out, because that is the background the engine compares a
+         * frame against: it medians the frames it has already corrected. Shipping the median of
+         * the raw frames instead is close but not the same, and the difference lands on the
+         * threshold that separates ball from background -- on session 20261112_215446's serve 6
+         * it was the difference between finding the ball in 30 of 55 frames and 45, and with it
+         * whether the colour dots were seen often enough to claim which way the ball drilled.
+         *
+         * Colour is the median of the raw frames, since the engine never corrects chroma.
+         */
+        fun writeBody(out: DataOutputStream) {
+            val frameBytes = w * h + 2 * (w / 2) * (h / 2)
+            val kept = bgWanted.mapNotNull { bgKept[it] }
+            val back = given ?: if (kept.isEmpty()) ByteArray(frameBytes) else run {
+                val raw = background(kept, frameBytes, kept.size)
+                val rawRow = sampleRows(raw)
+                val flat = kept.map { f ->
+                    val rows = rowsAgainst(sampleRows(f), rawRow)
+                    val o = ByteArray(frameBytes)
+                    System.arraycopy(f, w * h, o, w * h, 2 * (w / 2) * (h / 2))   // chroma as it was
+                    for (y in 0 until h) {
+                        val r = rows[y]; val base = y * w
+                        for (x in 0 until w) {
+                            val v = ((f[base + x].toInt() and 255) / r).toInt()
+                            o[base + x] = (if (v > 255) 255 else if (v < 0) 0 else v).toByte()
+                        }
+                    }
+                    o
+                }
+                val lit = background(flat, frameBytes, flat.size)
+                System.arraycopy(raw, w * h, lit, w * h, 2 * (w / 2) * (h / 2))   // colour from the raw median
+                lit
+            }
+            out.write(back)
+            val bgRow = sampleRows(back)
+            for (i in rows.indices) for (r in rowsAgainst(rows[i], bgRow)) out.writeInt(java.lang.Float.floatToIntBits(r))
+            for (win in wins) if (win != null) out.write(win)
+        }
+
+        /** how bright each row of a frame is against a background, from their sampled columns */
+        private fun rowsAgainst(sample: ByteArray, bgSample: ByteArray): FloatArray {
+            val tmp = DoubleArray(cols)
+            return FloatArray(h) { y ->
+                val o = y * cols
+                for (x in 0 until cols) {
+                    val b = (bgSample[o + x].toInt() and 255).toDouble()
+                    tmp[x] = (sample[o + x].toInt() and 255) / (if (b < 1.0) 1.0 else b)
+                }
+                java.util.Arrays.sort(tmp, 0, cols)
+                tmp[cols / 2].toFloat()
+            }
+        }
+    }
+
+    /**
      * A windowed capture file: the header, then the background frame, then the row brightness
      * (n x height, floats, most significant byte first, as DataOutputStream writes them), then one window a frame. A frame no track covers has
      * no window and reads as background alone.
      */
     fun write(file: File, cap: Capture, tracks: List<List<FloatArray>>, extra: String = "",
               radii: Double = DEFAULT_RADII, bg: ByteArray? = null): Int {
-        val side = boxFor(tracks, radii)
-        val n = cap.frames.size
-        val rect = cap.rect
-        val at = offsets(tracks, rect, n, side)
-        // The background can come from outside: on the phone, from frames taken BEFORE the serve,
-        // where the scene is the same (a tripod, a static room), the ball is not crossing it, and
-        // the work sits off the path between the serve and the answer.
-        //
-        // Failing that it comes from the frames the ball was tracked through, NOT from a spread of
-        // the whole capture. A capture starts before the flight and holds the toss and the swing,
-        // and a median across those has the arm in it wherever the arm went -- which is where the
-        // ball goes a moment later. The engine's own background is a median of the frames it
-        // measures, so this matches it, and on session 20261112's serve 5 it moved the gyro from
-        // 0.0 back to -4.3 against the whole crop's -5.2.
-        val lo = at.indexOfFirst { it != null }
-        val hi = at.indexOfLast { it != null }
-        val back = bg ?: background(
-            if (lo in 0..hi) cap.frames.subList(lo, hi + 1) else cap.frames, cap.frameBytes)
-        val wins = StringBuilder("[")
-        for (i in 0 until n) {
-            if (i > 0) wins.append(',')
-            wins.append(at[i]?.let { "[${it[0]},${it[1]}]" } ?: "null")
-        }
-        wins.append(']')
-        val head = cap.header(""","winW":$side,"winH":$side,"windows":$wins""" + extra).toByteArray()
+        val b = Builder(cap.rect, cap.frames.size, tracks, radii)
+        b.given = bg
+        for (f in cap.frames) b.add(f)
+        val head = cap.header(b.headerExtra() + extra, b.count).toByteArray()
         DataOutputStream(FileOutputStream(file).buffered(1 shl 20)).use { out ->
-            out.writeInt(head.size); out.write(head)
-            out.write(back)
-            for (i in 0 until n) for (v in rowBright(cap.frames[i], back, rect)) out.writeInt(java.lang.Float.floatToIntBits(v))
-            for (i in 0 until n) at[i]?.let { out.write(cut(cap.frames[i], rect, it, side)) }
+            out.writeInt(head.size); out.write(head); b.writeBody(out)
         }
-        return side
+        return b.side
     }
 }

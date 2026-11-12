@@ -57,8 +57,31 @@
       // All the frames in memory, fetched in chunks of 24 (one request each). Before 0.6.2 a capture
       // over 160 MB was read a frame at a time, again on every pass: 13-15 s instead of 2-6.
       const [, , cw, ch] = head.rect, per = cw * ch + 2 * (cw >> 1) * (ch >> 1);
-      let frames = null, frame = null;
-      if (per * head.n <= 600e6) {
+      let frames = null, frame = null, win = null;
+      // A windowed capture is a background frame, then every frame's row brightness, then a small
+      // window round the ball -- about a fiftieth of the bytes. It is fetched whole in one go
+      // rather than in chunks as it is written: chunking exists so the engine can start on a
+      // 287 MB crop while the phone is still cutting it, and at 6 MB there is nothing left to
+      // overlap. head/final waits for the writer, so by then the file is complete.
+      if (head.windowed) {
+        head = await (await fetch(`${base}/head/final`)).json();
+        const b = new Uint8Array(await (await fetch(`${base}/all`)).arrayBuffer());
+        const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+        let o = 0;
+        win = { background: b.subarray(o, o + per), rowBright: [], windows: head.windows, winW: head.winW, winH: head.winH };
+        o += per;
+        for (let i = 0; i < head.n; i++) {
+          const r = new Float32Array(ch);
+          for (let y = 0; y < ch; y++) { r[y] = dv.getFloat32(o); o += 4; }
+          win.rowBright.push(r);
+        }
+        const wb = head.winW * head.winH + 2 * ((head.winW >> 1) * (head.winH >> 1));
+        frames = [];
+        for (let i = 0; i < head.n; i++) {
+          if (!head.windows[i]) { frames.push(null); continue; }
+          frames.push(b.subarray(o, o + wb)); o += wb;
+        }
+      } else if (per * head.n <= 600e6) {
         frames = [];
         const chunk = async (k) => {
           const buf = await (await fetch(`${base}/frames/${k}/24`)).arrayBuffer();
@@ -74,7 +97,7 @@
       }
       if (frames && frames.length > head.n) frames.length = head.n;
       const tFetch = performance.now() - t0;
-      const res = await window.SpinMeter.measureCapture({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, {
+      const res = await window.SpinMeter.measureCapture(Object.assign({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, win || {}), {
         // Measure along the live tracker's own tracks instead of searching the crop: about 3x
         // faster over the 21 recorded captures (97.7 s -> 33.0 s). The engine declines a track
         // it shouldn't measure -- one that doesn't fly like a ball, one that measures to nothing

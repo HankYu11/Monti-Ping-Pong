@@ -18,6 +18,7 @@ bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which wa
 node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
 
 python3 test/capsanity.py  Session_*/serve*.json                  # do the headers agree with themselves?
+python3 test/wincheck.py   serve01.win.cap ...                    # is the ball actually inside the windows?
 python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
 node test/capcheck.mjs  serve01.json serve02.json ...             # does it still read what the phone read?
 node test/capcheck.mjs --ext .win.cap --split 4 serve01.json ... # ... and does the windowed cut of it?
@@ -138,6 +139,17 @@ The rebuild harness below is blind to it by construction. `capfromclip.py` finds
 by scoring the track's own predicted discs, so a shifted track is matched at a shifted offset and
 comes out looking perfect. The one thing it cannot see is the track being wrong relative to its
 capture, because it uses the track to place the capture.
+
+## wincheck.py — is the ball inside the windows?
+
+One second, no browser, on a windowed capture. A windowed capture keeps a small square round
+where the track says the ball was; if the track and the pixels disagree the windows hold
+background and nothing else, and no part of the engine can recover from that, because the pixels
+that held the ball were never written.
+
+It shows as contrast, and the separation is wide. Over the real captures measured, every one that
+read gave a peak difference from the background of 116 to 165 with essentially every window above
+60; the one that did not read gave 23, with 11 of its 37 windows above 60.
 
 ## capcheck.mjs — real serves as a regression test
 

@@ -27,11 +27,12 @@ fun main(argv: Array<String>) {
     // the whole capture. It is how the span was shown to matter: a capture holds the swing as
     // well as the flight, and a background medianed across the swing has the arm in it wherever
     // the arm went -- which is exactly where the ball goes next.
-    var bgFrom = -1; var bgTo = -1
+    var bgFrom = -1; var bgTo = -1; var stream = false
     val args = ArrayList<String>()
     var i = 0
     while (i < argv.size) {
         if (argv[i] == "--bg") { bgFrom = argv[i + 1].toInt(); bgTo = argv[i + 2].toInt(); i += 3 }
+        else if (argv[i] == "--stream") { stream = true; i++ }
         else args.add(argv[i++])
     }
     if (args.size < 2) { System.err.println("usage: WinCapKt [--bg first last] in.cap out.win.cap [radii]"); return }
@@ -62,6 +63,19 @@ fun main(argv: Array<String>) {
     val extra = StringBuilder()
     field(head, "track")?.let { extra.append(""","track":""").append(it) }
     field(head, "near")?.let { extra.append(""","near":""").append(it) }
+    // --stream builds the same file through Windows.Builder, one crop at a time and letting each
+    // go, which is how the phone has to do it. The two should come out byte for byte the same.
+    if (stream) {
+        val b = Windows.Builder(cap.rect, cap.frames.size, tracks, radii)
+        for (f in cap.frames) b.add(f)
+        val head = cap.header(b.headerExtra() + extra.toString(), b.count).toByteArray()
+        java.io.DataOutputStream(File(args[1]).outputStream().buffered(1 shl 20)).use { o ->
+            o.writeInt(head.size); o.write(head); b.writeBody(o)
+        }
+        val f = File(args[1])
+        println("${f.name}: ${b.side}x${b.side} windows (streamed), ${f.length() / 1000} kB against ${src.length() / 1000} kB")
+        return
+    }
     val out = File(args[1])
     val bg = if (bgFrom >= 0) Windows.background(
         cap.frames.subList(bgFrom.coerceIn(0, cap.frames.size), (bgTo + 1).coerceIn(0, cap.frames.size)),

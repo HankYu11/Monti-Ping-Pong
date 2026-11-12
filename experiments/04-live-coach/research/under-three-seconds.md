@@ -147,25 +147,68 @@ its numbers was wrong by a factor of four, which is worth recording.
 
 ## Order of work
 
-1. **Make the engine window-native.** It reads the windowed format today by *rebuilding the full
-   crop* (`windowsInto`) and then running the same full-ROI passes, which is why that format won
-   only 1.13×. Every expensive stage — `findBall`, `grabColor`, the deflicker, the shake check,
-   `medianFrames` — should work in the box round the ball, with the background patch supplying
-   what is outside it. The line above predicts roughly tenfold. This needs no phone and no GPU
-   work: the harness can prove it on rebuilt real captures and on the rendered clips with ground
-   truth.
-2. **Cut the windows on the phone from the existing capture**, so the engine gets the format it
-   now wants. Decode and cut stay, but write and parse shrink with the bytes. Expected answer:
-   about 1.9 s on serve 1 and 2.2 s on serve 6 — the three-second target, met, without touching
-   the camera path.
-3. **Ring the windows on the GPU** and stop decoding. One packed readback per frame, a rolling
-   background, the H.264 ring kept as the fallback. Expected answer: a few hundred milliseconds.
-4. **The refused-track path.** Untouched by all of the above, worth 3.5–4.6 s when it fires, and
-   possibly an artefact of serving into open air with no bounce. It needs a session on a table
-   before it is worth designing for.
+1. ~~**Measure.**~~ Done: six serves, broken down above.
+2. ~~**Tighten the capture rect.**~~ Done in 0.10.3. It padded the serve's box by 4r + 40, sized
+   when the engine read the whole crop and wanted room for a background; the engine now reads a
+   box of 3r + 20 round the ball, so the crop takes 3r + 24. About 1.4x fewer pixels to cut,
+   write, serve and parse, with the reading unmoved (39.80 and 57.35 through the desktop runner
+   on two real clips, against the phone's 39.80 and 57.28).
+3. ~~**Attack the engine's measure.**~~ Done in 0.10.3, and it was the largest stage. The profile
+   is above; the fix is the box. 1,010 -> 613 ms and 1,653 -> 873 on two rebuilt real captures,
+   and 357 and 404 when the capture itself is windows.
+4. **Have the phone write windows.** The engine is ready for them and the format is now correct
+   (below). What stands in the way is the ORDER. A windowed capture is background, then the row
+   brightness, then the windows — and the background is a median of frames, so it cannot be
+   written until frames exist. The phone currently writes the whole crop *while the engine reads
+   it*, which is worth 0.5-1.9 s a serve on its own (0.8.2). So the background has to come from
+   somewhere else, and the obvious somewhere is the plan's own answer: frames from BEFORE the
+   serve, on a tripod, with the ball not yet crossing them, computed on another thread while the
+   serve happens. That is the next piece of work and it is a real one.
+5. **Ring the windows on the GPU** and stop decoding, as above. Nothing has changed about this.
+6. **The refused-track path**, still worth 3.5-4.6 s when it fires, still untouched by any of the
+   above, still possibly an artefact of serving into open air.
 
-Steps 1 and 2 reach the target. Step 3 is what makes the number small enough to stop thinking
-about, and step 1 is a prerequisite for it either way.
+### Where that leaves the wait
+
+Using the measured engine times and the 1.25-1.5x the phone runs behind this desktop:
+
+| | serve 1 | serve 6 |
+|---|---|---|
+| measured, 0.10.2 | 3.27 s | 4.05 s |
+| 0.10.3 (box reading + tighter crop) | about 2.2 s | about 2.6 s |
+| with windows written on the phone | about 1.6 s | about 1.7 s |
+| with the windows ringed on the GPU | a few hundred ms | a few hundred ms |
+
+The first of those is shipped. The second needs step 4, the third step 5.
+
+## What the windowed format got wrong, and how it was caught
+
+The format was validated at 0.9.5 on 29 real captures — on the spin RATE. The spin split into
+lift, curve and gyro came later. Comparing a real serve both ways, with `test/capfromclip.py` to
+rebuild the capture and the app's own writer to cut it down, found two faults in it. Neither
+shows in the rate.
+
+**The row brightness used the wrong estimator.** The writer took median(frame) ÷ median(background)
+for a row; the engine's `deflickerRows` takes median(frame ÷ background) pixel by pixel. A median
+of a row's values is the median of whatever that row crosses — table, floor, a player — so on a
+row the two pictures cross differently the two medians come from different things and their ratio
+is off by a few percent. The error depends on the row; the ball changes rows as it flies; so it
+lands as a drift in the ball's measured SIZE over the flight. Size against time is how the engine
+works out whether the serve comes toward the camera, and that angle is how the spin is split.
+Serve 3 read 36 degrees toward the camera from windows against 13 from the whole crop, moving its
+gyro from -35 to -52 rev/s while the rate stayed within 0.1.
+
+**The background came from the whole capture.** A capture starts before the flight and holds the
+toss and the swing, and a median across those has the arm in it wherever the arm went — which is
+where the ball goes a moment later. It now comes from the frames the ball was tracked through.
+
+With both fixed, a capture a fiftieth of the size reads within 0.15 rev/s of the whole crop and
+within 3.4 on the split, the worst being the serve flying most directly at the camera, where the
+split is most sensitive to the angle.
+
+A third thing was tested and was fine: the writer samples rows at every 16th column, which the
+code's own comment flagged as untested on real footage. Strides of 2, 4, 8 and 16 on real serves
+move the reading by less than 0.1 rev/s. The estimator was the problem, not the stride.
 
 ## What would break it, and the test that catches it
 

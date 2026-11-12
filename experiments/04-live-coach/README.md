@@ -898,3 +898,8 @@ WebView is made; `--no-sandbox --disable-gpu` through `/data/local/tmp/webview-c
 doesn't save it). A container with no `/dev/kvm` boots the emulator in about fourteen minutes and
 then cannot run the part that does the measuring. Use `recordPaparazziDebug` for the screen, the
 harnesses under `02-spin-meter/web/test` for the engine, and a phone for both together.
+
+Confirmed again at 0.10.3, so the finding is not stale: an x86_64 build installs and the process
+starts, and it dies the same way -- `signal 5 (SIGTRAP), code 128 (SI_KERNEL)`, the stack running
+`MainActivity.buildUi` into `WebViewChromium.init` and `BrowserStartupControllerImpl`. The crash
+is inside Chromium's own startup; the app never reaches its own code.

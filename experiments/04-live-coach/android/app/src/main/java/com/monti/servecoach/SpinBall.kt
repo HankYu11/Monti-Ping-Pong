@@ -206,6 +206,19 @@ class SpinBall(ctx: Context) : View(ctx) {
     /** Hold the ball at a fixed pose, in turns, instead of letting it run: for stills and films. */
     fun poseTurns(turns: Double) { angle = turns * 2 * Math.PI; still = true; invalidate() }
 
+    /**
+     * Stop turning where it is, and start again. Held while a serve is being measured: the ball is
+     * showing the serve BEFORE this one, so there is nothing to lose by holding it, and a per-pixel
+     * sphere thirty times a second is competing with the tracker and the engine for the same cores
+     * at the one moment both are busy. The state line and the amber frame carry liveness.
+     */
+    fun hold(on: Boolean) {
+        if (still == on) return
+        still = on
+        lastNanos = 0L                 // don't jump by however long the hold lasted
+        if (!on) invalidate()
+    }
+
     override fun onMeasure(wSpec: Int, hSpec: Int) {
         val w = MeasureSpec.getSize(wSpec)
         setMeasuredDimension(w, w)                      // square: the ball and its ring

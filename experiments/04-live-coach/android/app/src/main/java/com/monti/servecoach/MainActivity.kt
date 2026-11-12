@@ -744,12 +744,14 @@ class MainActivity : Activity() {
         spottedAt[id] = SystemClock.uptimeMillis()
         tone(Hud.AMBER)
         state("Got it: measuring serve #$id…")
+        screen.busy(true)
         say("Got it.")
         // never stuck waiting: if no answer comes in 30 s (a capture that failed), ready again
         main.postDelayed({ if (mode == Mode.LIVE && turnId == id) { log("error", "#$id: no answer in 30 s"); setReady("Ready.") } }, 30_000)
     }
     /** after an answer (or none) in live mode: the next turn */
     private fun turnDone(spoken: String, id: Int) {
+        screen.busy(false)
         // its own turn: then ready for the next. A turn already ended by NEXT SERVE: readiness left as
         // it is, and its answer said only if no serve came after it (only the latest serve is spoken)
         if (mode == Mode.LIVE && id == turnId) setReady("$spoken Ready.")

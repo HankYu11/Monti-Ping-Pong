@@ -119,6 +119,8 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
 
     fun state(s: String) { stateText.text = "● " + s.uppercase(Locale.US) }
+    /** a serve is being measured: hold the ball still so it isn't drawing while the engine works */
+    fun busy(on: Boolean) { spinBall.hold(on) }
     /** the HUD's colour for what is happening: cyan ready, amber measuring, red a problem */
     fun tone(c: Int) { stateText.setTextColor(c); frame.color = c }
     fun running(on: Boolean) {

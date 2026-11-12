@@ -568,7 +568,7 @@ class LivePipeline(
                 lastCaptureBy = "copied out"
             }
             val c = cap ?: return
-            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame), n)
+            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
             writeHead(id, head)
             prog.finish()
             val writeMs = SystemClock.elapsedRealtime() - t0

@@ -27,11 +27,22 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         /**
          * The tracks for the engine (the header's "track" and "near"): frames counted from the
          * capture's first ([f0], a whole frame; [step] whole frames per tracker frame), points in whole-picture pixels.
+         *
+         * Points outside the capture's [n] frames are left out. The engine drops them anyway --
+         * it cannot look at a frame it does not have -- and leaving them in makes the header
+         * disagree with the capture it describes, which is how a shifted track went unnoticed
+         * through 0.10.4 and 0.10.5. The start is trimmed to the tracks and then trimmed again
+         * if the frames would not fit in 300 MB, and that second trim counts from the main
+         * track alone, so a near track can begin before the capture does. Clipping here means
+         * the header is consistent however the span was arrived at, rather than every trim
+         * having to remember to keep it so.
          */
-        fun tracksJson(step: Int, scale: Float, f0: Long): String {
-            fun one(t: List<FloatArray>) = t.joinToString(",", "[", "]") { p ->
-                "[${(p[0] * step - f0).toLong()},${"%.1f".format(java.util.Locale.US, p[1] * scale)},${"%.1f".format(java.util.Locale.US, p[2] * scale)},${"%.2f".format(java.util.Locale.US, p[3] * scale)}]"
-            }
+        fun tracksJson(step: Int, scale: Float, f0: Long, n: Int = Int.MAX_VALUE): String {
+            fun one(t: List<FloatArray>) = t.mapNotNull { p ->
+                val f = (p[0] * step - f0).toLong()
+                if (f < 0 || f >= n) null
+                else "[$f,${"%.1f".format(java.util.Locale.US, p[1] * scale)},${"%.1f".format(java.util.Locale.US, p[2] * scale)},${"%.2f".format(java.util.Locale.US, p[3] * scale)}]"
+            }.joinToString(",", "[", "]")
             return ""","track":${one(track)},"near":${near.joinToString(",", "[", "]") { one(it) }}"""
         }
     }

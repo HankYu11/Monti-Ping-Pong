@@ -795,6 +795,53 @@ the scale tucked under the number, which is the only thing it gives context to. 
 instead of two, and it is the only one of the three layouts tried that fits the column with room
 to spare — 26.6 units of 31.8, against 31.6 and 31.4 for the alternatives.
 
+## 0.10.7: the capture is now the whole of it
+
+0.10.6's fix holds. Six serves on a table, **six measured along their own track**, no searches at
+all, and every reading correct. The tracks now start at frame 12 of their captures — the margin
+the trim leaves — where 0.10.5 shipped them starting at 60 and pointing nowhere.
+
+The bounce reading works for the first time as a side effect: three of the six measured a
+`paddle` stretch and a `bounce` stretch, which needs the track to line up with the frames.
+
+What is left is the capture, and it is now essentially all of it:
+
+| serve | wait | decode | cut | write | parse | engine | capture |
+|---|---|---|---|---|---|---|---|
+| 1 | 9.55 s | 2206 | 3500 | 449 | 1406 | 1910 | 287 MB |
+| 2 | 2.12 s | 528 | 380 | 138 | 68 | 992 | 37 MB |
+| 3 | 6.17 s | 1023 | 1590 | 83 | 1999 | 1439 | 228 MB |
+| 4 | 6.05 s | 1019 | 1053 | 71 | 1656 | 2244 | 162 MB |
+| 5 | 6.20 s | 676 | 1226 | 98 | 1688 | 2504 | 151 MB |
+| 6 | 9.90 s | 1123 | 5062 | 95 | 1724 | 1881 | 299 MB |
+
+Cutting, writing and parsing costs about **25 ms per megabyte**, steady across all six, and the
+engine costs 1.0 to 2.5 s. The wait is the capture's size and nothing else: the one serve under
+three seconds is the one whose capture is 37 MB.
+
+The crops are 1688x644 and up because the camera is now framed so the bounce is in view, which is
+the framing the reading wants. So this is not a framing mistake to correct — it is the whole-crop
+format reaching the end of what it can do. A 287 MB capture cannot be cut, written and parsed in
+under a second, and the engine needs a second of its own.
+
+The windowed capture turns those 287 MB into about 6 MB. It is written, the engine reads it
+box-natively since 0.10.3, and its two faults were found and fixed. What held it back was the
+order: background first, then row brightness, then windows, and the background is a median of
+frames so it cannot be written before them — while the phone writes the whole crop *while* the
+engine reads it, which is worth 0.5 to 1.9 s on its own.
+
+**That objection does not survive the numbers above.** Streaming is worth having when the capture
+is 287 MB. At 6 MB the whole file is written and fetched in about 50 ms, so there is nothing left
+to overlap. The writer can hold the fifteen frames the background needs (24 MB), cut each
+frame's window as it is decoded, and write the lot at the end — which also retires the 300 MB cap
+that has been truncating these captures.
+
+Also in this version: the header's tracks are clipped to the capture's own frames. Points outside
+were dropped by the engine anyway, and leaving them in is what let a shifted track pass unnoticed
+through two versions. The 300 MB trim counts its run-up from the main track alone, so a near
+track could begin before the capture did; clipping at the source means the header is consistent
+however the span was arrived at, rather than every trim having to remember to keep it so.
+
 ## 0.10.6: the track was pointing at the wrong frames
 
 0.10.5 made every serve slower, not faster. Ten serves on a table: every one of them searched the

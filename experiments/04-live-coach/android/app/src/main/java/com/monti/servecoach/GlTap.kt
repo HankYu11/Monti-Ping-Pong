@@ -550,7 +550,10 @@ class GlTap(
         val fY = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
         val fC = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
         val fR = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
-        val pbo = IntArray(4).also { GLES30.glGenBuffers(4, it, 0) }
+        // eight, not four. The camera hands its frames over in bursts -- 96 at once in the
+        // first session on a phone -- and four buffers emptied often enough to lose 15% of the
+        // windows to "every buffer still being read". Eight is 1.3 MB.
+        val pbo = IntArray(8).also { GLES30.glGenBuffers(8, it, 0) }
         val busy = java.util.concurrent.atomic.AtomicIntegerArray(pbo.size)
         var next = 0
         init {

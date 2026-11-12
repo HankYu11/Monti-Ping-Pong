@@ -381,3 +381,43 @@ answered there, and 0.12.0 reports each:
 
 The flag is `CHIP WINDOWS` on the HUD, off by default, and every serve it cannot serve is cut
 exactly the way 0.11 cut it.
+
+## What the first phone session said (0.12.0, session 20261113_020003)
+
+Four serves, the flag on. Three read (26.05, 51.45, 51.20 rev/s), one found no flight.
+
+**The chip keeps up, comfortably.** 9856 frames arrived and 17 went missing, 0.17%. The window
+pass cut 6418 windows with no errors at 256 px a side, which is 159 KB a frame read back on top
+of the small picture's 259 KB every second frame. It cost 0.92 ms a frame on the frames' thread
+and 1.16 ms on the reader's, and took the frames' thread from 55% busy to 61%. That was the
+budget's question and the answer is yes.
+
+**But not one capture used the ring**, and the report could not say why, because every early
+refusal returned without writing a reason. Reading the code against the numbers gives three
+faults, all of them things only a phone could have shown:
+
+- **The ring was thrown away whenever the window changed size.** 6418 windows were cut and 376
+  were still held. The size comes from the ball's apparent radius, which drifts frame by frame
+  and as the track grows, so it moved constantly — and a ring built for one size was replaced
+  each time. Fixed twice over: each window now carries its own size, so a mixed ring is fine and
+  the capture (which cuts a smaller window out of a bigger one anyway) does not care; and the
+  size itself is now held steady, growing when it must and shrinking only when the ball is under
+  six tenths of what it was.
+- **The colour fit could never happen.** It compared a live window against the same window cut
+  out of a decoded frame, and required the window to lie inside the crop. A live window is round
+  the ball; the crop is round the whole flight. Of the four serves, none had one that fitted —
+  serve 2's crop is 276 px tall against a 256 px window. It now fits over the overlap, with 64 px
+  square the least it will work with. Without the fit there is no map from the camera's own
+  frames onto the decoder's bytes, and without that the ring is never used at all: that one fault
+  was enough on its own.
+- **The fit would not have reached the shader even once it existed.** The plan is only rebuilt
+  when the window's size changes, so a fit arriving between serves would have sat unused for as
+  long as the size happened to hold — which, after the fix above, is most of a session.
+
+Two smaller things from the same numbers: 15% of frames found every read-back buffer still busy
+(the camera delivers in bursts — 96 frames at once here — so four buffers is too few; now eight),
+and every refusal now records what it was, so the next report answers this in one line instead of
+needing the code read against it.
+
+None of this touches a reading: all four serves were cut exactly as 0.11 cut them, which is what
+the fallback is for. The cost of the whole experiment so far has been 6% of the frames' thread.

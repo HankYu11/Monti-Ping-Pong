@@ -427,6 +427,8 @@ class LivePipeline(
      */
     private val ringRowStep = 2
     private var planSide = 0
+    private var planning = false
+    private var planFit: CaptureGl.Calib? = null
     private class Aim { @Volatile var track: List<FloatArray> = emptyList() }
     private val aim = Aim()
     /** no colour fit yet: the chip's numbers as they come */
@@ -465,7 +467,7 @@ class LivePipeline(
     private fun planFromTracks(tr: ServeTracker) {
         val put = planWindows
         if (!windowRing || put == null || frameW == 0) {
-            if (planSide != 0) { planSide = 0; put?.invoke(null) }
+            if (planning) { planning = false; put?.invoke(null) }
             return
         }
         var best: List<FloatArray>? = null; var bestScore = 0f
@@ -477,18 +479,31 @@ class LivePipeline(
             if (s > bestScore) { bestScore = s; best = t }
         }
         if (best == null) {
-            if (planSide != 0) { planSide = 0; put(null) }
+            // the plan goes, but not the size it settled on: a flight breaks into several
+            // tracks, and starting the size again each time is what made it drift
+            if (planning) { planning = false; put(null) }
             return
         }
         aim.track = best
         val scale = step * 2f                            // the tracker's pixels are a quarter the picture's
         val rs = best.map { it[3] }.sorted()
-        val side = sideFor(rs[(rs.size - 1) / 2] * scale)
-        if (side == planSide) return
-        planSide = side
-        ringSide = side
-        if (windows?.side != side) windows = WindowRing(side, ringFrames)
+        val want = sideFor(rs[(rs.size - 1) / 2] * scale)
+        // Hold the size steady. It follows the ball's apparent radius, which drifts frame by
+        // frame as the ball flies and as the track grows, so taking it literally changes the
+        // window -- and with it the chip's targets -- most of the flight. A window that is a
+        // little too big costs read-back and nothing else, so it only grows, and only shrinks
+        // when the ball is much smaller than it was.
+        val side = if (planSide > 0 && want <= planSide && want > planSide * 6 / 10) planSide else want
         val fit = CaptureGl.ringCalib
+        // the fit arrives from the first serve measured, and the plan carries it into the
+        // shader: without this the windows would go on being cut in the chip's own numbers
+        // for as long as the size happened not to change
+        if (side == planSide && planning && fit === planFit) return
+        planSide = side
+        planning = true
+        planFit = fit
+        ringSide = side
+        if (windows == null) windows = WindowRing(ringFrames)
         ringPlans++
         put(GlTap.WindowPlan(intArrayOf(0, 0, frameW, frameH), side, ringRowStep, Windows.ROW_STRIDE,
             fit?.bt601 ?: (CaptureGl.calib?.bt601 ?: false),
@@ -497,6 +512,7 @@ class LivePipeline(
             fit?.v?.let { floatArrayOf(it.gain.toFloat(), it.offset.toFloat()) } ?: ONE) { no -> aimAt(side, no) })
     }
 
+    /** the size the last plan asked for, kept across a flight's gaps so it does not drift */
     /** where frame [no]'s window goes, from the live track: even, and inside the picture */
     private fun aimAt(side: Int, no: Long): IntArray? {
         val t = aim.track
@@ -514,15 +530,17 @@ class LivePipeline(
     /** one frame's window off the chip: the window's planes, then the picture's row sample */
     fun offerWindow(frameNo: Long, at: IntArray, bytes: ByteArray) {
         val r = windows ?: return
-        val side = r.side
-        val win = side * side + 2 * (side / 2) * (side / 2)
-        // the row sample is the same size whatever the window is, so what is left over says
-        // which plan cut this frame: a window still in flight when the plan changed is dropped
-        // rather than split by the wrong side
+        // The row sample is the same size whatever the window is, so what is left over is the
+        // window, and a window is one and a half times its side squared. That is how a frame
+        // still in flight when the plan changed is read with the size it was really cut at,
+        // rather than dropped or split by the wrong one.
         val rowBytes = ((((frameW + Windows.ROW_STRIDE - 1) / Windows.ROW_STRIDE) + 3) / 4) * 4 *
             ((frameH + ringRowStep - 1) / ringRowStep)
-        if (bytes.size != win + rowBytes) return
-        r.put(frameNo, at[0], at[1], bytes.copyOfRange(0, win), bytes.copyOfRange(win, bytes.size))
+        val win = bytes.size - rowBytes
+        if (win <= 0) return
+        val side = Math.round(Math.sqrt(win / 1.5)).toInt()
+        if (side % 8 != 0 || side * side + 2 * (side / 2) * (side / 2) != win) return
+        r.put(frameNo, at[0], at[1], side, bytes.copyOfRange(0, win), bytes.copyOfRange(win, bytes.size))
     }
 
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
@@ -666,12 +684,16 @@ class LivePipeline(
     private fun cutFromRing(id: Int, frames: List<EncodedFrame>, fmt: android.media.MediaFormat,
                             fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int,
                             firstFrame: Long, nGuess: Int, tracks: List<List<FloatArray>>): RingCut? {
-        val ring = windows ?: return null
-        val assets = assets ?: return null
-        if (!windowRing || !gpuCaptures || tracks.isEmpty() || CaptureGl.calib == null) return null
+        fun no(why: String): RingCut? { ringNote = why; return null }
+        if (!windowRing) return null
+        val ring = windows ?: return no("nothing was cut on the chip")
+        val assets = assets ?: return no("no assets")
+        if (!gpuCaptures) return no("the chip's captures are off")
+        if (tracks.isEmpty()) return no("no track to put a window on")
+        if (CaptureGl.calib == null) return no("the chip has no colour fit yet")
         // without a map onto the decoder's bytes the ring's windows are the chip's own numbers,
         // which the background would not match: the serve is cut the old way and makes the fit
-        if (CaptureGl.ringCalib == null) return null
+        if (CaptureGl.ringCalib == null) return no("the ring has no colour fit yet: ${CaptureGl.ringNote}")
         val t0 = SystemClock.elapsedRealtime()
         // which frames the background wants: asked of a builder of the guessed length, because
         // the real one is only known once the decoder has been through the span
@@ -682,7 +704,7 @@ class LivePipeline(
         // decode it then throws away is the whole cost of the old way paid twice.
         run {
             val pre = ring.take(firstFrame, nGuess)
-            val s0 = b0.side; val from0 = ring.side
+            val s0 = b0.side
             var w0 = 0; var h0 = 0
             for (i in 0 until nGuess) {
                 val place = b0.placeOf(i) ?: continue
@@ -692,24 +714,19 @@ class LivePipeline(
                 // capture's cannot be cut out of is one the prediction missed, and a ring full
                 // of them was following something else
                 val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
-                if (dx >= 0 && dy >= 0 && dx + s0 <= from0 && dy + s0 <= from0) h0++
+                if (dx >= 0 && dy >= 0 && dx + s0 <= pre.sides[i] && dy + s0 <= pre.sides[i]) h0++
             }
-            if (w0 == 0 || s0 > from0 || h0 < w0 * 3 / 4) {
-                ringNote = "the chip's windows fitted $h0 of $w0 frames: cut the old way"
-                return null
-            }
+            if (w0 == 0 || h0 < w0 * 3 / 4) return no("the chip's windows fitted $h0 of $w0 frames")
         }
         val crops = HashMap<Int, ByteArray>()
         var j = 0
         val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h,
             { b -> if (j < want.size) crops[want[j++]] = b }, null, { i -> i in wanted })
         val n = r.seen
-        if (n <= 0 || crops.isEmpty()) return null
+        if (n <= 0 || crops.isEmpty()) return no("decoded $n frames, kept ${crops.size}")
         val taken = ring.take(firstFrame, n)
         val b = Windows.Builder(rect, n, tracks)
         val side = b.side
-        val from = ring.side
-        if (side > from) return null                       // the live window is the smaller: nothing to cut out of it
         // the live window went where the ball was PREDICTED to be and the capture's goes where
         // it really was, so every one is cut again; how often that fails is how far the
         // prediction missed, and too often means the ring was following something else
@@ -722,6 +739,7 @@ class LivePipeline(
             if (place != null) {
                 need++
                 if (at != null) {
+                    val from = taken.sides[i]
                     val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
                     val d = maxOf(kotlin.math.abs(dx - (from - side) / 2), kotlin.math.abs(dy - (from - side) / 2))
                     if (d > worst) worst = d
@@ -731,10 +749,7 @@ class LivePipeline(
             }
             b.addParts(taken.rows[i]?.let { Windows.ringRows(it, rect, w, h, rowStep) }, win, crops[i])
         }
-        if (need == 0 || got < need * 3 / 4) {
-            ringNote = "the chip's windows covered $got of $need frames: cut the old way"
-            return null
-        }
+        if (need == 0 || got < need * 3 / 4) return no("the chip's windows covered $got of $need frames (decoded already)")
         ringNote = "$got of $need windows, missed $missed, worst ${worst} px off centre; " +
             "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms)"
         return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
@@ -751,23 +766,47 @@ class LivePipeline(
      * The rms is recorded either way, which is how a fit that has gone stale shows up.
      */
     private fun fitRing(frameNo: Long, crop: ByteArray, rect: IntArray) {
-        try {
-            val ring = windows ?: return
-            val side = ring.side
-            val taken = ring.take(frameNo, 1)
-            val at = taken.at[0] ?: return
-            val chip = taken.pixels[0] ?: return
-            val place = intArrayOf(at[0] - rect[0], at[1] - rect[1])
-            if (place[0] < 0 || place[1] < 0 || place[0] + side > rect[2] || place[1] + side > rect[3]) return
-            val decoded = Windows.cut(crop, rect, place, side)
-            val ny = side * side; val nc = (side / 2) * (side / 2)
-            val y = ColourFit.fit(chip, decoded, 0, ny)
-            val u = ColourFit.fit(chip, decoded, ny, nc)
-            val v = ColourFit.fit(chip, decoded, ny + nc, nc)
-            val fit = CaptureGl.Calib(CaptureGl.calib?.bt601 ?: false, y, u, v)
-            CaptureGl.ringNote = "$fit"
-            if (CaptureGl.ringCalib == null && y.rms <= 6.0) CaptureGl.ringCalib = fit
-        } catch (e: Exception) { CaptureGl.ringNote = "fit: ${e.message}" }
+        val ring = windows ?: return
+        val taken = ring.take(frameNo, 1)
+        val at = taken.at[0]
+        val chip = taken.pixels[0]
+        if (at == null || chip == null) { CaptureGl.ringNote = "no window held for frame $frameNo"; return }
+        val side = taken.sides[0]
+        // The overlap, not the whole window. A live window is round the ball and the crop is
+        // round the whole flight, so most of the time part of the window hangs over the crop's
+        // edge -- on the first session, of four serves none had one that fitted, and the fit
+        // never happened. Only the pixels both of them hold are compared.
+        val w = rect[2]; val h = rect[3]
+        val x0 = maxOf(0, at[0] - rect[0]); val y0 = maxOf(0, at[1] - rect[1])
+        val x1 = minOf(w, at[0] - rect[0] + side); val y1 = minOf(h, at[1] - rect[1] + side)
+        val ow = (x1 - x0) and 1.inv(); val oh = (y1 - y0) and 1.inv()
+        if (ow < 64 || oh < 64) { CaptureGl.ringNote = "the window and the crop overlap by only ${ow}x$oh"; return }
+        val cSide = side / 2; val cw = w / 2
+        val a = ByteArray(ow * oh + 2 * (ow / 2) * (oh / 2))     // the chip's
+        val d = ByteArray(a.size)                                 // the decoder's
+        var o = 0
+        for (y in 0 until oh) {
+            val wy = y0 + rect[1] - at[1] + y                     // the row inside the window
+            System.arraycopy(chip, wy * side + (x0 + rect[0] - at[0]), a, o, ow)
+            System.arraycopy(crop, (y0 + y) * w + x0, d, o, ow)
+            o += ow
+        }
+        val ow2 = ow / 2; val oh2 = oh / 2
+        val wc0 = side * side; val cc0 = w * h
+        val cSize = cSide * cSide; val cropC = cw * (h / 2)
+        for (plane in 0..1) for (y in 0 until oh2) {
+            val wy = (y0 + rect[1] - at[1]) / 2 + y
+            System.arraycopy(chip, wc0 + plane * cSize + wy * cSide + (x0 + rect[0] - at[0]) / 2, a, o, ow2)
+            System.arraycopy(crop, cc0 + plane * cropC + ((y0 / 2) + y) * cw + x0 / 2, d, o, ow2)
+            o += ow2
+        }
+        val ny = ow * oh; val nc = ow2 * oh2
+        val y = ColourFit.fit(a, d, 0, ny)
+        val u = ColourFit.fit(a, d, ny, nc)
+        val v = ColourFit.fit(a, d, ny + nc, nc)
+        val fit = CaptureGl.Calib(CaptureGl.calib?.bt601 ?: false, y, u, v)
+        CaptureGl.ringNote = "$fit; over ${ow}x$oh of a ${side}px window"
+        if (CaptureGl.ringCalib == null && y.rms <= 6.0) CaptureGl.ringCalib = fit
     }
 
     /**

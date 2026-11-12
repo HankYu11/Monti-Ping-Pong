@@ -102,27 +102,36 @@ object Predict {
  * Keyed by the camera's own frame number, so a capture can ask for exactly the span it covers.
  * Frames the chip was too busy to hand over are simply missing; the engine reads a missing window
  * as background, which is what it does for a frame no track covers.
+ *
+ * Each window carries its own size. The size is chosen from how big the ball looks, which drifts
+ * as the ball flies, and a ring tied to one size has to be thrown away whenever it changes --
+ * which in the first session on a phone was most of the flight: 6418 windows cut, 376 still held.
+ * The capture can cut a smaller window out of a bigger one, so a mixed ring costs it nothing.
  */
-class WindowRing(val side: Int, capacity: Int) {
+class WindowRing(capacity: Int) {
     private val n = capacity
     private val frame = LongArray(n) { -1L }
     private val at = arrayOfNulls<IntArray>(n)
+    private val side = IntArray(n)
     private val pixels = arrayOfNulls<ByteArray>(n)
     private val rows = arrayOfNulls<ByteArray>(n)
     @Volatile var kept = 0L; private set
     @Volatile var dropped = 0L; private set
+    /** the size of the last window handed in, for the report */
+    @Volatile var lastSide = 0; private set
 
-    /** one frame's window, at [x], [y] in the whole picture, with that frame's row samples */
-    @Synchronized fun put(f: Long, x: Int, y: Int, win: ByteArray, rowSample: ByteArray) {
+    /** one frame's window, [s] square at [x], [y] in the whole picture, with its row samples */
+    @Synchronized fun put(f: Long, x: Int, y: Int, s: Int, win: ByteArray, rowSample: ByteArray) {
         val i = (f % n).toInt()
         if (frame[i] >= 0 && frame[i] != f) dropped++
-        frame[i] = f; at[i] = intArrayOf(x, y); pixels[i] = win; rows[i] = rowSample
-        kept++
+        frame[i] = f; at[i] = intArrayOf(x, y); side[i] = s; pixels[i] = win; rows[i] = rowSample
+        kept++; lastSide = s
     }
 
     /** what is held for frames [first, first + count), with nulls for the ones that are not */
     @Synchronized fun take(first: Long, count: Int): Taken {
         val a = arrayOfNulls<IntArray>(count)
+        val sd = IntArray(count)
         val p = arrayOfNulls<ByteArray>(count)
         val r = arrayOfNulls<ByteArray>(count)
         var have = 0
@@ -130,12 +139,13 @@ class WindowRing(val side: Int, capacity: Int) {
             val f = first + k
             val i = (f % n).toInt()
             if (frame[i] != f) continue
-            a[k] = at[i]; p[k] = pixels[i]; r[k] = rows[i]; have++
+            a[k] = at[i]; sd[k] = side[i]; p[k] = pixels[i]; r[k] = rows[i]; have++
         }
-        return Taken(a, p, r, have)
+        return Taken(a, sd, p, r, have)
     }
 
-    class Taken(val at: Array<IntArray?>, val pixels: Array<ByteArray?>, val rows: Array<ByteArray?>, val have: Int) {
+    class Taken(val at: Array<IntArray?>, val sides: IntArray, val pixels: Array<ByteArray?>,
+                val rows: Array<ByteArray?>, val have: Int) {
         val count get() = at.size
         /** the share of the asked-for frames that were still held */
         val coverage get() = if (count == 0) 0.0 else have.toDouble() / count

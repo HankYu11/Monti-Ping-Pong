@@ -16,6 +16,9 @@ node test/guard.mjs      /tmp/clips/k_*.mp4 # what may be measured along a hande
 
 bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which way they drill
 node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
+
+python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
+node test/capprof.mjs serve01.cap 3                               # where the engine's time goes
 ```
 
 `make_clips.sh` writes `<clip>.json` beside each clip with the true spin, the axis and the
@@ -98,6 +101,33 @@ mirror would reverse is never called known.
 
 It takes no clips on purpose: spinsim renders only flights across the picture, so every synthetic
 clip is side on and none of them can produce the case the rule is for.
+
+## capfromclip.py — a real serve, measurable off the phone
+
+A session saves `<serve>.mp4` (the whole ring, full frame) and `<serve>.json` (the capture's
+header and the live tracker's track), but not the `.cap` the engine actually measured. This
+rebuilds it. The clip holds more frames than the capture and nothing records where the capture
+starts, so the offset is found by scoring every candidate on how far the pixels differ from the
+background inside the discs the track predicts: at the right offset the ball is in them and
+nowhere else. The peak is sharp — one frame either side scores a third lower, a wrong offset
+twenty times lower — and the rebuilt capture reproduced the phone's own reading to the digit on
+every serve tried (39.80, 57.28, 61.71 rev/s).
+
+This matters because until now only rendered clips could be re-measured away from a phone, and
+rendered clips have no mains flicker, no motion blur, no player and no real marking.
+
+`--rect X Y W H` cuts a different window out of the same clip. That is how the engine's cost was
+shown to scale with the area it is handed and with nothing else.
+
+## capprof.mjs — where the engine's time goes
+
+Chromium's sampling profiler around `SpinMeter.measureCapture`, through the same headless path
+the WebView uses: no instrumentation, no guessing. Prints self time (which function burns the
+CPU) and inclusive time (which stage owns it).
+
+It was written because the engine's share of a serve's wait had been argued about for months
+without anyone looking. The answer: the spin maths is 6% of it, and per-pixel work on pixels that
+are not the ball is nearly all the rest.
 
 ## What these cannot tell you
 

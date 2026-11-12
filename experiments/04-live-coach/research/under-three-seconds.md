@@ -1,19 +1,18 @@
 # Getting a serve's answer under three seconds
 
 The target is the wait a player has between finishing a serve and hearing the answer: the app's
-own `answerMs`, from "Got it" to the spoken reading. It was about 6.4 s when it was first
-measured, and cutting and fetching the capture was 4.5 s of that — a figure this document was
-planned around and which the session below replaces.
+own `answerMs`, from "Got it" to the spoken reading. Six serves on a Pixel 8 at 0.10.2 measured
+3.27, 8.26, 3.62, 11.69, 3.27 and 4.05 seconds.
 
-## What the budget actually is
+Everything below is measured. Where a plan was built on reasoning instead, it says so, and the
+reasoning has mostly turned out to be wrong.
 
-Measured, on a Pixel 8 at 0.10.2, one session of six serves (`Session_20261112_154728`).
+## Where the wait goes
 
 `answerMs` is `fetchMs` plus the engine plus about 35 ms of dispatch, and `writeMs` sits *inside*
-`fetchMs` — the WebView's fetch is almost entirely the wait for the writer, with 41–185 ms of
-parsing after it on a tracked serve. Queue time, `answerMs` minus `wallMs`, is 5–20 ms on every
-serve: nothing waited behind anything. So there are two stages, and the event log splits the
-first one further, into decoding the stored frames and cutting the crop out of them.
+`fetchMs` — the WebView's fetch is almost entirely the wait for the writer. Queue time,
+`answerMs` minus `wallMs`, is 5–20 ms on every serve: nothing waited behind anything. The event
+log splits the write further, into decoding the stored frames and cutting the crop out of them.
 
 | serve | answer | decode | cut | write | parse | engine | track |
 |---|---|---|---|---|---|---|---|
@@ -24,165 +23,177 @@ first one further, into decoding the stored frames and cutting the crop out of t
 | 5 | 3.27 s | 977 | 833 | 85 | 62 | 1274 | yes |
 | 6 | 4.05 s | 907 | 780 | 73 | 185 | 2070 | yes |
 
-On the four tracked serves, which average 3.55 s:
+On the four tracked serves, averaging 3.55 s: decode 916 ms (26%), cut 678 (19%), write 168 (5%),
+parse 103 (3%), **engine 1650 (46%)**, dispatch 36 (1%).
 
-| stage | mean | share | does a windowed capture help? |
+The two slow serves are the engine refusing the tracker's handed-in track and searching for the
+flight itself, at 3.5 s and 4.6 s of pure search. Serve 4's track explains the refusal: its first
+three points have radius 52, 45 and 8 where the ball's is 18 — it had locked onto a paddle — and
+it then has two six-frame gaps. The engine was right. Nothing on the capture side touches this.
+
+## Inside the engine
+
+A real capture was rebuilt off the phone for the first time (`test/capfromclip.py`, below) and
+profiled with Chromium's sampling profiler (`test/capprof.mjs`). Desktop runs about 1.25–1.5×
+faster than the phone.
+
+| part | ms | % | what it does |
 |---|---|---|---|
-| decode the stored frames | 916 ms | 26% | no |
-| cut the crop | 678 ms | 19% | **yes** |
-| write the file | 168 ms | 5% | **yes** |
-| JS parse | 103 ms | 3% | **yes** |
-| **engine measure** | **1650 ms** | **46%** | no |
-| dispatch | 36 ms | 1% | no |
+| `findBall` × 60 frames | 236 | 24% | erode/dilate, connected components, min enclosing circle |
+| `measurePole` | 228 | 23% | the marking measurement itself |
+| `grabColor` (luma + chroma crop) | 164 | 16% | pulling the ROI out of each frame |
+| `deflickerOne` / `deflickerRows` | 121 | 12% | per-row brightness against the background |
+| the camera-shake check | ~100 | 10% | every 2nd pixel of the ROI, every frame, to see if the tripod moved |
+| `medianFrames` | 57 | 6% | the background, a per-pixel median of 15 frames |
+| **`fitRotatingVector` + `scan`** | **64** | **6%** | **the spin maths** |
 
-**The lever this document was written around is 27% of the wait, not most of it.** The 4.5 s of
-cutting and fetching quoted at the top predates the track-based crop; on a tracked serve those
-stages are now 0.95 s together. Strip 90% of them and serves 1, 3 and 5 land at 2.4, 2.9 and
-2.4 s — but serve 6 lands at 3.11 s, still over.
+**The spin maths is 6% of the engine. The other 94% is per-pixel JavaScript, nearly all of it on
+pixels that are not the ball.** The ROI is 844×250 = 211,000 px. The ball is r≈19, about 1,162 px
+— **0.55% of it**. Sixty frames are measured, so each full-ROI pass is 12.7 M pixel visits, and
+there are several.
 
-**The engine is the biggest stage.** "The engine was never the prize" is no longer true: at
-1.27–2.07 s it is 46% of a tracked serve, and with the capture stages gone it would be two
-thirds. The desktop A/B that found it flat to about 1% was asking whether it had got *slower*,
-which it hadn't; it never asked whether it was now the largest thing left. It is.
+## The engine's cost is its area, and nothing else
 
-**The two slow serves are a different failure.** Both are the engine refusing the tracker's track
-— "the serve's own stretch read unclear", "no track flies like a ball" — and searching for the
-flight itself, at 3.5 s and 4.6 s of pure search. Both still had a track good enough to cut
-windows from, so windowing does shrink their bytes; it takes them to about 7 s, all of it engine.
-For these serves the capture is not the problem at any size.
+The same capture was cut from the same clip at five different rectangles and measured each time:
 
-**There is a cheaper lever that was missed.** The capture rect is consistently about 2.1× taller
-and 1.1× wider than the bounding box of the very track it was built from, and the engine then
-reads a smaller ROI still — 4–20% of the bytes the phone cut, wrote and parsed:
-
-| serve | capture | track bbox + radius | engine ROI × frames used | captured | read |
-|---|---|---|---|---|---|
-| 1 | 1024×368 | 832×172 | 844×250 × 60 | 79.1 MB | 19.0 MB |
-| 3 | 1256×374 | 1169×172 | 1090×238 × 60 | 101.5 MB | 23.3 MB |
-| 5 | 1288×330 | 1210×157 | 1065×190 × 60 | 95.6 MB | 18.2 MB |
-| 6 | 1344×424 | 1237×189 | 1195×291 × 55 | 112.8 MB | 28.7 MB |
-
-Tightening the vertical margin is worth about 2× on cut, write and parse for a one-line change,
-needs no new format, and carries none of the row-alignment risk below. It should be tried first,
-if only to find out what the margin is protecting against.
-
-**What the air test does not tell us.** No serve in this session bounced — there was no table, and
-every one is annotated "no bounce seen". Capture length barely moved (132–166 frames), so the
-window looks close to fixed, but a real serve's flight is *taller*, and crop height feeds cut,
-write and parse directly. Those are the stages windowing fixes, so a table session should be
-slower in exactly the places the fix lands. The 2-in-6 track refusal rate is also suspect: "no
-track flies like a ball" is what a ball that never bounces and leaves frame early would produce.
-It needs one session on a table to know.
-
-## The lever that is already built and not shipped
-
-A windowed capture stores, instead of the whole crop per frame:
-
-- a small square window round the ball, three times its radius, per frame;
-- one background frame, the per-pixel median of a spread of frames;
-- per frame, the mean brightness of every row of the full crop.
-
-All three are needed. Blanking everything outside the window fails on every real capture, because
-the engine's background is a per-pixel median across frames and reads black wherever the window
-went, so the whole window counts as foreground. Without the row brightness, the rows outside the
-window stop flickering with the mains and the correction inside it goes wrong.
-
-Validated at 0.9.5 on 29 real captures: 27 match the whole crop to a median of 0.2%, at a
-fiftieth to a hundredth of the bytes — 24.3 MB down to 1.2 MB. The engine reads the format, and
-`core/.../Windows.kt` writes it. **Only the desktop harness has ever called it.** The phone still
-cuts, writes, serves and parses the whole crop.
-
-## Two corrections to the obvious plan
-
-The obvious plan — have the phone write windows using the live track, keep 15 full crops to build
-the background, compute row brightness in the same pass — has two problems, both raised by Gemini
-when asked to pick holes in it.
-
-**The background should not come from the capture.** Building a 15-frame per-pixel median at the
-end of a capture puts that work between the serve and the answer, where every millisecond is the
-player waiting. It is not as expensive as Gemini claimed — about 420,000 bytes a frame over 15
-frames with a 15-element median each is tens of milliseconds, not seconds — but it is on the
-critical path for no reason. The camera is on a tripod and the scene is static: the background can
-come from frames *before* the serve, from a rolling ring the tracker already sees, cropped once
-the flight's rectangle is known, and computed on another thread while the capture writes. A
-background without the ball in it is also a better background than one built from frames the ball
-is crossing.
-
-**The row brightness probably does not need every pixel.** It is the one part of the windowed
-capture that still reads the whole crop — 400×700 over 50 frames is about 14 million reads a
-serve, which undoes a good share of what the windows save. Sampling every Nth column should be
-nearly free in accuracy, because `rowBright` is a *ratio* to the background's row mean: use the
-same columns for both and the sampling bias is common-mode and cancels. That is reasoning, not
-measurement, so it is being measured on the rendered clips before it is built — stride 1, 4, 8,
-16, 32, against the whole-crop reading.
-
-## What the experiments said
-
-**The windowed read still agrees.** The format was validated at 0.9.5 and the engine has changed
-since. Re-run on 13 rendered clips: 13 of 13 within 0.5 rev/s of the whole crop, drift 0.00 on
-seven and 0.05 on six. The signed gyro drifts at most 0.46 rev/s and `gyroDirKnown` agrees on all
-13. Bytes 7–18× smaller, median 12×.
-
-**The stride is free, and the correction is not optional.** The first run of this tested nothing:
-spinsim renders no flicker, so `rowBright` is 1 everywhere and no stride can fail. Rolling-shutter
-bands were injected instead — 100 Hz light at 240 fps — applied identically before both reads,
-with a control that left the correction out altogether:
-
-| flicker | strides 1, 4, 8, 16, 32 | no correction at all |
+| ROI px/frame | engine (desktop) | reading |
 |---|---|---|
-| 10% | max drift 0.05, 13/13 clear | max 0.05, 13/13 clear |
-| 25% | max drift 0.05, 13/13 clear | max 26.15, 11/13 clear |
-| 25% + a wall gradient | max drift 0.05, 13/13 clear | max 66.25, 11/13 clear |
+| 211,000 (what the phone gave it) | 1010 ms | 39.80 rev/s |
+| 141,100 | 750 ms | 39.80 |
+| 99,600 | 527 ms | 40.05 |
+| 74,700 | 383 ms | 40.45 |
+| 53,120 | 286 ms | 40.20 |
 
-So the correction earns its place — leaving it out wrecks two clips in three — and subsampling it
-costs nothing up to every 32nd column. The common-mode argument holds.
+Serve 6 agrees: 347,745 px → 1653 ms (57.28 rev/s), 218,228 px → 1073 ms (57.05).
 
-**The limit of that test, which matters.** Synthetic flicker is perfectly uniform along a row,
-which is exactly the assumption the stride rests on, so this cannot contradict it. A real row has
-a player moving across part of it, and a mean over sampled columns is pulled by wherever the body
-falls while the full-row mean is pulled differently. The guard is to take the **median** of the
-sampled columns rather than the mean, which ignores a body covering a minority of them. That is
-what `Windows.rowLevel` now does, at every 16th column. It is untested on real footage: the first
-session with windows should log stride 1 beside stride 16.
+That is a straight line through both serves at about **4.5 µs per thousand ROI pixels**, roughly
+75 ns per pixel visit, over a fixed cost of 40–100 ms. The engine has no other significant term.
+And the reading barely moves: 39.80 to 40.45 across a four-fold cut, down to a strip only 3.7 ball
+radii tall.
 
-**End to end through the real writer and reader.** The desktop runner cut two rendered serves both
-ways and `cap.mjs --pair` measured each: 30.05 against 30.00, and 45.05 against 45.05 — drift 0.05
-and 0.00 rev/s, at 20× and 21× fewer bytes (24.3 MB → 1.2 MB). That is Kotlin's `Windows.write`
-and the engine's own reader, not a simulation of them.
+So the engine's time is a choice about how many pixels it is handed. Give it a box round the ball
+— 115×115 for serve 1 — instead of the whole flight's bounding strip, and the line predicts
+**~103 ms on the desktop, 130–160 ms on the phone, against 1,538 ms today.** About tenfold.
 
-**What the window buys the engine is small, and that is fine.** Measuring the same pixels both
-ways: whole crop median 671 ms, windowed 604 ms, a ratio of 1.13×. These crops are 9–24 MB where
-real ones are 24–786 MB, so it is a floor. The engine was never the prize. The prize is the phone
-not cutting, writing and serving the whole crop, and no desktop test can measure that.
+## The capture is recovering pixels it already had
+
+The decode and the cut — 1,594 ms, 45% of the wait — exist only because the full-resolution
+pixels are thrown away at capture time and then recovered from H.264 afterwards.
+
+`GlTap.kt` says what actually happens live. Every frame at 240 fps arrives as a **GPU texture**
+from an ImageReader in `ImageFormat.PRIVATE` with `USAGE_VIDEO_ENCODE`. The graphics chip reads
+that buffer with no copy, draws it shrunk 4× to 480×270 as brightness and colour in the tracker's
+units, reads back 518 KB every second frame, and draws the full-size frame into the encoder.
+
+**The full-resolution pixels are on the GPU, 240 times a second, while the serve happens. Nobody
+keeps them.** Half a second later the app asks the hardware decoder for them back, at 5.3–12.4 ms
+a frame.
+
+So the architecture is: **ring the windows, not the frames.**
+
+- In the GPU pass that already runs, add a draw that crops a box round the ball's predicted
+  position at full resolution and reads back ~56 KB instead of nothing.
+- Ring those windows in RAM uncompressed. At 196×196 that is 56 KB a frame and 13.8 MB for a
+  240-frame ring — against 435 MB for raw full frames, which is why the ring is compressed today.
+- Reduce each frame to per-row mean brightness in the same pass and read back 1080 floats: the
+  flicker correction the windowed format already needs.
+- Keep a rolling full-resolution background on the GPU and read back only the flight's rectangle
+  of it, once, when the serve ends.
+- At serve end there is then nothing to decode and nothing to cut. Hand it over in memory.
+
+### How big the window has to be
+
+The ball's position is known from the tracker's readback, which is deliberately two frames late
+and taken every second frame, so the window must be cut from a prediction. Measured on all six
+serves' own tracks, predicting each point linearly from the three points at least two frames
+older, and ignoring points whose radius is far from the track's median (which is how serve 4's
+paddle is excluded):
+
+| serve | px/frame | ball r | median error | 90th | worst |
+|---|---|---|---|---|---|
+| 1 | 12.3 | 17.4 | 3 | 5 | 7 |
+| 2 | 13.3 | 13.5 | 4 | 8 | 16 |
+| 3 | 17.0 | 16.1 | 4 | 10 | 17 |
+| 4 | 25.2 | 18.3 | 6 | 15 | 41 |
+| 5 | 14.9 | 13.6 | 5 | 8 | 19 |
+| 6 | 19.8 | 18.9 | 5 | 11 | 12 |
+
+**A median of 4 px and a worst case of 41 px.** A box of 3r plus that worst case either side is
+196×196. Quadratic extrapolation is *worse* than linear at every lag — it fits the noise — so the
+prediction should stay linear. At a six-frame lag the worst is still 56 px.
+
+The H.264 ring stays as the safety net. The encoder runs anyway, so it costs nothing, and if the
+ball ever leaves its window the old path still has the pixels.
+
+## What was proposed and did not survive
+
+Gemini was asked to pick the plan apart. Two of its recommendations were already true and one of
+its numbers was wrong by a factor of four, which is worth recording.
+
+- **"Your I-frame interval is a second, so the decoder grinds through hundreds of useless frames
+  to seek."** The clips say the keyframe interval is 24 frames — 0.1 s at 240 fps, uniform — and
+  `ClipRecorder.kt` already sets `KEY_I_FRAME_INTERVAL = 0.1f`. Worst case is 23 extra frames on a
+  140-frame span, 16%. The decode is throughput, not seeking.
+- **"A serve at 15 m/s moves 1.5 ball diameters a frame, so your prediction will drift 180 px."**
+  These serves launch at 3.6–7.3 m/s and move 12–25 px a frame, about half a diameter, and the
+  measured drift is 4 px typical and 41 px worst. The window is a fifth of the size that argument
+  demanded.
+- **"Replace the WebView with QuickJS."** QuickJS is an interpreter; 64 ms of maths in V8 could
+  become several hundred in it. Once the per-pixel work leaves JavaScript the host hardly matters,
+  and the 36 ms of dispatch is not worth a rewrite.
+- **"Keep the H.264 ring as a fallback"**, **"pack the readbacks into one texture rather than
+  adding a second and a third"**, and **"prove the window-native engine before touching the GPU"**
+  are all good, and are in the plan below.
 
 ## Order of work
 
-1. ~~**Measure.**~~ Done: six serves, broken down above. The result moved the rest of this list.
-2. **Tighten the capture rect** to the track's own bounding box plus a margin that is argued for
-   rather than inherited. About 2× on cut, write and parse; no new format.
-3. **Attack the engine's measure**, now the largest stage at 1.65 s on a tracked serve. Nothing
-   here has been profiled yet — that is the next measurement, not the next build.
-4. **Stop the engine refusing good tracks**, or cap the search when it does. Two serves in six
-   cost 3.5 s and 4.6 s of search; nothing in the capture path touches them.
-5. **Build the windowed capture on the phone**, background from pre-serve frames, off the critical
-   path. Worth 0.95 s on a tracked serve, and more on a real one with a bounce — real, but on its
-   own it does not reach three seconds.
-6. **Prove it on the phone before trusting it**: a session writing both a whole-crop and a windowed
-   capture for each serve and measuring both, so the two readings can be compared on the same ball.
+1. **Make the engine window-native.** It reads the windowed format today by *rebuilding the full
+   crop* (`windowsInto`) and then running the same full-ROI passes, which is why that format won
+   only 1.13×. Every expensive stage — `findBall`, `grabColor`, the deflicker, the shake check,
+   `medianFrames` — should work in the box round the ball, with the background patch supplying
+   what is outside it. The line above predicts roughly tenfold. This needs no phone and no GPU
+   work: the harness can prove it on rebuilt real captures and on the rendered clips with ground
+   truth.
+2. **Cut the windows on the phone from the existing capture**, so the engine gets the format it
+   now wants. Decode and cut stay, but write and parse shrink with the bytes. Expected answer:
+   about 1.9 s on serve 1 and 2.2 s on serve 6 — the three-second target, met, without touching
+   the camera path.
+3. **Ring the windows on the GPU** and stop decoding. One packed readback per frame, a rolling
+   background, the H.264 ring kept as the fallback. Expected answer: a few hundred milliseconds.
+4. **The refused-track path.** Untouched by all of the above, worth 3.5–4.6 s when it fires, and
+   possibly an artefact of serving into open air with no bounce. It needs a session on a table
+   before it is worth designing for.
 
-Steps 2 and 5 are the capture; 3 and 4 are the engine, and the measurement says the engine is
-where the target is actually won. Serving the capture from memory rather than through a file is
-worth 168 ms and is not the answer. Moving the spin fit out of the WebView into Kotlin now has a
-real case for the first time — it is step 3's likeliest ending — but it stays last, because it is
-weeks of work and risks accuracy that is already proven.
+Steps 1 and 2 reach the target. Step 3 is what makes the number small enough to stop thinking
+about, and step 1 is a prerequisite for it either way.
 
 ## What would break it, and the test that catches it
 
-The flicker correction. At 240 fps under mains lighting the rolling shutter puts strong horizontal
-banding in every frame, and the windowed capture reconstructs the frame from a background plus a
-row-brightness ratio plus a window. If the row that Kotlin measures and the row the engine applies
-are off by one, or the window's offset and the row index disagree, the correction fights the
-banding instead of removing it, and the spin reads wrong while everything still looks plausible.
+**The background.** The engine's background is a per-pixel median across 15 frames precisely
+because a ball or a player crossing a pixel must not pull it. A GPU accumulator gives an
+exponential moving average cheaply and a median expensively, and at 240 fps a ball crosses a pixel
+in about two frames, so an average will smear a trail behind it exactly where the measurement
+looks. The cheap test is to add the average to the renderer's own path and see whether the
+ground-truth harness still scores. Gemini's alternative is worth trying if it fails: copy every
+*k*-th frame into a 15-deep texture array, and take the median in one compute pass at the end.
 
-The test is step 5: the same serve, measured both ways, on a phone, under the worst light to hand.
-A drift larger than the 0.2% the format was validated at means the row alignment is wrong.
+**The row alignment.** The windowed capture reconstructs a frame from a background, a row
+brightness ratio and a window. If the row Kotlin measures and the row the engine applies are off
+by one, the correction fights the banding instead of removing it, and the spin reads wrong while
+everything still looks plausible. The test is one phone session writing both forms of the same
+serve and measuring both; a drift past the 0.2% the format was validated at means the rows are
+misaligned.
+
+**The window itself.** If the prediction is ever wrong the pixels are gone, where today they are
+not. Hence the H.264 fallback, and hence a window sized by the measured worst case rather than the
+typical one.
+
+## The tools this needed
+
+- `test/capfromclip.py` rebuilds the exact `.cap` a phone measured, from the clip and the serve
+  JSON saved beside it, by finding the offset that puts the ball inside the discs its own track
+  predicts. It reproduced the phone's reading to the digit on all three serves tried — 39.80,
+  57.28 and 61.71 rev/s. Before this, only rendered clips could be re-measured off the phone, and
+  rendered clips have no mains flicker, no motion blur and no player.
+- `test/capprof.mjs` CPU-profiles `measureCapture` on a `.cap` through the same headless Chromium
+  path the WebView uses, and prints self and inclusive time per function.

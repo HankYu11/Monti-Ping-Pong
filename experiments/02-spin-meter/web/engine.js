@@ -579,10 +579,41 @@
     if (!P) return toColor(ctx, src, W, H, roi);
     return { g: lumaCrop(P, roi), u: P.u ? chromaCrop(P, P.u, roi) : null, v: P.v ? chromaCrop(P, P.v, roi) : null };
   }
+  // One frame of a windowed capture over one box: the window's own pixels where it reaches, the
+  // crop's background everywhere else, and the row brightness already divided out of the window,
+  // which is exactly what the measuring step would do next. The first reader of this format put
+  // the whole crop back together for every frame and then had a box read out of it, which cost
+  // more than reading a whole crop would have -- the saving was in the bytes, never in the work.
+  function windowBox(S, roi, box) {
+    const { buf, win, rows, bg, cw, ySize, cSize, lut, clut, winW: wW, winH: wH } = S;
+    const cw2 = cw >> 1, wW2 = wW >> 1, wH2 = wH >> 1, wY = wW * wH, wC = wW2 * wH2;
+    const [rx, ry] = roi, [bx, by, bw, bh] = box, X0 = rx + bx, Y0 = ry + by, size = bw * bh;
+    const g = new Float32Array(size), u = new Float32Array(size), v = new Float32Array(size);
+    const bgG = new Float32Array(size), bgU = new Float32Array(size), bgV = new Float32Array(size);
+    const wx = win ? win[0] : 0, wy = win ? win[1] : 0, have = !!(win && buf);
+    for (let y = 0; y < bh; y++) {
+      const Y = Y0 + y, sc = rows ? rows[Y] : 1, o = y * bw, bgRow = Y * cw, cRow = (Y >> 1) * cw2;
+      const inY = have && Y >= wy && Y < wy + wH;
+      for (let x = 0; x < bw; x++) {
+        const X = X0 + x, p = o + x, c = cRow + (X >> 1);
+        bgG[p] = lut[bg[bgRow + X]];
+        bgU[p] = clut[bg[ySize + c]];
+        bgV[p] = clut[bg[ySize + cSize + c]];
+        if (inY && X >= wx && X < wx + wW) {
+          g[p] = lut[buf[(Y - wy) * wW + (X - wx)]] / sc;
+          const wc = ((Y - wy) >> 1) * wW2 + ((X - wx) >> 1);
+          u[p] = clut[buf[wY + wc]];
+          v[p] = clut[buf[wY + wC + wc]];
+        } else { g[p] = bgG[p]; u[p] = bgU[p]; v[p] = bgV[p]; }
+      }
+    }
+    return { g, u, v, bg: bgG, bgU, bgV, box, corrected: true };
+  }
   // One frame as the measuring step wants it: the pixels of a box inside the crop, and the crop's
   // own per-row brightness sample. Without planes to read (the canvas fallback) the crop is read
   // whole, as it always was, and the sample is taken from it.
   async function grabBox(ctx, src, W, H, roi, box) {
+    if (src && src.captureWindow) return windowBox(src.captureWindow, roi, box);
     const P = await framePlanes(src, W, H);
     readStats[P ? "direct" : "canvas"]++;
     const [rx, ry, rw, rh] = roi;
@@ -1818,10 +1849,15 @@
       const x1 = Math.min(rw, Math.ceil(p[0]) + m + 1), y1 = Math.min(rh, Math.ceil(p[1]) + m + 1);
       return x1 - x0 >= rw && y1 - y0 >= rh ? whole : [x0, y0, x1 - x0, y1 - y0];
     };
+    // A capture written as windows brings its own background and its own row brightness, built on
+    // the phone from the whole crop before the rest of it was thrown away. There is then nothing
+    // here to take a median of and no row to sample, and the reader hands a box back ready to
+    // measure. Otherwise the background is still a median over a spread of frames read whole.
+    const windowed = !!R.windowed;
     const bgAt = [];
     if (n > BG_FRAMES) for (let k = 0; k < BG_FRAMES; k++) bgAt.push(Math.round(k * (n - 1) / (BG_FRAMES - 1)));
     else for (let k = 0; k < n; k++) bgAt.push(k);
-    const bgSet = new Set(bgAt);
+    const bgSet = windowed ? new Set() : new Set(bgAt);
 
     const frames = new Array(n);
     await R.run(seg.start, seg.end, async (i, src) => {
@@ -1830,38 +1866,46 @@
     });
     for (let k = 0; k < n; k++) if (!frames[k]) frames[k] = frames[k - 1] || frames.find(Boolean);
     const colour = frames.every((f) => f.u);
-    const bgKeys = bgAt.filter((k) => frames[k] && frames[k].box === whole);
-    const bgU = colour ? medianFrames(bgKeys.map((k) => frames[k].u), rw * rh) : null;
-    const bgV = colour ? medianFrames(bgKeys.map((k) => frames[k].v), rw * rh) : null;
-    let bg = medianFrames(bgKeys.map((k) => frames[k].g), rw * rh);
-    const gray = frames.map((f) => applyRows(f.g, f.box, rowRatios(f.rows, bg, rw, rh, ROW_STEP)));
-    bg = medianFrames(bgKeys.map((k) => gray[k]), rw * rh);
-    // the background over one frame's box; findBall and the colour test read it per pixel
-    const cut = (src, box) => {
-      if (box === whole) return src;
-      const [x0, y0, w, h] = box, out = new src.constructor(w * h);
-      for (let y = 0; y < h; y++) { const r = (y0 + y) * rw + x0; out.set(src.subarray(r, r + w), y * w); }
-      return out;
-    };
-    const parts = frames.map((f, k) => ({ g: gray[k], box: f.box, bg: cut(bg, f.box) }));
-    const cols = frames.map((f, k) => (colour ? { u: f.u, v: f.v, bgU: cut(bgU, f.box), bgV: cut(bgV, f.box), box: f.box } : null));
+    let parts, cols, bgKeys = [];
+    if (frames.every((f) => f.corrected)) {
+      parts = frames.map((f) => ({ g: f.g, box: f.box, bg: f.bg }));
+      cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU: f.bgU, bgV: f.bgV, box: f.box } : null));
+    } else {
+      bgKeys = bgAt.filter((k) => frames[k] && frames[k].box === whole);
+      const bgU = colour ? medianFrames(bgKeys.map((k) => frames[k].u), rw * rh) : null;
+      const bgV = colour ? medianFrames(bgKeys.map((k) => frames[k].v), rw * rh) : null;
+      let bg = medianFrames(bgKeys.map((k) => frames[k].g), rw * rh);
+      const gray = frames.map((f) => applyRows(f.g, f.box, rowRatios(f.rows, bg, rw, rh, ROW_STEP)));
+      bg = medianFrames(bgKeys.map((k) => gray[k]), rw * rh);
+      // the background over one frame's box; findBall and the colour test read it per pixel
+      const cut = (src, box) => {
+        if (box === whole) return src;
+        const [x0, y0, w, h] = box, out = new src.constructor(w * h);
+        for (let y = 0; y < h; y++) { const r = (y0 + y) * rw + x0; out.set(src.subarray(r, r + w), y * w); }
+        return out;
+      };
+      parts = frames.map((f, k) => ({ g: gray[k], box: f.box, bg: cut(bg, f.box) }));
+      cols = frames.map((f) => (colour ? { u: f.u, v: f.v, bgU: cut(bgU, f.box), bgV: cut(bgV, f.box), box: f.box } : null));
+    }
     const balls = parts.map((P, k) => {
-      const p = predict(k), [x0, y0, w, h] = P.box;
+      const p = predict(k), [x0, y0, w] = P.box, h = P.box[3];
       const b = findBall(P.g, P.bg, w, h, 5.0, cols[k], p ? [p[0] - x0, p[1] - y0, p[2]] : null);
       if (b) { b[0] += x0; b[1] += y0; }        // back into the crop's own pixels
       return b;
     });
     const found = balls.filter(Boolean), stats = { frames: found.length, total: balls.length };
     // Does the picture around the ball stay still during the serve? Share of pixels away from the
-    // ball that differ from the background, per frame; a moving camera makes most of them differ.
-    // Only the frames read whole can answer it, and those are the spread the background came from
-    // -- fifteen of them, taken across the flight, which is what a median over them needed anyway.
-    const changed = bgKeys.map((k) => {
-      const g = gray[k], b = balls[k], col = cols[k];
+    // ball that differ from the background. Over the frames read whole where there are any -- the
+    // spread the background came from, which a median over them needed anyway -- and over the box
+    // round the ball when the capture arrived as windows and there is nothing else to look at. A
+    // camera that moved shows up in the box as plainly as anywhere. Nothing is decided on this
+    // number: it is reported, and kept with the training data.
+    const changed = (bgKeys.length ? bgKeys : parts.map((_, k) => k)).map((k) => {
+      const P = parts[k], b = balls[k], col = cols[k], [x0, y0, w, h] = P.box;
       let c = 0, m = 0;
-      for (let y = 0; y < rh; y += 2) for (let x = 0; x < rw; x += 2) {
-        if (b && Math.hypot(x - b[0], y - b[1]) < 2 * b[2]) continue;
-        const p = y * rw + x; m++; if (colourDiff(g[p], bg[p], col, p) > 25) c++;
+      for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+        if (b && Math.hypot(x0 + x - b[0], y0 + y - b[1]) < 2 * b[2]) continue;
+        const p = y * w + x; m++; if (colourDiff(P.g[p], P.bg[p], col, p) > 25) c++;
       }
       return c / Math.max(1, m);
     });
@@ -2287,10 +2331,26 @@
     const n = cap.frames ? cap.frames.length : cap.n;
     const raw = cap.frames ? async (i) => cap.frames[i] : cap.frame;
     const rebuild = cap.windows ? windowsInto(cap, cw, ch, ySize, cSize) : null;
-    const get = rebuild ? async (i) => rebuild(i, await raw(i)) : raw;
+    const lut = cap.full ? LUT_FULL : LUT_VIDEO, clut = cap.full ? CHROMA_FULL : CHROMA_VIDEO;
+    // the row brightness is smoothed the same way deflickerRows smooths its own estimate, so a
+    // window reads as the rebuilt crop did
+    const smoothed = cap.windows && cap.rowBright ? cap.rowBright.map((r) => smoothRows(Float64Array.from(r), ch)) : null;
+    const winSrc = (i, buf) => ({
+      buf, win: cap.windows[i], rows: smoothed && smoothed[i], bg: cap.background,
+      cw, ySize, cSize, lut, clut, winW: cap.winW, winH: cap.winH,
+    });
     return {
-      kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy,
-      async run(a, b, cb) { for (let i = Math.max(0, a); i < Math.min(b, n); i++) await cb(i, { capturePlanes: plane(await get(i)) }); },
+      kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy, windowed: !!cap.windows,
+      async run(a, b, cb) {
+        for (let i = Math.max(0, a); i < Math.min(b, n); i++) {
+          const buf = await raw(i);
+          if (!rebuild) { await cb(i, { capturePlanes: plane(buf) }); continue; }
+          // the flight search still wants whole frames, so the rebuild stays -- behind a getter,
+          // so measuring, which asks only for boxes, never pays for it
+          let built = null;
+          await cb(i, { captureWindow: winSrc(i, buf), get capturePlanes() { return (built ||= plane(rebuild(i, buf))); } });
+        }
+      },
       close() {},
     };
   }

@@ -19,6 +19,7 @@ node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just it
 
 python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
 node test/capcheck.mjs  serve01.json serve02.json ...             # does it still read what the phone read?
+node test/capcheck.mjs --ext .win.cap --split 4 serve01.json ... # ... and does the windowed cut of it?
 node test/capprof.mjs   serve01.cap 3                             # where the engine's time goes
 ```
 
@@ -127,12 +128,46 @@ reading came from. Together they make a real serve — with real mains flicker, 
 real player in the picture and a real marking on the ball — into a test with an answer. Rendered
 clips cannot be that, however good the renderer is.
 
+`--ext` measures a different cut of the same serves against the same answers, which is how the
+windowed capture is held to the reading the phone gave for the whole crop. Build those with the
+app's own writer:
+
+```bash
+gradle -p ../../04-live-coach/android :desktop:installDist
+java -cp "../../04-live-coach/android/desktop/build/install/desktop/lib/..." \
+     com.monti.servecoach.desktop.WinCapKt serve01.cap serve01.win.cap
+```
+
 The rule is not "the same number" for every serve. A serve the engine could not read is held only
 to saying so again: comparing one unreadable answer to another compares noise. Session
 20261112's serve 2 fits 0.09 where a serve the engine can read fits 0.7 to 0.9, and any change to
 which pixels are looked at moves that number freely. Those serves print with `~`. For every serve
 the engine called clear, the reading, the spin split, the marking and the gyro's direction must
 all still agree.
+
+A serve the engine measured over a *different stretch* of the flight is held only to the things
+that do not depend on which frames were used — the rate, the kind of spin, the marking, whether
+the gyro's direction is claimed. The spin split over different frames is a different measurement,
+not a drifted one. Those print with `s`. It happens when the engine refuses the live track and
+searches the crop itself, and a capture cut down to windows is a cleaner picture to search:
+session 20261112's serve 4 gave the search 44 frames of flight where the whole crop gave 23, and
+it fitted them better.
+
+`--split` sets how far the three numbers the spin is split into may move. 1 rev/s for a cut that
+holds the same pixels; 4 for the windowed form, which does not — measured against the whole crop
+on the four serves of session 20261112 that the engine measured along the track, the rate moves
+by at most 0.15 rev/s and the split by at most 3.4, the worst being the serve flying most
+directly at the camera, where the split is most sensitive to the flight's angle.
+
+## capfile.mjs — one reader for a .cap
+
+The parser the three harnesses share, as a string, because it has to run inside the page: a
+capture is tens or hundreds of megabytes of typed arrays and handing that back across the
+Playwright boundary would cost more than the measurement.
+
+It was three copies before, and two of them silently read a windowed capture as a whole-crop one.
+The header says `windows`, the bytes are the background, the row brightness and the windows, and
+reading them as frames gives noise that still parses and still measures.
 
 ## capprof.mjs — where the engine's time goes
 

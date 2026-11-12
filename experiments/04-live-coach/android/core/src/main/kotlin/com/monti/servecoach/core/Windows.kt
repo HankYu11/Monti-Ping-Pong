@@ -120,8 +120,13 @@ object Windows {
      * The median rather than the mean is a guard those clips could not test. Their flicker is
      * uniform along a row, which is the very assumption the stride rests on; a real row has a
      * player moving across part of it, and a mean over sampled columns is pulled by wherever the
-     * body falls. A median ignores a body covering a minority of the sample. Untested on real
-     * footage: the first session with windows should log stride 1 beside stride 16.
+     * body falls. A median ignores a body covering a minority of the sample.
+     *
+     * Now tested on real footage, which is what this comment used to ask for. Four serves of
+     * session 20261112 cut at strides of 2, 4, 8 and 16 and measured against the whole crop: the
+     * readings move by less than 0.1 rev/s and the spin split by less than 0.1 across the whole
+     * range, so every 16th column really is as good as every other one here. (What did matter
+     * was the estimator, not the stride: see rowBright.)
      */
     fun rowLevel(frame: ByteArray, rect: IntArray, stride: Int = ROW_STRIDE): DoubleArray {
         val w = rect[2]; val h = rect[3]
@@ -136,10 +141,39 @@ object Windows {
         }
     }
 
-    /** how bright each row of a frame is against the background: one number a row */
-    fun rowBright(frame: ByteArray, bgLevel: DoubleArray, rect: IntArray, stride: Int = ROW_STRIDE): FloatArray {
-        val lv = rowLevel(frame, rect, stride)
-        return FloatArray(rect[3]) { (lv[it] / bgLevel[it]).toFloat() }
+    /**
+     * How bright each row of a frame is against the background: one number a row.
+     *
+     * The median of the ratio at each sampled pixel, NOT the ratio of the two medians. They look
+     * interchangeable and are not, and the difference broke the reading in a way that took a real
+     * serve to see. A median of the row's values is the median of whatever that row crosses --
+     * table, floor, a player -- so on a row the two pictures cross differently the two medians
+     * can come from different things, and the ratio of them is off by a few percent. The engine's
+     * own deflickerRows takes the median of the per-pixel ratio, where every sample compares like
+     * with like.
+     *
+     * A few percent sounds harmless. It is not: the error depends on the row, the ball changes
+     * rows as it flies, so it lands as a drift in the ball's measured SIZE over the flight. Size
+     * against time is how the engine works out whether the serve comes toward the camera, and
+     * that angle is how the spin is split into lift, curve and gyro. Session 20261112's serve 3
+     * read 36 degrees toward the camera from windows against 13 from the whole crop, which moved
+     * its gyro from -35 to -52 rev/s while the rate itself stayed within 0.1. The windowed format
+     * was validated on the rate alone, so this sat unnoticed until the split was compared too.
+     */
+    fun rowBright(frame: ByteArray, bg: ByteArray, rect: IntArray, stride: Int = ROW_STRIDE): FloatArray {
+        val w = rect[2]; val h = rect[3]
+        val buf = DoubleArray((w + stride - 1) / stride)
+        return FloatArray(h) { y ->
+            val o = y * w
+            var k = 0; var x = 0
+            while (x < w) {
+                val b = (bg[o + x].toInt() and 255).toDouble()
+                buf[k++] = (frame[o + x].toInt() and 255) / (if (b < 1.0) 1.0 else b)
+                x += stride
+            }
+            java.util.Arrays.sort(buf, 0, k)
+            buf[k / 2].toFloat()
+        }
     }
 
     /**
@@ -153,11 +187,20 @@ object Windows {
         val n = cap.frames.size
         val rect = cap.rect
         val at = offsets(tracks, rect, n, side)
-        // the background can come from outside: on the phone, from frames taken BEFORE the serve,
+        // The background can come from outside: on the phone, from frames taken BEFORE the serve,
         // where the scene is the same (a tripod, a static room), the ball is not crossing it, and
-        // the work sits off the path between the serve and the answer
-        val back = bg ?: background(cap.frames, cap.frameBytes)
-        val bgLevel = rowLevel(back, rect)
+        // the work sits off the path between the serve and the answer.
+        //
+        // Failing that it comes from the frames the ball was tracked through, NOT from a spread of
+        // the whole capture. A capture starts before the flight and holds the toss and the swing,
+        // and a median across those has the arm in it wherever the arm went -- which is where the
+        // ball goes a moment later. The engine's own background is a median of the frames it
+        // measures, so this matches it, and on session 20261112's serve 5 it moved the gyro from
+        // 0.0 back to -4.3 against the whole crop's -5.2.
+        val lo = at.indexOfFirst { it != null }
+        val hi = at.indexOfLast { it != null }
+        val back = bg ?: background(
+            if (lo in 0..hi) cap.frames.subList(lo, hi + 1) else cap.frames, cap.frameBytes)
         val wins = StringBuilder("[")
         for (i in 0 until n) {
             if (i > 0) wins.append(',')
@@ -168,7 +211,7 @@ object Windows {
         DataOutputStream(FileOutputStream(file).buffered(1 shl 20)).use { out ->
             out.writeInt(head.size); out.write(head)
             out.write(back)
-            for (i in 0 until n) for (v in rowBright(cap.frames[i], bgLevel, rect)) out.writeInt(java.lang.Float.floatToIntBits(v))
+            for (i in 0 until n) for (v in rowBright(cap.frames[i], back, rect)) out.writeInt(java.lang.Float.floatToIntBits(v))
             for (i in 0 until n) at[i]?.let { out.write(cut(cap.frames[i], rect, it, side)) }
         }
         return side

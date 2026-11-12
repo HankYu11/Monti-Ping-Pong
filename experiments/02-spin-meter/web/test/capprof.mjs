@@ -10,6 +10,7 @@
 import { chromium } from '/opt/node-tools/node_modules/playwright/index.mjs';
 import http from 'http'; import fs from 'fs'; import path from 'path';
 import { fileURLToPath } from 'url';
+import { READ_CAP } from './capfile.mjs';
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const file = path.resolve(process.argv[2]);
 const reps = +(process.argv[3] || 1);
@@ -28,18 +29,8 @@ page.on('pageerror', e => console.log('page error:', e.message));
 await page.goto(base + '/');
 await page.waitForFunction(() => typeof window.SpinMeter !== 'undefined');
 
-await page.evaluate(async (url) => {
-  const b = new Uint8Array(await (await fetch(url)).arrayBuffer());
-  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-  const hLen = dv.getInt32(0);
-  const head = JSON.parse(new TextDecoder().decode(b.subarray(4, 4 + hLen)));
-  let o = 4 + hLen;
-  const cw = head.rect[2], ch = head.rect[3];
-  const frameBytes = cw * ch + 2 * ((cw / 2) * (ch / 2));
-  const cap = Object.assign({}, head, { frames: [] });
-  for (let i = 0; i < head.n; i++) { cap.frames.push(b.subarray(o, o + frameBytes)); o += frameBytes; }
-  window.__cap = cap;
-}, base + '/cap');
+await page.evaluate(READ_CAP);
+await page.evaluate(async (url) => { window.__cap = await window.__readCap(url); }, base + '/cap');
 
 const cdp = await page.context().newCDPSession(page);
 await cdp.send('Profiler.enable');

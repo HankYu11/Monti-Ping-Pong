@@ -124,13 +124,16 @@ class MainActivity : Activity() {
     private lateinit var screen: HudScreen
 
     private fun buildUi() {
-        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() })
+        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() },
+            onWindows = { windowRingOn = !windowRingOn; screen.windowsState(windowRingOn); pipeline?.windowRing = windowRingOn
+                log("camera", "windows cut on the chip: " + (if (windowRingOn) "on" else "off")) })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
         statsText = screen.statsText; startBtn = screen.startBtn
         web = WebView(this)
         screen.root.addView(web, FrameLayout.LayoutParams(2, 2, Gravity.BOTTOM or Gravity.START))
         setContentView(screen.root)
         screen.aiState(aiOn)
+        screen.windowsState(windowRingOn)
     }
 
     private fun tone(c: Int) = screen.tone(c)
@@ -322,14 +325,26 @@ class MainActivity : Activity() {
         val onFrame = { ts: Long, no: Long -> p.offerTapTime(ts, no) }
         val onPicture = { ts: Long, no: Long, rgba: ByteArray -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) }
         val onTapError = { msg: String -> main.post { log("error", msg) }; Unit }
+        val onWindow = { no: Long, at: IntArray, b: ByteArray -> p.offerWindow(no, at, b) }
+        // the shaders that cut the ball's window on the chip; without them the window pass is
+        // simply never set up and the capture is decoded again as before
+        val ws = try {
+            GlTap.WindowShaders(
+                assets.open("shaders/quad.vert").bufferedReader().readText(),
+                assets.open("shaders/crop_y.frag").bufferedReader().readText(),
+                assets.open("shaders/crop_c.frag").bufferedReader().readText(),
+                assets.open("shaders/crop_rows.frag").bufferedReader().readText())
+        } catch (e: Exception) { log("error", "window shaders: ${e.message}"); null }
         var t: GlTap? = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface,
-                queueMode = queueMode, onBindFailed = { main.post { nextQueueMode() } }).also { it.start() }
+                queueMode = queueMode, onBindFailed = { main.post { nextQueueMode() } }, windowShaders = ws, onWindow = onWindow).also { it.start() }
         } catch (e: Exception) { log("error", "recording stream through the graphics chip: ${e.message}; trying the preview stream"); null }
         if (t == null) t = try {
-            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError).also { it.start() }
+            GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError,
+                windowShaders = ws, onWindow = onWindow).also { it.start() }
         } catch (e: Exception) { log("error", "graphics tap: ${e.message}; decoding instead"); null }
         tap = t
+        t?.let { tp -> p.planWindows = { plan -> tp.windowPlan = plan } }
         if (t == null) rec.onFrame = { p.offer(it) }
         report.put("watchingBy", when { t == null -> "decoder"; t.throughRecording -> "graphics chip, recording stream"; else -> "graphics chip, preview stream" })
         val viaRecording = t?.throughRecording == true
@@ -409,7 +424,17 @@ class MainActivity : Activity() {
             onSkippedClip = if (blocking) null else { n, why, f -> main.post { log("skipped", "not a serve ($why): clip kept"); saveClip("skipped${n}_${why.replace(Regex("[^a-z]+"), "-").trim('-')}", f) } },
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onCaptureStarted = { info -> main.post { onCaptureStarted(info) } },
-            onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it }
+            onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it; it.windowRing = windowRingOn }
+
+    /**
+     * Cutting the ball's window on the chip as the serve happens (LiveWindows), instead of
+     * decoding the whole span again to cut the capture. Off: it is new, and every session
+     * measured so far was read from a capture cut the old way. Turned on with the version
+     * number tapped five times, which is where the other experiments live.
+     */
+    private var windowRingOn
+        get() = prefs.getBoolean("windowRing", false)
+        set(v) { prefs.edit().putBoolean("windowRing", v).apply() }
 
     private fun fitPreview(w: Int, h: Int) {
         preview.post {
@@ -428,7 +453,10 @@ class MainActivity : Activity() {
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
             .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
-            .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
+            .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)
+            .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)
+                .put("ms", t.winMsAvg).put("readMs", t.winReadMsAvg).put("side", pipeline?.ringSide ?: 0).put("plans", pipeline?.ringPlans ?: 0L)
+                .put("kept", pipeline?.windows?.kept ?: 0L).put("dropped", pipeline?.windows?.dropped ?: 0L).put("note", pipeline?.ringNote ?: ""))) }
         tap?.stop(); tap = null
         recorder?.onFrame = null
         poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
@@ -838,7 +866,10 @@ class MainActivity : Activity() {
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
             .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
-            .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)) }
+            .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)
+            .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)
+                .put("ms", t.winMsAvg).put("readMs", t.winReadMsAvg).put("side", pipeline?.ringSide ?: 0).put("plans", pipeline?.ringPlans ?: 0L)
+                .put("kept", pipeline?.windows?.kept ?: 0L).put("dropped", pipeline?.windows?.dropped ?: 0L).put("note", pipeline?.ringNote ?: ""))) }
         poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager

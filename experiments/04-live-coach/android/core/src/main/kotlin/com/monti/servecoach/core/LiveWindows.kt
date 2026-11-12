@@ -48,9 +48,12 @@ object Predict {
         // flights, leaving them in makes the worst miss 177 px where taking them out makes it 41,
         // which is the difference between a window that holds the ball and one that does not.
         // The engine throws the same points away for the same reason (dropMerged).
-        val rs = ArrayList<Float>(end + 1)
-        for (i in 0..end) rs.add(track[i][3])
-        rs.sort()
+        // a plain array, sorted in place: this runs on the frames' thread for every frame of
+        // every flight, and boxing a couple of hundred radii 240 times a second is work that
+        // thread cannot spare
+        val rs = FloatArray(end + 1)
+        for (i in 0..end) rs[i] = track[i][3]
+        java.util.Arrays.sort(rs)
         // the LOWER of the two middle values when there is an even number of them. What spoils a
         // young track is the ball merged with the bat, which makes blobs bigger, never smaller,
         // so leaning to the smaller middle leans toward the ball. Measured over the seventeen

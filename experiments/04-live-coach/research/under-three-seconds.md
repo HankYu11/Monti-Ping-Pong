@@ -307,3 +307,77 @@ typical one.
   rendered clips have no mains flicker, no motion blur and no player.
 - `test/capprof.mjs` CPU-profiles `measureCapture` on a `.cap` through the same headless Chromium
   path the WebView uses, and prints self and inclusive time per function.
+
+## 0.12.0: the GL pass, written
+
+The window pass is in. `GlTap` now draws, for every frame while a serve is in the air, three more
+things into one buffer and reads it back once: the ball's window as the capture lays it out
+(brightness packed four pixels to a texel, then the two colour planes through the same two
+shaders `CaptureGl` already uses for a decoded frame), and the whole picture's row sample. The
+read-back is 65 KB for a 208 px window and 65 KB for the rows, against the small picture's 259 KB
+a frame, and it only happens while a ball is up. It goes into the same PBO-and-fence machinery as
+the small picture, on the same reader thread.
+
+### What the writing changed about the design
+
+**The rows cannot come from the small picture.** That was the cheapest idea — the tap already
+reads a quarter-size picture back, every second frame, so the row brightness could be worked out
+on the processor for nothing. It fails on the frames, not the rows: at 240 frames a second with
+100 Hz mains flicker the phase advances 0.42 of a cycle between frames, so sampling every second
+frame is above Nyquist and interpolating between them is not an approximation but an alias. The
+rows have to be read every frame, which puts them on the chip.
+
+**But they can be coarse in the row direction**, which is what makes them affordable. A frame's
+rows span well under half a mains cycle at 240 fps — about a quarter of one across a typical
+crop — so the row profile is a smooth arc. `WindowsPartsTest` measures the cost of interpolating:
+a step of 2 moves the row brightness by 0.002 on average and 0.017 at worst, 4 by 0.004 and 0.021,
+8 by 0.012, where the row-to-row noise on the captures recorded is itself 0.0066. A step of 1 is
+exactly zero, which is also the test that the columns and rows line up at all. The step shipped is
+2: it is the only one below the noise, and the row brightness is the one number here that has
+already gone wrong once, by a few percent, and moved a serve's flight angle by 23 degrees.
+
+**The crop has to be nudged.** The chip samples the whole picture's columns at a fixed stride
+because the crop is not known while the serve is happening; the capture samples the crop's. They
+are the same columns only if the crop's left edge is a multiple of the stride, so it is rounded
+down to one (and the top to the row step). A few pixels of crop, and the two samples are the same
+set of pixels rather than merely a similar one — which matters because the ratio only cancels its
+own bias when both sides read the same columns.
+
+**The live window is cut big and the capture's is cut out of it afterwards.** The window has to
+carry the prediction's miss, which makes it two to three times the area of the window the capture
+wants; shipping that in the capture would have put back about 300 ms of the writing, serving and
+parsing the format exists to avoid. So the chip's window is re-cut round where the ball really was
+once the flight is over. That also turns the prediction's accuracy into something the capture
+measures rather than assumes: it reports how many windows fitted and how far off centre the worst
+one came.
+
+**The prediction must not be asked for a lag.** `Predict.at` takes a lag because that is how its
+accuracy was measured against finished tracks. Live, the track handed to the chip is already as
+new as the tracker has and the tracker is itself a few frames behind, so asking for a lag on top
+discards the newest points and doubles the delay — at four tracker frames the worst miss is 97 px
+where at two it is 45. Live, the lag is zero.
+
+**A place named in the header must have bytes behind it.** The reader takes the windows one after
+another and skips a frame whose place says null, so a place named without its window shifts every
+window after it. That never happened while every crop was handed in whole; it happens as a matter
+of course when the windows are cut live, where the first few frames of a flight have no prediction
+yet and some later one may be missed. `headerExtra` now names a place only where a window follows.
+
+### What the phone has to answer
+
+Everything above is measured, but none of it is measured on a phone. Three things can only be
+answered there, and 0.12.0 reports each:
+
+- **Does the chip keep up?** `tap.windows.skips` counts frames where every buffer was still being
+  read, `missed` the camera frames that never arrived at all, and `busy` the share of the time the
+  frames' thread was at work. The budget says 55% to about 72% while a ball is up.
+- **Do the chip's bytes match the decoder's?** The camera's frame before it is encoded is not the
+  frame the background is decoded from, so the ring carries its own `ColourFit` (`ringCalib`),
+  fitted once a session from a serve cut the old way, and its rms is reported every serve. Until
+  there is one, no capture is built from the ring.
+- **Where does the ball actually come out?** `worst px off centre` is the real prediction miss,
+  the number the 72 px margin was guessed at. If it is small the window can shrink; if it is large
+  the margin was the right call and the fallback did its job.
+
+The flag is `CHIP WINDOWS` on the HUD, off by default, and every serve it cannot serve is cut
+exactly the way 0.11 cut it.

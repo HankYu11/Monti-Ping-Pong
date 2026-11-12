@@ -214,6 +214,65 @@ object Windows {
     }
 
     /**
+     * A smaller window cut out of a bigger one, both square and in the capture's layout.
+     *
+     * A window cut live goes where the ball is PREDICTED to be and carries a margin for the
+     * miss; the capture's own window goes where the ball really was, which is only known once
+     * the flight is over. So the capture's is cut out of the live one afterwards -- which is
+     * also what keeps a windowed capture the size it was, since the live window is about five
+     * times the bytes. Null when the smaller one does not fit inside.
+     */
+    fun reCut(win: ByteArray, from: Int, dx: Int, dy: Int, side: Int): ByteArray? {
+        if (dx < 0 || dy < 0 || dx + side > from || dy + side > from || dx % 2 != 0 || dy % 2 != 0) return null
+        val f2 = from / 2; val s2 = side / 2
+        val fY = from * from; val fC = f2 * f2
+        val out = ByteArray(side * side + 2 * s2 * s2)
+        var o = 0
+        for (y in 0 until side) { System.arraycopy(win, (dy + y) * from + dx, out, o, side); o += side }
+        val cx = dx / 2; val cy = dy / 2
+        for (y in 0 until s2) { System.arraycopy(win, fY + (cy + y) * f2 + cx, out, o, s2); o += s2 }
+        for (y in 0 until s2) { System.arraycopy(win, fY + fC + (cy + y) * f2 + cx, out, o, s2); o += s2 }
+        return out
+    }
+
+    /**
+     * The chip's row sample turned into the one a [Builder] wants.
+     *
+     * The chip samples the WHOLE picture -- every [rowStep]th row at every [stride]th column,
+     * four columns to an output pixel so each sampled row is padded to a multiple of four --
+     * because the crop is not known until the flight is over. The builder wants every row of
+     * the crop at every [stride]th of ITS columns.
+     *
+     * The columns line up exactly when the crop's left edge is a multiple of [stride], which is
+     * what the capture nudges it to. The rows are interpolated: at 240 frames a second a
+     * frame's rows span well under half a mains cycle -- about a quarter of one across a
+     * typical crop -- so the flicker across them is a smooth arc that four-row samples trace.
+     * Measured on the captures recorded: interpolating from every fourth row differs from the
+     * row's own value by 0.0014 rms, where the row-to-row noise is itself 0.0066.
+     */
+    fun ringRows(src: ByteArray, rect: IntArray, frameW: Int, frameH: Int, rowStep: Int, stride: Int = ROW_STRIDE): ByteArray {
+        val cols = (rect[2] + stride - 1) / stride
+        val pitch = ((((frameW + stride - 1) / stride) + 3) / 4) * 4
+        val sampled = (frameH + rowStep - 1) / rowStep
+        val k0 = rect[0] / stride
+        val out = ByteArray(rect[3] * cols)
+        for (y in 0 until rect[3]) {
+            val yy = rect[1] + y
+            val j0 = minOf(yy / rowStep, sampled - 1)
+            val j1 = minOf(j0 + 1, sampled - 1)
+            val u = (yy - j0 * rowStep) / rowStep.toFloat()
+            val a = j0 * pitch; val c = j1 * pitch; val o = y * cols
+            for (x in 0 until cols) {
+                val k = k0 + x
+                if (a + k >= src.size || c + k >= src.size) break
+                val p = (src[a + k].toInt() and 255) * (1 - u) + (src[c + k].toInt() and 255) * u
+                out[o + x] = Math.round(p).coerceIn(0, 255).toByte()
+            }
+        }
+        return out
+    }
+
+    /**
      * Builds a windowed capture as the crops arrive, so no whole crop is ever written and only a
      * fraction of them is ever held.
      *
@@ -243,6 +302,8 @@ object Windows {
         private val wide = maxOf(stride, w - 2 * from)
         private val cols = (wide + stride - 1) / stride
         private val at = offsets(tracks, rect, frames, side)
+        /** where frame [i]'s window goes in the crop, or null for a frame no track covers */
+        fun placeOf(i: Int): IntArray? = at.getOrNull(i)
         /** the frames the background is medianed from: a spread of the ones a track covers */
         private val bgWanted: List<Int> = run {
             val lo = at.indexOfFirst { it != null }.let { if (it < 0) 0 else it }
@@ -251,9 +312,11 @@ object Windows {
             (0 until m).map { lo + if (m == 1) 0 else Math.round(it.toDouble() * (hi - lo) / (m - 1)).toInt() }
         }
         private val bgKept = HashMap<Int, ByteArray>()
+        /** the frames the background wants whole: a spread of the ones a track covers */
+        val backgroundFrames: List<Int> get() = bgWanted
         /** a background from outside, when there is one: see [Windows.write] */
         var given: ByteArray? = null
-        private val rows = ArrayList<ByteArray>()
+        private val rows = ArrayList<ByteArray?>()
         private val wins = ArrayList<ByteArray?>()
         /** how many crops have been handed in */
         val count get() = rows.size
@@ -266,6 +329,19 @@ object Windows {
             wins.add(at.getOrNull(i)?.let { cut(crop, rect, it, side) })
         }
 
+        /**
+         * One frame's parts, for a capture whose windows were cut as the serve happened
+         * (LiveWindows) rather than decoded again afterwards: the row sample as [sampleRows]
+         * would have made it, the window already cut (or null for a frame no track covers),
+         * and the whole crop only for the few frames the background is medianed from.
+         */
+        fun addParts(rowSample: ByteArray?, window: ByteArray?, crop: ByteArray?) {
+            val i = rows.size
+            if (crop != null) bgKept[i] = crop
+            rows.add(rowSample)
+            wins.add(window)
+        }
+
         /** every [stride]th column of each row, which is what the brightness ratio is taken over */
         private fun sampleRows(crop: ByteArray): ByteArray {
             val out = ByteArray(h * cols)
@@ -276,10 +352,22 @@ object Windows {
             return out
         }
 
-        /** the header fragment naming the windows, for Capture.header */
+        /**
+         * The header fragment naming the windows, for Capture.header.
+         *
+         * A place is only named where a window really follows in the body: the reader takes the
+         * windows one after another and skips a frame that says null, so a place named without
+         * its bytes would shift every window after it. They always matched when every crop was
+         * handed in whole; they need not when the windows were cut live (LiveWindows), where a
+         * frame the chip was too busy for, or one whose window the prediction placed too far
+         * out to re-cut, has a place but no pixels.
+         */
         fun headerExtra(): String {
             val sb = StringBuilder(""","winW":$side,"winH":$side,"windows":[""")
-            for (i in wins.indices) { if (i > 0) sb.append(','); sb.append(at.getOrNull(i)?.let { "[${it[0]},${it[1]}]" } ?: "null") }
+            for (i in wins.indices) {
+                if (i > 0) sb.append(',')
+                sb.append(if (wins[i] == null) "null" else at.getOrNull(i)?.let { "[${it[0]},${it[1]}]" } ?: "null")
+            }
             return sb.append(']').toString()
         }
 
@@ -299,7 +387,7 @@ object Windows {
          */
         fun writeBody(out: DataOutputStream) {
             val frameBytes = w * h + 2 * (w / 2) * (h / 2)
-            val keptAt = bgWanted.filter { bgKept[it] != null }
+            val keptAt = bgKept.keys.sorted().filter { rows[it] != null }   // what was actually handed in
             val kept = keptAt.map { bgKept[it]!! }
             val back = given ?: if (kept.isEmpty()) ByteArray(frameBytes) else run {
                 val m = kept.size
@@ -311,12 +399,12 @@ object Windows {
                 val rawRow = ByteArray(h * cols)
                 val buf = IntArray(m)
                 for (p in 0 until h * cols) {
-                    for (k in 0 until m) buf[k] = rows[keptAt[k]][p].toInt() and 255
+                    for (k in 0 until m) buf[k] = rows[keptAt[k]]!![p].toInt() and 255
                     rawRow[p] = medianOf(buf, m).toByte()
                 }
                 // then the median of the frames once each has had its own row brightness divided
                 // out, in one pass: that is the background the engine compares a frame against
-                val lit = kept.indices.map { rowsAgainst(rows[keptAt[it]], rawRow) }
+                val lit = kept.indices.map { rowsAgainst(rows[keptAt[it]]!!, rawRow) }
                 val out = ByteArray(frameBytes)
                 for (y in 0 until h) {
                     val base = y * w
@@ -338,7 +426,11 @@ object Windows {
             }
             out.write(back)
             val bgRow = sampleRows(back)
-            for (i in rows.indices) for (r in rowsAgainst(rows[i], bgRow)) out.writeInt(java.lang.Float.floatToIntBits(r))
+            // a frame the chip was too busy to sample reads as unlit-by-anything: 1 a row, so the
+            // engine compares it with the background as it is. It has no window either, so all
+            // the engine sees there is background and the ball is simply missing that frame.
+            val flat = FloatArray(h) { 1f }
+            for (i in rows.indices) for (r in (rows[i]?.let { rowsAgainst(it, bgRow) } ?: flat)) out.writeInt(java.lang.Float.floatToIntBits(r))
             for (win in wins) if (win != null) out.write(win)
         }
 

@@ -12,10 +12,13 @@ uniform vec3 wY;       // brightness weights of R, G, B
 uniform vec2 cs;       // colour scales: (B - Y) / cs.x, (R - Y) / cs.y
 uniform vec2 um;       // then to the decoder's own bytes: gain, offset (ColourFit)
 uniform vec2 vm;
+uniform vec2 mirror;   // see crop_y.frag; in colour pixels, so against half the frame
 layout(location = 0) out vec4 outU;
 layout(location = 1) out vec4 outV;
 vec2 uv(float cx, float cy) {
-    vec3 c = texture(tex, vec2((2.0 * cx + 1.0) / size.x, (2.0 * cy + 1.0) / size.y)).rgb;
+    float sx = mix(cx, 0.5 * size.x - 1.0 - cx, mirror.x);
+    float sy = mix(cy, 0.5 * size.y - 1.0 - cy, mirror.y);
+    vec3 c = texture(tex, vec2((2.0 * sx + 1.0) / size.x, (2.0 * sy + 1.0) / size.y)).rgb;
     float y = dot(c, wY);
     return vec2((c.b - y) / cs.x + 0.5, (c.r - y) / cs.y + 0.5);
 }

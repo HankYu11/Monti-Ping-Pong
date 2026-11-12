@@ -215,7 +215,19 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         for (tr in active) { if (i - tr.last()[0] <= 2) still.add(tr) else finish(tr, i) }
         for ((j, c) in cs.withIndex()) if (j !in used) still.add(Track().also { it.pts.add(floatArrayOf(i.toFloat(), c[0], c[1], c[2])) })
         active = still
+        liveTracks = active.mapNotNull { if (it.pts.size >= 4) ArrayList<FloatArray>(it.pts) else null }
     }
+
+    /**
+     * The tracks as they stand this frame, those long enough to predict from, newest point last.
+     *
+     * For cutting the ball's window as the frame goes past (LiveWindows): the window has to be
+     * placed while the serve is still in the air, so there is nothing to go on but the tracker's
+     * state mid-flight -- not the serve it will report when the flight is over. Copied as it is
+     * published, because the graphics chip's thread reads it while this one goes on; the copy
+     * can be shallow, since a point never changes once it is added.
+     */
+    @Volatile var liveTracks: List<List<FloatArray>> = emptyList(); private set
 
     private fun finish(tr: Track, now: Long) {
         if (tr.pts.size >= 6) { recent.addLast(tr); while (recent.size > 30) recent.removeFirst() }

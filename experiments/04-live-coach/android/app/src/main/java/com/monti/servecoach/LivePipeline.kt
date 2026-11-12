@@ -2,10 +2,13 @@ package com.monti.servecoach
 
 import android.os.SystemClock
 import com.monti.servecoach.core.Capture
+import com.monti.servecoach.core.ColourFit
 import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Quarter
+import com.monti.servecoach.core.Predict
 import com.monti.servecoach.core.ServeTracker
+import com.monti.servecoach.core.WindowRing
 import com.monti.servecoach.core.Windows
 import java.io.DataOutputStream
 import java.io.File
@@ -360,6 +363,7 @@ class LivePipeline(
                 n++
                 linkMsAvg = avg(linkMsAvg, ms, n)
                 trackMsAvg = shrinkMsAvg + findMsAvg + linkMsAvg
+                planFromTracks(tr)
                 if (serve != null) onServe(tr, serve)
             }
         } catch (_: InterruptedException) {
@@ -390,6 +394,136 @@ class LivePipeline(
         }
     }
     @Volatile var skippedClips = 0; private set
+
+    // ------------------------------------------------------------ windows cut on the chip (LiveWindows)
+
+    /**
+     * Cut the ball's window on the chip as the frame goes past, instead of decoding the serve
+     * again to cut it. Off: this is new, and the capture the old way is what every measured
+     * session was read from.
+     */
+    @Volatile var windowRing = false
+    /** where a new plan goes (GlTap's), set by the owner; null tears the last one down */
+    @Volatile var planWindows: ((GlTap.WindowPlan?) -> Unit)? = null
+    /** the windows cut so far, waiting for a serve to ask for them */
+    @Volatile var windows: WindowRing? = null; private set
+    /** the window's side for the flight in the air, in whole-picture pixels */
+    @Volatile var ringSide = 0; private set
+    @Volatile var ringPlans = 0L; private set
+    @Volatile var ringNote = ""; private set
+
+    /** frames the ring holds: a flight is about a second, and the capture is written right after */
+    private val ringFrames = captureFps + captureFps / 2
+    /**
+     * Every other row of the whole picture (see assets/shaders/crop_rows.frag).
+     *
+     * The rows between are interpolated, and how much that costs was measured against reading
+     * every row: a step of 2 moves the row brightness by 0.002 on average and 0.017 at worst,
+     * a step of 4 by 0.004 and 0.021, a step of 8 by 0.012 and 0.043. Row-to-row noise on the
+     * captures recorded is 0.0066, so a step of 2 is below it and the rest are not -- and the
+     * row brightness is the one number here that has gone wrong before, by a few percent,
+     * which moved a serve's flight angle by 23 degrees. It is 65 KB a frame against the
+     * window's 65, which the chip has the time for.
+     */
+    private val ringRowStep = 2
+    private var planSide = 0
+    private class Aim { @Volatile var track: List<FloatArray> = emptyList() }
+    private val aim = Aim()
+    /** no colour fit yet: the chip's numbers as they come */
+    private val ONE = floatArrayOf(1f, 0f)
+
+    /**
+     * The window's side for a ball of radius [r] (whole-picture pixels).
+     *
+     * The capture's own window is three radii (Windows.boxFor) round where the ball REALLY was,
+     * which is not known until the flight is over; this one goes where the ball is predicted to
+     * be, and has to be big enough that the capture's can be cut out of it afterwards wherever
+     * the prediction missed by. Over the seventeen recorded flights the worst miss two tracker
+     * frames back is 45 px and four back is 97, and how far behind the live track really runs
+     * is the one thing that could not be measured without a phone. So the margin is 72, well
+     * past the first and short of the second, and the capture reports how far off centre the
+     * ball actually came out ("worst px off centre"), which says what it should be. Too big
+     * only costs read-back; too small and every window misses and the serve is cut the old way.
+     *
+     * The side is rounded to 32 so that a ball that changes size a little does not make new
+     * targets and a new ring.
+     */
+    private fun sideFor(r: Float): Int {
+        val half = 3 * r + 72
+        val side = ((Math.ceil(2 * half / 32.0).toInt()) * 32)
+        return side.coerceIn(128, 384)
+    }
+
+    /**
+     * The tracker's thread, every frame: what the chip should cut next.
+     *
+     * The track most likely to be the ball is the longest one that is going somewhere, which is
+     * what the grouping picks later too (its score is length times size). Getting it wrong costs
+     * bytes, not a reading: the capture checks every window it takes against the serve's real
+     * track and falls back to decoding if they disagree.
+     */
+    private fun planFromTracks(tr: ServeTracker) {
+        val put = planWindows
+        if (!windowRing || put == null || frameW == 0) {
+            if (planSide != 0) { planSide = 0; put?.invoke(null) }
+            return
+        }
+        var best: List<FloatArray>? = null; var bestScore = 0f
+        for (t in tr.liveTracks) {
+            val a = t[0]; val b = t[t.size - 1]
+            val disp = kotlin.math.hypot(b[1] - a[1], b[2] - a[2])
+            if (disp < 8f) continue                      // an arm, a shirt: it has to be going somewhere
+            val s = t.size * disp
+            if (s > bestScore) { bestScore = s; best = t }
+        }
+        if (best == null) {
+            if (planSide != 0) { planSide = 0; put(null) }
+            return
+        }
+        aim.track = best
+        val scale = step * 2f                            // the tracker's pixels are a quarter the picture's
+        val rs = best.map { it[3] }.sorted()
+        val side = sideFor(rs[(rs.size - 1) / 2] * scale)
+        if (side == planSide) return
+        planSide = side
+        ringSide = side
+        if (windows?.side != side) windows = WindowRing(side, ringFrames)
+        val fit = CaptureGl.ringCalib
+        ringPlans++
+        put(GlTap.WindowPlan(intArrayOf(0, 0, frameW, frameH), side, ringRowStep, Windows.ROW_STRIDE,
+            fit?.bt601 ?: (CaptureGl.calib?.bt601 ?: false),
+            fit?.y?.let { floatArrayOf(it.gain.toFloat(), it.offset.toFloat()) } ?: ONE,
+            fit?.u?.let { floatArrayOf(it.gain.toFloat(), it.offset.toFloat()) } ?: ONE,
+            fit?.v?.let { floatArrayOf(it.gain.toFloat(), it.offset.toFloat()) } ?: ONE) { no -> aimAt(side, no) })
+    }
+
+    /** where frame [no]'s window goes, from the live track: even, and inside the picture */
+    private fun aimAt(side: Int, no: Long): IntArray? {
+        val t = aim.track
+        if (t.isEmpty()) return null
+        // no lag: the track handed over is already as new as the tracker has, which is itself
+        // a few frames behind. Predict's own lag is for measuring the miss against a finished
+        // track; asking for it here would discard the newest points and double the delay.
+        val p = Predict.at(t, no.toFloat() / step, lag = 0f) ?: return null
+        val scale = step * 2f
+        val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
+        val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
+        return intArrayOf(x, y)
+    }
+
+    /** one frame's window off the chip: the window's planes, then the picture's row sample */
+    fun offerWindow(frameNo: Long, at: IntArray, bytes: ByteArray) {
+        val r = windows ?: return
+        val side = r.side
+        val win = side * side + 2 * (side / 2) * (side / 2)
+        // the row sample is the same size whatever the window is, so what is left over says
+        // which plan cut this frame: a window still in flight when the plan changed is dropped
+        // rather than split by the wrong side
+        val rowBytes = ((((frameW + Windows.ROW_STRIDE - 1) / Windows.ROW_STRIDE) + 3) / 4) * 4 *
+            ((frameH + ringRowStep - 1) / ringRowStep)
+        if (bytes.size != win + rowBytes) return
+        r.put(frameNo, at[0], at[1], bytes.copyOfRange(0, win), bytes.copyOfRange(win, bytes.size))
+    }
 
     private fun onServe(tr: ServeTracker, serve: ServeTracker.Serve) {
         servesFound++
@@ -516,7 +650,140 @@ class LivePipeline(
      * 300 MB trim had carried the same fault since it was written, but it fires rarely;
      * trimming to the tracks fires on every serve, which is what brought it out.
      */
-    private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int) {
+    /** a capture built from the chip's windows: the builder fed, and what it cost */
+    private class RingCut(val builder: Windows.Builder, val n: Int, val fullRange: Boolean, val note: String)
+
+    /**
+     * The capture built from the windows the chip cut while the serve was in the air, with only
+     * the handful of frames the background is medianed from decoded and cut.
+     *
+     * Null when the ring cannot serve this one: it was off, it has no colour map onto the
+     * decoder's bytes yet (the first serve of a session makes one), it was too busy to keep
+     * enough of the flight, or its windows are not where the serve's real track says the ball
+     * was. The caller then cuts the capture the way it always has, which is also what makes
+     * the fit: there is always a reading, whatever the chip did.
+     */
+    private fun cutFromRing(id: Int, frames: List<EncodedFrame>, fmt: android.media.MediaFormat,
+                            fromUs: Long, toUs: Long, rect: IntArray, w: Int, h: Int,
+                            firstFrame: Long, nGuess: Int, tracks: List<List<FloatArray>>): RingCut? {
+        val ring = windows ?: return null
+        val assets = assets ?: return null
+        if (!windowRing || !gpuCaptures || tracks.isEmpty() || CaptureGl.calib == null) return null
+        // without a map onto the decoder's bytes the ring's windows are the chip's own numbers,
+        // which the background would not match: the serve is cut the old way and makes the fit
+        if (CaptureGl.ringCalib == null) return null
+        val t0 = SystemClock.elapsedRealtime()
+        // which frames the background wants: asked of a builder of the guessed length, because
+        // the real one is only known once the decoder has been through the span
+        val b0 = Windows.Builder(rect, nGuess + captureFps / 4, tracks)
+        val want = b0.backgroundFrames
+        val wanted = want.toHashSet()
+        // Does the ring even hold this serve? Asked before anything is decoded, because a
+        // decode it then throws away is the whole cost of the old way paid twice.
+        run {
+            val pre = ring.take(firstFrame, nGuess)
+            val s0 = b0.side; val from0 = ring.side
+            var w0 = 0; var h0 = 0
+            for (i in 0 until nGuess) {
+                val place = b0.placeOf(i) ?: continue
+                w0++
+                val at = pre.at[i] ?: continue
+                // where the ball really was against where it was predicted to be: a window the
+                // capture's cannot be cut out of is one the prediction missed, and a ring full
+                // of them was following something else
+                val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
+                if (dx >= 0 && dy >= 0 && dx + s0 <= from0 && dy + s0 <= from0) h0++
+            }
+            if (w0 == 0 || s0 > from0 || h0 < w0 * 3 / 4) {
+                ringNote = "the chip's windows fitted $h0 of $w0 frames: cut the old way"
+                return null
+            }
+        }
+        val crops = HashMap<Int, ByteArray>()
+        var j = 0
+        val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h,
+            { b -> if (j < want.size) crops[want[j++]] = b }, null, { i -> i in wanted })
+        val n = r.seen
+        if (n <= 0 || crops.isEmpty()) return null
+        val taken = ring.take(firstFrame, n)
+        val b = Windows.Builder(rect, n, tracks)
+        val side = b.side
+        val from = ring.side
+        if (side > from) return null                       // the live window is the smaller: nothing to cut out of it
+        // the live window went where the ball was PREDICTED to be and the capture's goes where
+        // it really was, so every one is cut again; how often that fails is how far the
+        // prediction missed, and too often means the ring was following something else
+        var need = 0; var got = 0; var missed = 0; var worst = 0
+        val rowStep = ringRowStep
+        for (i in 0 until n) {
+            val place = b.placeOf(i)
+            val at = taken.at[i]
+            var win: ByteArray? = null
+            if (place != null) {
+                need++
+                if (at != null) {
+                    val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
+                    val d = maxOf(kotlin.math.abs(dx - (from - side) / 2), kotlin.math.abs(dy - (from - side) / 2))
+                    if (d > worst) worst = d
+                    win = taken.pixels[i]?.let { Windows.reCut(it, from, dx, dy, side) }
+                }
+                if (win == null) missed++ else got++
+            }
+            b.addParts(taken.rows[i]?.let { Windows.ringRows(it, rect, w, h, rowStep) }, win, crops[i])
+        }
+        if (need == 0 || got < need * 3 / 4) {
+            ringNote = "the chip's windows covered $got of $need frames: cut the old way"
+            return null
+        }
+        ringNote = "$got of $need windows, missed $missed, worst ${worst} px off centre; " +
+            "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms)"
+        return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
+    }
+
+    /**
+     * How the ring's bytes map onto the decoder's, from a background frame the ring also holds.
+     *
+     * The chip sees the camera's own frame, before it is encoded; the background is decoded from
+     * the recording. The two are the same picture through different paths, so the map is a gain
+     * and an offset per plane (ColourFit, as CaptureGl fits the chip against the decoder). The
+     * first serve of a session is cut the old way and makes this fit; later ones carry it in the
+     * plan, and refitting then would compose it with itself, so it is only ever fitted once.
+     * The rms is recorded either way, which is how a fit that has gone stale shows up.
+     */
+    private fun fitRing(frameNo: Long, crop: ByteArray, rect: IntArray) {
+        try {
+            val ring = windows ?: return
+            val side = ring.side
+            val taken = ring.take(frameNo, 1)
+            val at = taken.at[0] ?: return
+            val chip = taken.pixels[0] ?: return
+            val place = intArrayOf(at[0] - rect[0], at[1] - rect[1])
+            if (place[0] < 0 || place[1] < 0 || place[0] + side > rect[2] || place[1] + side > rect[3]) return
+            val decoded = Windows.cut(crop, rect, place, side)
+            val ny = side * side; val nc = (side / 2) * (side / 2)
+            val y = ColourFit.fit(chip, decoded, 0, ny)
+            val u = ColourFit.fit(chip, decoded, ny, nc)
+            val v = ColourFit.fit(chip, decoded, ny + nc, nc)
+            val fit = CaptureGl.Calib(CaptureGl.calib?.bt601 ?: false, y, u, v)
+            CaptureGl.ringNote = "$fit"
+            if (CaptureGl.ringCalib == null && y.rms <= 6.0) CaptureGl.ringCalib = fit
+        } catch (e: Exception) { CaptureGl.ringNote = "fit: ${e.message}" }
+    }
+
+    /**
+     * The crop nudged so its row sample's columns are the ones the chip sampled, and its first
+     * row one the chip sampled too (see assets/shaders/crop_rows.frag). Only when the windows
+     * are cut on the chip: otherwise the crop is what it always was.
+     */
+    private fun alignRect(r: IntArray, w: Int, h: Int): IntArray {
+        if (!windowRing) return r
+        val dx = r[0] % Windows.ROW_STRIDE
+        val dy = r[1] % ringRowStep
+        return intArrayOf(r[0] - dx, r[1] - dy, minOf(w - (r[0] - dx), r[2] + dx), minOf(h - (r[1] - dy), r[3] + dy))
+    }
+
+    private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect0: IntArray, w: Int, h: Int) {
+        val rect = alignRect(rect0, w, h)
         try {
             val t0 = SystemClock.elapsedRealtime()
             val frames = store.between(fromUs, toUs)
@@ -544,19 +811,39 @@ class LivePipeline(
                 floatArrayOf((it[0] * step - firstFrame).toFloat(), it[1] * scale, it[2] * scale, it[3] * scale)
             }
             val tracks = (listOf(serve.track) + serve.near).map(::conv).filter { it.size >= 2 }
-            val builder = if (windowCaptures && tracks.isNotEmpty())
-                Windows.Builder(rect, nGuess + captureFps / 4, tracks) else null
+            val windowed = windowCaptures && tracks.isNotEmpty()
             writeHead(id, Capture(w, h, rect, false, captureFps).header(
-                ""","id":$id,"partial":true""" + (if (builder != null) ""","windowed":true""" else ""), nGuess))
+                ""","id":$id,"partial":true""" + (if (windowed) ""","windowed":true""" else ""), nGuess))
             onCaptureStarted?.invoke(Capture.Info(id, nGuess, per, "", 0, fromUs, toUs))
             var cap: Capture? = null
             var n = 0
+            // the windows the chip cut while the serve happened, when there are enough of them:
+            // then only the frames the background needs are cut, not all of them
+            val fromRing = if (!windowed) null else try {
+                cutFromRing(id, frames, fmt, fromUs, toUs, rect, w, h, firstFrame, nGuess, tracks)
+            } catch (e: Throwable) { onError("capture #$id from the chip's windows: ${e.message}"); null }
+            var builder = fromRing?.builder ?: if (windowed) Windows.Builder(rect, nGuess + captureFps / 4, tracks) else null
+            if (fromRing != null) {
+                cap = Capture(w, h, rect, fromRing.fullRange, captureFps)
+                n = fromRing.n
+                lastCaptureBy = fromRing.note
+                onNote("capture #$id: $lastCaptureBy")
+            }
             // where each crop goes: reduced into the windowed capture, or straight into the file
             val out = if (builder == null) FrameCountingOut(bin, prog) else null
-            val sink: (ByteArray) -> Unit = if (builder != null) ({ builder.add(it) }) else ({ out!!.write(it) })
+            // one crop kept back, when the chip's windows still need a map onto the decoder's
+            // bytes: a serve cut the old way goes past every frame anyway, so the fit is free
+            val fitAt = if (windowRing && CaptureGl.ringCalib == null && windows != null) nGuess / 2 else -1
+            var fitCrop: ByteArray? = null
+            var seenAt = 0
+            val sink: (ByteArray) -> Unit = { b ->
+                if (seenAt == fitAt) fitCrop = b
+                seenAt++
+                if (builder != null) builder!!.add(b) else out!!.write(b)
+            }
             try {
             // on the graphics chip (CaptureGl), else the frames copied out by the processor
-            if (assets != null && gpuCaptures) try {
+            if (cap == null && assets != null && gpuCaptures) try {
                 val t1 = SystemClock.elapsedRealtime()
                 val reference = if (CaptureGl.calib == null) firstDecoded(frames, fmt, fromUs, toUs, rect, w, h) else null
                 val refMs = SystemClock.elapsedRealtime() - t1
@@ -591,16 +878,18 @@ class LivePipeline(
                 lastCaptureBy = "copied out"
             }
             } finally { out?.close() }
+            fitCrop?.let { try { fitRing(firstFrame + fitAt, it, rect) } catch (e: Exception) { CaptureGl.ringNote = "fit: ${e.message}" } }
             val c = cap ?: return
             // the windowed capture is written in one go at the end: the background is a
             // median of the frames, so it cannot be written before the last of them
-            if (builder != null) {
-                n = builder.count
-                DataOutputStream(FileOutputStream(bin).buffered(1 shl 20)).use { o -> builder.writeBody(o) }
-                lastCaptureBy += ", ${builder.side}x${builder.side} windows"
+            val bld = builder
+            if (bld != null) {
+                n = bld.count
+                DataOutputStream(FileOutputStream(bin).buffered(1 shl 20)).use { o -> bld.writeBody(o) }
+                lastCaptureBy += ", ${bld.side}x${bld.side} windows"
             }
             val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" +
-                (builder?.headerExtra() ?: "") + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
+                (bld?.headerExtra() ?: "") + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
             writeHead(id, head)
             prog.finish()
             val writeMs = SystemClock.elapsedRealtime() - t0

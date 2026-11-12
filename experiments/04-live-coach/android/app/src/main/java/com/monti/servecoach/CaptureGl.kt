@@ -43,9 +43,19 @@ class CaptureGl(private val assets: AssetManager) {
         /** the session's fit (from the first capture) */
         @Volatile var calib: Calib? = null
         @Volatile var calibNote = ""
+        /**
+         * The same for the windows cut live off the camera's own frames (LiveWindows), which are
+         * not the decoder's: the chip sees the camera's buffer before it is encoded, so a window
+         * needs its own map onto the bytes the background frames are decoded into. Fitted by the
+         * first capture that decodes a frame the ring also holds, and until then the ring's
+         * windows are the chip's own numbers and no capture is built from them.
+         */
+        @Volatile var ringCalib: Calib? = null
+        @Volatile var ringNote = ""
     }
 
-    class Result(val frames: Int, val fullRange: Boolean, val decodeMs: Long, val cutMs: Long)
+    /** [frames] cut and handed to the sink; [seen] decoded in the span, cut or not */
+    class Result(val frames: Int, val fullRange: Boolean, val decodeMs: Long, val cutMs: Long, val seen: Int = frames)
 
     private lateinit var display: EGLDisplay
     private lateinit var context: EGLContext
@@ -64,9 +74,16 @@ class CaptureGl(private val assets: AssetManager) {
      * the crop went straight into the capture file; a windowed capture reduces each crop to a
      * window and a row sample instead and never writes the crop at all, so the caller decides.
      */
+    /**
+     * [keep] (by the frame's place in the span) says which frames to cut at all. A capture built
+     * from windows cut live wants only the handful the background is medianed from, and the rest
+     * are decoded and dropped: the decode cannot be skipped (a frame is predicted from the ones
+     * before it) but the draw and the read-back can, which is most of the cutting.
+     */
     fun write(frames: List<EncodedFrame>, format: MediaFormat, fromUs: Long, toUs: Long, rect: IntArray, W: Int, H: Int,
-              sink: (ByteArray) -> Unit, reference: Pair<Long, ByteArray>?): Result {
+              sink: (ByteArray) -> Unit, reference: Pair<Long, ByteArray>?, keep: ((Int) -> Boolean)? = null): Result {
         check(calib != null || reference != null) { "no colour fit and no reference frame" }
+        check(keep == null || calib != null) { "cutting only some frames needs a colour fit already" }
         setUpGl()
         val reader = ImageReader.newInstance(W, H, ImageFormat.PRIVATE, 4, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
         val mime = format.getString(MediaFormat.KEY_MIME)!!
@@ -75,6 +92,7 @@ class CaptureGl(private val assets: AssetManager) {
         val targets = Targets(rect)
         var fullRange = false
         var written = 0
+        var seen = 0
         var bufW = W; var bufH = H
         val t0 = SystemClock.elapsedRealtime()
         var cutNs = 0L
@@ -109,7 +127,9 @@ class CaptureGl(private val assets: AssetManager) {
                 if (o < 0) continue
                 if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) done = true
                 val pts = info.presentationTimeUs
-                val wanted = info.size > 0 && pts >= fromUs && pts <= toUs
+                val inSpan = info.size > 0 && pts >= fromUs && pts <= toUs
+                val wanted = inSpan && (keep == null || keep(seen))
+                if (inSpan) seen++
                 codec.releaseOutputBuffer(o, wanted)
                 if (!wanted) continue
                 val img = awaitImage(reader) ?: throw IllegalStateException("a decoded frame never reached the chip")
@@ -138,7 +158,7 @@ class CaptureGl(private val assets: AssetManager) {
             reader.close()
             tearDownGl()
         }
-        return Result(written, fullRange, SystemClock.elapsedRealtime() - t0, cutNs / 1_000_000)
+        return Result(written, fullRange, SystemClock.elapsedRealtime() - t0, cutNs / 1_000_000, seen)
     }
 
     private fun awaitImage(reader: ImageReader): Image? {
@@ -289,6 +309,7 @@ class CaptureGl(private val assets: AssetManager) {
         GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "size"), W.toFloat(), H.toFloat())
         GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "origin"), rect[0].toFloat(), rect[1].toFloat())
         GLES20.glUniform3fv(GLES20.glGetUniformLocation(p, "wY"), 1, wY, 0)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "mirror"), 0f, 0f)  // a decoded frame is the right way round
     }
 
     private val quadBuf = ByteBuffer.allocateDirect(32).order(ByteOrder.nativeOrder()).asFloatBuffer()

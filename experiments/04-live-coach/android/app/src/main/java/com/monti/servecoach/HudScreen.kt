@@ -28,7 +28,8 @@ import kotlin.math.roundToInt
  * one vague thing in prose where the three-way split now says three measured ones. What is left
  * is the number, what kind of spin it is, what it is made of, and the ball showing it turn.
  */
-class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}, onNext: () -> Unit = {}) {
+class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}, onNext: () -> Unit = {},
+                onWindows: () -> Unit = {}) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
     private fun tv(size: Float, face: Typeface, color: Int = Hud.CYAN, spacing: Float = 0f) = TextView(ctx).apply {
@@ -64,6 +65,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         setOnClickListener { onNext() }
     }
     lateinit var aiButton: TextView; private set
+    lateinit var windowsButton: TextView; private set
     private lateinit var bottomLeft: LinearLayout
     private lateinit var ballRow: LinearLayout
     /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
@@ -106,13 +108,19 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         // All three are used before a session and after it, never during: a serve is the only
         // thing on the screen while one runs.
         aiButton = small("AI COACH: OFF", onAi)
+        // cutting the ball's window on the chip as the serve happens, instead of decoding the
+        // serve again afterwards to cut it: new, so it is a choice and not yet the way it works
+        windowsButton = small("CHIP WINDOWS: OFF", onWindows)
         val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         tools.addView(small("TEST VIDEO", onTest))
         tools.addView(aiButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        val tools2 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        tools2.addView(windowsButton)
         bottomLeft = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             addView(statsText); addView(tools, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            addView(tools2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
         root.addView(bottomLeft, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(52); bottomMargin = dp(26) })
         showSpin(null)
@@ -168,6 +176,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         aiTalking = true; aiLine.append(t); message("AI COACH  ${aiLine.toString().trim()}")
     }
     fun aiState(on: Boolean) { aiButton.text = if (on) "AI COACH: ON" else "AI COACH: OFF"; if (!on) aiTalking = false }
+    fun windowsState(on: Boolean) { windowsButton.text = if (on) "CHIP WINDOWS: ON" else "CHIP WINDOWS: OFF" }
 
     /** a video test started: the file's name, while its frames are read */
     fun testStarted(name: String) {

@@ -59,6 +59,14 @@ class GlTap(
      */
     val queueMode: Int = 0,
     private val onBindFailed: () -> Unit = {},
+    /** the shaders that cut a window (assets/shaders), when the window pass is wanted */
+    private val windowShaders: WindowShaders? = null,
+    /**
+     * Every frame's window off the chip, two frames later: where it was cut and its bytes
+     * (the window's brightness and colour planes, then the crop's row sample). The bytes
+     * belong to the receiver. See [WindowPlan].
+     */
+    private val onWindow: (frameNo: Long, at: IntArray, bytes: ByteArray) -> Unit = { _, _, _ -> },
 ) {
     /** recording stream through here (see above), else the preview stream */
     val throughRecording get() = encoder != null
@@ -145,6 +153,13 @@ class GlTap(
             try {
                 texture?.setOnFrameAvailableListener(null)
                 queue?.setOnImageAvailableListener(null, null)
+                windowPlan = null
+                if (winRes != null) {                            // let the reader finish with the buffers first
+                    val w = java.util.concurrent.CountDownLatch(1)
+                    readerHandler.post { w.countDown() }
+                    w.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    winRes?.release(); winRes = null
+                }
                 while (inFlight.isNotEmpty()) { val f = inFlight.removeFirst(); GLES30.glDeleteSync(f.fence); f.img.close() }
                 images.values.forEach { HwTex.release(it) }; images.clear()
                 queue?.close()
@@ -228,6 +243,17 @@ class GlTap(
         }
         tapProgram = program(VERTEX_TAP, FRAGMENT_TAP)
         showProgram = program(VERTEX_SHOW, FRAGMENT_SHOW)
+        // the window pass needs ES 3 (the shaders are #version 300 es, and the read-back goes
+        // into a buffer the chip fills while it carries on); without it the plan is ignored
+        val ws = windowShaders
+        if (ws != null && gl3) try {
+            winY = program(ws.vert, ws.luma)
+            winC = program(ws.vert, ws.chroma)
+            winR = program(ws.vert, ws.rows)
+        } catch (e: Exception) {
+            winY = 0; winC = 0; winR = 0
+            onError("window shaders: ${e.message}")
+        }
 
         if (encoder == null) {
             val st = SurfaceTexture(tex)
@@ -352,6 +378,14 @@ class GlTap(
         if (no <= lastNo) return                                  // a repeat
         lastNo = no
         onFrame(ts, no)
+        // the ball's window, every frame: the tracker is two frames behind and only sees every
+        // second one, so this is where the full-resolution pixels are kept while they exist
+        val plan = windowPlan
+        if (plan != null && gl3 && winY != 0) {
+            val t0 = SystemClock.elapsedRealtimeNanos()
+            try { cutWindow(plan, no) } catch (e: Exception) { winErrors++; if (winErrors == 1L) onError("window: ${e.message}") }
+            winMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - winMsAvg) / minOf(++winN, 240L)
+        }
         if (no % every == 0L) {
             val t0 = SystemClock.elapsedRealtimeNanos()
             tap(ts, no)
@@ -457,6 +491,212 @@ class GlTap(
         out?.let { onPicture(ts, no, it) }
     }
 
+    // ---- the ball's window, cut as the frame goes past (see LiveWindows) ----
+
+    /** the three fragment shaders the window pass needs, read from assets by the caller */
+    class WindowShaders(val vert: String, val luma: String, val chroma: String, val rows: String)
+
+    /**
+     * What to cut while a serve is in the air, or null for nothing.
+     *
+     * The window is the ball's box in the crop's pixels; [at] says where this frame's goes, from
+     * the live track (Predict), and returns null for a frame it cannot place. The row sample is
+     * every [rowStride]th column of every [rowStep]th row of the whole crop, which is what the
+     * capture's row brightness is a median over.
+     *
+     * The colour maps take the chip's numbers onto the decoder's bytes, so a window matches the
+     * background frames the capture decodes the old way. Until a serve has been measured there
+     * is no fit and they are 1x + 0, which is what [CaptureGl.calib] starts as too.
+     *
+     * The bytes a frame hands back are the window's brightness plane ([ySize]), its two colour
+     * planes ([cSize] each, half size both ways), then [rows] rows of [rowPitch] bytes.
+     */
+    class WindowPlan(
+        val rect: IntArray, val side: Int,
+        val rowStep: Int, val rowStride: Int,
+        val bt601: Boolean,
+        /** gain and offset (0-255) per plane, as ColourFit gives them */
+        val y: FloatArray, val u: FloatArray, val v: FloatArray,
+        val at: (frameNo: Long) -> IntArray?,
+    ) {
+        init { require(side % 8 == 0 && side > 0) { "window side must be a multiple of 8" } }
+        val cols = (rect[2] + rowStride - 1) / rowStride
+        val rows = (rect[3] + rowStep - 1) / rowStep
+        /** bytes a sampled row: four columns to an output pixel, so a multiple of four */
+        val rowPitch = ((cols + 3) / 4) * 4
+        val ySize = side * side
+        val cSize = (side / 2) * (side / 2)
+        val bytes = ySize + 2 * cSize + rowPitch * rows
+        val key = "${rect[2]}x${rect[3]}/$side/$rowStep/$rowStride"
+    }
+
+    /** set from the tracker's thread, read on the frames' */
+    @Volatile var windowPlan: WindowPlan? = null
+    @Volatile var windowsCut = 0L; private set
+    @Volatile var winSkips = 0L; private set            // every buffer still being read
+    @Volatile var winErrors = 0L; private set
+    @Volatile var winMsAvg = 0.0; private set           // on the frames' thread
+    @Volatile var winReadMsAvg = 0.0; private set       // on the reader's
+    private var winN = 0L
+    private var winReadN = 0L
+    private var winY = 0; private var winC = 0; private var winR = 0
+
+    /** the window's render targets and read-back buffers, for one plan's shape */
+    private inner class WinRes(val plan: WindowPlan) {
+        val tY = plainTexture(plan.side / 4, plan.side)
+        val tU = plainTexture(plan.side / 8, plan.side / 2)
+        val tV = plainTexture(plan.side / 8, plan.side / 2)
+        val tR = plainTexture(plan.rowPitch / 4, plan.rows)
+        val fY = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
+        val fC = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
+        val fR = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
+        val pbo = IntArray(4).also { GLES30.glGenBuffers(4, it, 0) }
+        val busy = java.util.concurrent.atomic.AtomicIntegerArray(pbo.size)
+        var next = 0
+        init {
+            fun attach(f: Int, t: Int) {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, f)
+                GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, t, 0)
+            }
+            attach(fY, tY); attach(fR, tR)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fC)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, tU, 0)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT1, GLES20.GL_TEXTURE_2D, tV, 0)
+            GLES30.glDrawBuffers(2, intArrayOf(GLES20.GL_COLOR_ATTACHMENT0, GLES30.GL_COLOR_ATTACHMENT1), 0)
+            for (f in intArrayOf(fY, fC, fR)) {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, f)
+                check(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE) { "window framebuffer" }
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            for (b in pbo) {
+                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, b)
+                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, plan.bytes, null, GLES30.GL_STREAM_READ)
+            }
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        }
+        /** on the frames' thread, once nothing is reading from it */
+        fun release() {
+            GLES30.glDeleteBuffers(pbo.size, pbo, 0)
+            GLES20.glDeleteFramebuffers(3, intArrayOf(fY, fC, fR), 0)
+            GLES20.glDeleteTextures(4, intArrayOf(tY, tU, tV, tR), 0)
+        }
+    }
+    private var winRes: WinRes? = null
+
+    private fun plainTexture(w: Int, h: Int): Int {
+        val t = IntArray(1); GLES20.glGenTextures(1, t, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, t[0])
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+        return t[0]
+    }
+
+    /**
+     * One frame's window and row sample drawn and their read-back started.
+     *
+     * Three draws and one buffer: waiting for any of them here would cost the frames arriving
+     * meanwhile, which is the same reason the small picture is read back a frame late.
+     */
+    private fun cutWindow(plan: WindowPlan, no: Long) {
+        val at = plan.at(no) ?: return
+        // a new shape (a different crop or window) gets its own targets; the old ones go once the
+        // reader has finished with the buffers, and on this thread, where their framebuffers live
+        val res = winRes.let { cur ->
+            if (cur != null && cur.plan.key == plan.key) cur else {
+                if (cur != null) readerHandler.post { handler.post { try { cur.release() } catch (_: Exception) {} } }
+                WinRes(plan).also { winRes = it }
+            }
+        }
+        val k = res.next
+        if (res.busy.get(k) != 0) { winSkips++; return }
+        val wY = if (plan.bt601) BT601 else BT709
+        val cs = if (plan.bt601) CS601 else CS709
+        val ox = (plan.rect[0] + at[0]).toFloat(); val oy = (plan.rect[1] + at[1]).toFloat()
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, tex)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fY)
+        GLES20.glViewport(0, 0, plan.side / 4, plan.side)
+        GLES20.glUseProgram(winY)
+        cropUniforms(winY, ox, oy, wY)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(winY, "ym"), plan.y[0], plan.y[1] / 255f)
+        drawQuad(winY)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fC)
+        GLES20.glViewport(0, 0, plan.side / 8, plan.side / 2)
+        GLES20.glUseProgram(winC)
+        cropUniforms(winC, ox, oy, wY)
+        GLES20.glUniform2fv(GLES20.glGetUniformLocation(winC, "cs"), 1, cs, 0)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(winC, "um"), plan.u[0], plan.u[1] / 255f)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(winC, "vm"), plan.v[0], plan.v[1] / 255f)
+        drawQuad(winC)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fR)
+        GLES20.glViewport(0, 0, plan.rowPitch / 4, plan.rows)
+        GLES20.glUseProgram(winR)
+        cropUniforms(winR, plan.rect[0].toFloat(), plan.rect[1].toFloat(), wY)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(winR, "ym"), plan.y[0], plan.y[1] / 255f)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(winR, "steps"), plan.rowStride.toFloat(), plan.rowStep.toFloat())
+        drawQuad(winR)
+
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, res.pbo[k])
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fY)
+        GLES30.glReadBuffer(GLES20.GL_COLOR_ATTACHMENT0)
+        GLES30.glReadPixels(0, 0, plan.side / 4, plan.side, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fC)
+        GLES30.glReadBuffer(GLES20.GL_COLOR_ATTACHMENT0)
+        GLES30.glReadPixels(0, 0, plan.side / 8, plan.side / 2, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, plan.ySize)
+        GLES30.glReadBuffer(GLES30.GL_COLOR_ATTACHMENT1)
+        GLES30.glReadPixels(0, 0, plan.side / 8, plan.side / 2, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, plan.ySize + plan.cSize)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, res.fR)
+        GLES30.glReadBuffer(GLES20.GL_COLOR_ATTACHMENT0)
+        GLES30.glReadPixels(0, 0, plan.rowPitch / 4, plan.rows, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, plan.ySize + 2 * plan.cSize)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+
+        val fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        GLES20.glFlush()
+        res.busy.set(k, 1)
+        res.next = (k + 1) % res.pbo.size
+        windowsCut++
+        val taken = res
+        readerHandler.post { takeWindow(taken, k, fence, no, at) }
+    }
+
+    /** on the reader's thread: once the chip is done, the window copied out and the buffer freed */
+    private fun takeWindow(res: WinRes, k: Int, fence: Long, no: Long, at: IntArray) {
+        val t0 = SystemClock.elapsedRealtimeNanos()
+        var out: ByteArray? = null
+        try {
+            GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L)
+            GLES30.glDeleteSync(fence)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, res.pbo[k])
+            val m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, res.plan.bytes, GLES30.GL_MAP_READ_BIT) as ByteBuffer?
+            if (m != null) { out = ByteArray(res.plan.bytes); m.order(ByteOrder.nativeOrder()).position(0); m.get(out) }
+            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        } catch (e: Exception) { winErrors++; if (winErrors == 1L) onError("window read-back: ${e.message}") }
+        res.busy.set(k, 0)
+        winReadMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - winReadMsAvg) / minOf(++winReadN, 240L)
+        out?.let { onWindow(no, at, it) }
+    }
+
+    private fun cropUniforms(p: Int, ox: Float, oy: Float, wY: FloatArray) {
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(p, "tex"), 0)
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "size"), width.toFloat(), height.toFloat())
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "origin"), ox, oy)
+        GLES20.glUniform3fv(GLES20.glGetUniformLocation(p, "wY"), 1, wY, 0)
+        // the plan's coordinates are the tracker's, which are the recording's; the camera's
+        // buffer may run the other way (the live picture check), and the shader turns it back
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(p, "mirror"),
+            if (flip and 1 != 0) 1f else 0f, if (flip and 2 != 0) 1f else 0f)
+    }
+
+    private fun drawQuad(p: Int) {
+        val pos = GLES20.glGetAttribLocation(p, "pos")
+        GLES20.glEnableVertexAttribArray(pos)
+        GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
     /** the preview, as the camera's own transform says, without waiting for the screen */
     private fun show() {
         if (!EGL14.eglMakeCurrent(display, window, window, context)) { EGL14.eglMakeCurrent(display, pbuffer, pbuffer, context); return }
@@ -495,6 +735,13 @@ class GlTap(
     }
 
     companion object {
+        // brightness weights and colour scales, the two the camera may use: the window pass
+        // undoes the chip's own conversion with the same matrix CaptureGl fitted
+        private val BT709 = floatArrayOf(0.2126f, 0.7152f, 0.0722f)
+        private val BT601 = floatArrayOf(0.299f, 0.587f, 0.114f)
+        private val CS709 = floatArrayOf(1.8556f, 1.5748f)
+        private val CS601 = floatArrayOf(1.772f, 1.402f)
+
         // the frame's own texture coordinates (no transform): row 0 of the read-back picture is
         // row 0 of the buffer, as the decoder hands it out; [flip] corrects it if not (checked live)
         private const val VERTEX_TAP = """

@@ -55,7 +55,9 @@ class CaptureGl(private val assets: AssetManager) {
     }
 
     /** [frames] cut and handed to the sink; [seen] decoded in the span, cut or not */
-    class Result(val frames: Int, val fullRange: Boolean, val decodeMs: Long, val cutMs: Long, val seen: Int = frames)
+    class Result(val frames: Int, val fullRange: Boolean, val decodeMs: Long, val cutMs: Long, val seen: Int = frames,
+                 /** of [cutMs]'s wall time, how long was spent waiting for a frame to reach the chip */
+                 val waitMs: Long = 0)
 
     private lateinit var display: EGLDisplay
     private lateinit var context: EGLContext
@@ -98,6 +100,7 @@ class CaptureGl(private val assets: AssetManager) {
         var fullRange = false
         var written = 0
         var seen = 0
+        var waitNs = 0L                                   // waiting for a decoded frame to reach the chip
         var bufW = W; var bufH = H
         val t0 = SystemClock.elapsedRealtime()
         var cutNs = 0L
@@ -137,8 +140,10 @@ class CaptureGl(private val assets: AssetManager) {
                 if (inSpan) seen++
                 codec.releaseOutputBuffer(o, wanted)
                 if (!wanted) continue
+                val tw = System.nanoTime()
                 val img = awaitImage(reader) ?: throw IllegalStateException("a decoded frame never reached the chip")
                 val tc = System.nanoTime()
+                waitNs += tc - tw
                 val hb = img.hardwareBuffer ?: throw IllegalStateException("no buffer")
                 var eglImage = images[hb.id] ?: 0L
                 if (eglImage == 0L) { eglImage = HwTex.image(hb); if (eglImage == 0L) throw IllegalStateException("the chip can't read the decoder's frames"); images[hb.id] = eglImage }
@@ -150,8 +155,19 @@ class CaptureGl(private val assets: AssetManager) {
                 if (calib == null && reference != null && pts == reference.first) calibrate(targets, bufW, bufH, rect, reference.second)
                 // never the chip's own numbers unmapped: without a fit the capture is made the old way
                 val c = calib ?: throw IllegalStateException("no colour fit yet (the reference frame wasn't decoded)")
-                inFlight.addLast(targets.cut(c, bufW, bufH, rect, img))
-                while (inFlight.size > 2) { written += inFlight.removeFirst().takeOut(sink) }
+                if (keep != null) {
+                    // Only the handful the background needs. Read it back then and there: the
+                    // fences and the three buffers exist to keep the chip busy across hundreds
+                    // of frames, and across fifteen scattered ones they only add waiting. On a
+                    // 1824x756 crop the pipelined path spent 1746 ms on twelve frames, 145 ms
+                    // each, against 4.6 ms a frame cutting all 188 of a crop two thirds the
+                    // size the ordinary way.
+                    sink(targets.cutNow(c, bufW, bufH, rect)); written++
+                    img.close()
+                } else {
+                    inFlight.addLast(targets.cut(c, bufW, bufH, rect, img))
+                    while (inFlight.size > 2) { written += inFlight.removeFirst().takeOut(sink) }
+                }
                 cutNs += System.nanoTime() - tc
             }
             while (inFlight.isNotEmpty()) written += inFlight.removeFirst().takeOut(sink)
@@ -163,7 +179,7 @@ class CaptureGl(private val assets: AssetManager) {
             reader.close()
             tearDownGl()
         }
-        return Result(written, fullRange, SystemClock.elapsedRealtime() - t0, cutNs / 1_000_000, seen)
+        return Result(written, fullRange, SystemClock.elapsedRealtime() - t0, cutNs / 1_000_000, seen, waitNs / 1_000_000)
     }
 
     private fun awaitImage(reader: ImageReader): Image? {

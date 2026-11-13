@@ -793,7 +793,7 @@ class LivePipeline(
         }
         if (need == 0 || got < need * 3 / 4) return no("the chip's windows covered $got of $need frames (decoded already)")
         ringNote = "$got of $need flight windows, missed $missed, worst ${worst} px off centre, held ${taken.have} of $n; " +
-            "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms)"
+            "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms, waiting ${r.waitMs} ms), ${rect[2]}x${rect[3]} crop"
         return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
     }
 
@@ -930,7 +930,7 @@ class LivePipeline(
                     n = r.frames
                     // replaying a video (testing): the first 20 frames cut the old way too, compared
                     if (blocking && builder == null) { chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20); onNote("capture #$id, chip against copied: $chipCheck") }
-                    lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
+                    lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms, waiting ${r.waitMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
                     onNote("capture #$id: $lastCaptureBy")
                 }
             } catch (e: Throwable) {

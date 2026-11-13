@@ -627,3 +627,32 @@ no longer there.
 The window's size needs nothing: the simulation reaches 94–98% with sides of 224 to 288 chosen by
 the same rule, because the ring holds a mixture and the big entries cover the big misses (one
 miss of 121 px was re-cut out of a 384 px window).
+
+## 0.12.5: the hold works, and two slow serves that are not the battery
+
+Six serves, all read. The ring served **four of six** where 0.12.4 served three of twelve, and
+every refusal note now carries what the ring held: the four it served held 89 to 129 frames of
+the 99 to 145 they asked for, and covered 31 to 114 of the flight. The hold did its job.
+
+The player asked whether a low battery made two of them slow. It did not; the report names a
+different cause for each.
+
+**Serve 1, 7535 ms.** The live track was refused — "no track flies like a ball" — so the engine
+searched the whole crop instead: 0.7 s of background, **3.5 s of search**, 1.0 s of measuring.
+On top of that it is the serve that makes the session's colour fit, which costs a second decode
+of its own. Nothing here is the capture; it is the search the engine falls back to, and the
+reading it produced was right.
+
+**Serve 4, 4430 ms, on the ring.** Its crop is 1824x756 — all but the width of the picture, 1.38
+megapixels a frame, against 368 thousand on serve 6. The ring did what it is for: it cut 12
+frames instead of 145. Those twelve took **1746 ms**, 145 ms each, where serve 1 cut all 188
+frames of a crop two thirds the size at 4.6 ms each. Thirty times the cost per pixel, on the
+path that is supposed to be the cheap one.
+
+The fences and the three read-back buffers exist to keep the chip working while the processor
+catches up, across hundreds of frames. Across fifteen scattered ones they only add waiting: the
+decoder races through the frames nobody wants, and each kept frame arrives alone into machinery
+built for a queue. So the ring's background frames are now read back then and there, through
+`cutNow`, the same synchronous path the colour fit has always used. The capture note also now
+separates the time spent waiting for a decoded frame to reach the chip from the time spent
+cutting, so if 145 ms a frame survives this, the next report says which half it is in.

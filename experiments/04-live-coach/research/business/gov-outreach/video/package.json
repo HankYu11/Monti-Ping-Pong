@@ -1,0 +1,22 @@
+{
+  "name": "serve-coach-commercial",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render GovPitch out/spin-coach-gov-60s.mp4"
+  },
+  "dependencies": {
+    "@fontsource/noto-sans-tc": "^5.3.1",
+    "@react-three/fiber": "^9.1.2",
+    "@remotion/cli": "^4.0.541",
+    "@remotion/media-utils": "^4.0.541",
+    "@remotion/three": "^4.0.541",
+    "@types/react": "^19.3.0",
+    "@types/three": "^0.187.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "remotion": "^4.0.541",
+    "three": "^0.170.0",
+    "typescript": "^7.0.2"
+  }
+}

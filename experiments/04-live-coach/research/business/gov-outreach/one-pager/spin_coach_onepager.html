@@ -28,16 +28,15 @@ html, body { margin: 0; background: var(--paper); color: var(--ink); font-family
 h2 { font: 700 12.5pt/1.3 var(--zh); margin: 0 0 2.2mm; display: flex; gap: 3mm; align-items: baseline; }
 h2 .n { font: 600 11pt var(--num); color: var(--navy); background: var(--cyan); border-radius: 3px; padding: 0 2mm; }
 h2 small { font: 400 9pt var(--zh); color: var(--est); }
-.steps { display: grid; grid-template-columns: 1fr 1fr 1.1fr; gap: 3.5mm; }
-.step { border: 1px solid var(--line); border-radius: 3mm; padding: 3mm; display: grid; gap: 1.5mm; align-content: start; }
-.step svg { width: 100%; height: 19mm; display: block; }
-.step b { font-size: 11pt; }
-.step p { margin: 0; font-size: 9.5pt; line-height: 1.5; color: var(--muted); }
-.step.hud { background: var(--navy); border-color: var(--navy); }
-.step.hud img { width: 100%; border-radius: 1.5mm; display: block; }
-.step.hud b { color: #fff; }
-.step.hud p { color: #b9c8d8; }
-.say { font: 500 9.5pt var(--zh); color: var(--cyan); }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3.5mm; }
+.step { margin: 0; background: var(--navy); border-radius: 3mm; overflow: hidden; display: grid; align-content: start; }
+.shot { position: relative; height: 33mm; background: #000; }
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.badge { display: inline-block; width: 6mm; height: 6mm; border-radius: 50%; background: var(--cyan); color: var(--navy); font: 700 10pt/6mm var(--num); text-align: center; margin-right: 2mm; vertical-align: 1px; }
+.step figcaption { padding: 2.6mm 3.2mm 3.2mm; display: grid; gap: 1mm; }
+.step b { font-size: 11pt; color: #fff; }
+.step p { margin: 0; font-size: 9.3pt; line-height: 1.5; color: #b9c8d8; }
+.say { color: var(--cyan); font-weight: 500; margin-right: 1mm; }
 .coach { border: 1px solid var(--line); border-radius: 3mm; overflow: hidden; }
 .appbar { background: var(--navy2); color: #fff; font-size: 9.5pt; padding: 2mm 4mm; display: flex; justify-content: space-between; }
 .appbar span { color: var(--cyan); font-family: var(--mono); font-size: 8.5pt; }
@@ -77,45 +76,25 @@ td:last-child { font-weight: 500; }
       <h1>旋轉教練</h1>
       <p class="tag">看得見的發球旋轉，看得見的進步</p>
     </div>
-    <div class="co"><b>奇斯科技</b>QI SI TECHNOLOGY<br>臺北市萬華區</div>
+    <div class="co"><b>奇斯科技</b>QI SI TECHNOLOGY</div>
   </header>
 
   <div class="body">
     <section>
       <h2><span class="n">1</span>怎麼用：一支手機，三個步驟</h2>
       <div class="steps">
-        <div class="step">
-          <svg viewBox="0 0 160 90" aria-hidden="true">
-            <rect x="0" y="52" width="160" height="7" rx="1.5" fill="#1d5fa8"/>
-            <rect x="78" y="40" width="3" height="12" fill="#9aa9b8"/>
-            <rect x="10" y="59" width="4" height="30" fill="#5b6878"/><rect x="146" y="59" width="4" height="30" fill="#5b6878"/>
-            <line x1="132" y1="30" x2="122" y2="88" stroke="#16202c" stroke-width="2.4"/>
-            <line x1="132" y1="30" x2="142" y2="88" stroke="#16202c" stroke-width="2.4"/>
-            <line x1="132" y1="30" x2="132" y2="88" stroke="#16202c" stroke-width="2.4"/>
-            <rect x="120" y="8" width="24" height="23" rx="3" fill="#0f1c2e"/>
-            <circle cx="132" cy="19.5" r="5" fill="#4fe3f0"/>
-          </svg>
-          <b>① 架在球桌旁</b>
-          <p>手機放上三腳架，每秒 240 格高速拍攝；離線運作，資料不上傳。</p>
-        </div>
-        <div class="step">
-          <svg viewBox="0 0 160 90" aria-hidden="true">
-            <path d="M14 70 Q 70 6 146 52" fill="none" stroke="#9aa9b8" stroke-width="2" stroke-dasharray="4 4"/>
-            <circle cx="80" cy="34" r="17" fill="#ffffff" stroke="#16202c" stroke-width="2"/>
-            <path d="M80 17 A17 17 0 0 1 80 51 Z" fill="#16202c"/>
-            <circle cx="72" cy="28" r="2.6" fill="#e0342b"/><circle cx="74" cy="40" r="2.6" fill="#22a04b"/><circle cx="88" cy="31" r="2.6" fill="#2a63d6"/>
-            <path d="M54 22 A30 30 0 0 1 104 14" fill="none" stroke="#4fe3f0" stroke-width="3" stroke-linecap="round"/>
-            <path d="M104 14 l-7 -1 l3 6 z" fill="#4fe3f0"/>
-          </svg>
-          <b>② 學生照常發球</b>
-          <p>使用簡單標記過的一般練習球，不需專用器材。</p>
-        </div>
-        <div class="step hud">
-          <img src="hud_crop.png" alt="旋轉教練實際 App 畫面：2450 RPM，強，下旋">
-          <b>③ 幾秒內說出結果</b>
-          <p class="say">「2450 轉，強，下旋」</p>
-          <p>轉速、旋轉種類、強弱，並對照世界級平均 2,760 轉。（實際畫面）</p>
-        </div>
+        <figure class="step">
+          <div class="shot"><img src="step1_setup.jpg" alt="手機架在三腳架上，放在球桌旁"></div>
+          <figcaption><b><span class="badge">1</span>架在球桌旁</b><p>手機放上三腳架，每秒 240 格高速拍攝；離線運作，資料不上傳。</p></figcaption>
+        </figure>
+        <figure class="step">
+          <div class="shot"><img src="step2_serve.jpg" alt="標記過的練習球飛越球桌"></div>
+          <figcaption><b><span class="badge">2</span>學生照常發球</b><p>使用簡單標記過的一般練習球，不需專用器材。</p></figcaption>
+        </figure>
+        <figure class="step">
+          <div class="shot" style="background:#18212c"><img src="hud_crop.png" alt="旋轉教練實際 App 畫面：2450 RPM，強，下旋" style="object-fit: contain"></div>
+          <figcaption><b><span class="badge">3</span>幾秒內說出結果</b><p><span class="say">「2450 轉，強，下旋」</span>並對照世界級平均 2,760 轉。</p></figcaption>
+        </figure>
       </div>
     </section>
 

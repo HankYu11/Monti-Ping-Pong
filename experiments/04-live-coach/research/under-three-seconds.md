@@ -656,3 +656,40 @@ built for a queue. So the ring's background frames are now read back then and th
 `cutNow`, the same synchronous path the colour fit has always used. The capture note also now
 separates the time spent waiting for a decoded frame to reach the chip from the time spent
 cutting, so if 145 ms a frame survives this, the next report says which half it is in.
+
+## The search a refused track falls back to
+
+Serve 1 of the 0.12.5 session spent 0.7 s learning a background and 3.5 s searching, because the
+live track was refused and the engine fell back to finding the flight itself. Both of those were
+spent on a windowed capture, and on a windowed capture both are almost entirely waste:
+
+- **The background is in the file.** A windowed capture carries one, medianed on the phone from
+  the frames the flight covers and already corrected for the row brightness — which is exactly
+  what the search's own sampling pass rebuilds whole frames to work out again.
+- **There is nowhere for the ball to be but the window.** Everything outside it *is* the
+  background; that is what the format means. The per-frame pass was rebuilding the whole crop
+  (1120x760: about 1.5 million operations a frame, 188 times) and scanning all of it, to find
+  the ball in a 126 px window.
+
+So on a windowed capture the search now takes the background from the file and rebuilds and
+scans only each frame's window, skipping frames that have none without touching them. Nothing is
+lost by the restriction: a ball outside the windows was never findable, because its pixels are
+not in the file.
+
+Measured on three real captures, measuring with the track withheld so the engine must search:
+
+| | background | search | whole measurement |
+|---|---|---|---|
+| before | 0.1–0.3 s | 0.5–1.5 s | 652–1803 ms |
+| after | 0.0 s | 0.1 s | 358–474 ms |
+
+and the readings are the same to the digit (25.75, 51.40, 51.15 both ways). On the phone, which
+is slower than this machine, serve 1's 4.2 s of background-and-search should come back as a few
+hundred milliseconds.
+
+The blob test the two passes share was pulled out into one function (`ballCandidate`) rather than
+left duplicated, so the windowed search cannot drift from the whole-frame one.
+
+Not changed: how often a track is refused in the first place. That is an accuracy question, and
+with the fallback now costing a fifteenth of what it did, a refusal is no longer worth avoiding
+at the risk of measuring an arm.

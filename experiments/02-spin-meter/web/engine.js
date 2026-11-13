@@ -631,6 +631,66 @@
     return d;
   }
 
+  /** a box of pixels at half size (2x2 mean, as lumaHalf rounds it) */
+  function halfOf(g, w, h) {
+    const hw = w >> 1, hh = h >> 1, out = new Float32Array(hw * hh);
+    for (let y = 0; y < hh; y++) {
+      const r0 = 2 * y * w, r1 = r0 + w;
+      for (let x = 0; x < hw; x++) {
+        const c = 2 * x;
+        out[y * hw + x] = ((g[r0 + c] + g[r0 + c + 1] + g[r1 + c] + g[r1 + c + 1]) * 0.25 + 0.5) | 0;
+      }
+    }
+    return out;
+  }
+
+  /** a blob round enough and the right size to be the ball: its middle and radius, or null */
+  function ballCandidate(c) {
+    if (c.area < 12 || c.area > 2500) return null;
+    if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.8 || c.area / (c.w * c.h) < 0.5) return null;
+    return [c.cx, c.cy, Math.sqrt(c.area / Math.PI)];
+  }
+
+  /**
+   * The ball in one box of one frame, for a capture cut as windows.
+   *
+   * Everything outside a windowed capture's window IS its background -- that is what the format
+   * is -- so the search can only ever find the ball inside the window, and the whole-frame pass
+   * spends its time rebuilding and scanning pixels that are guaranteed to be background. On the
+   * serve that prompted this (1120x760, 188 frames) that was 3.5 s, against a flight the engine
+   * then found inside the windows anyway.
+   *
+   * [g], [u], [v] are the box's pixels at half size, already corrected for the row brightness
+   * (windowBox does that), so unlike scanFrame there is no deflickering left to do. The box is
+   * in half-size crop coordinates and the candidates come back in them too.
+   */
+  function scanBox(g, u, v, sec, ctx, box) {
+    const { sw } = ctx, { bg, bgU, bgV } = sec;
+    const [bx, by, bw, bh] = box;
+    const col = u && bgU ? true : false;
+    const mask = new Uint8Array(bw * bh);
+    for (let y = 0; y < bh; y++) {
+      const src = y * bw, dst = (by + y) * sw + bx;
+      for (let x = 0; x < bw; x++) {
+        const p = src + x, q = dst + x;
+        let gv = Math.floor(g[p]);
+        gv = gv < 0 ? 0 : gv > 255 ? 255 : gv;
+        let d = Math.abs(gv - bg[q]);
+        if (col) {
+          const du = CHROMA_GAIN * Math.abs(u[p] - bgU[q]), dv = CHROMA_GAIN * Math.abs(v[p] - bgV[q]);
+          if (du > d) d = du; if (dv > d) d = dv;
+        }
+        mask[p] = d > 30 ? 1 : 0;
+      }
+    }
+    const m2 = opening(mask, bw, bh, 2), out = [];
+    for (const c of components(m2, bw, bh, false)) {
+      const cand = ballCandidate(c);
+      if (cand) out.push([cand[0] + bx, cand[1] + by, cand[2]]);
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ scan pass: candidates in one frame
   function scanFrame(job, ctx) {             // job: { buf, offset, stride, full, pu, pv } (planes) or { g, u, v } (half size)
     const { sw, sh, W, H } = ctx;
@@ -662,11 +722,7 @@
     }
     const m2 = opening(mask, sw, sh, 2);
     const fc = [];
-    for (const c of components(m2, sw, sh, false)) {
-      if (c.area < 12 || c.area > 2500) continue;
-      if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.8 || c.area / (c.w * c.h) < 0.5) continue;
-      fc.push([c.cx, c.cy, Math.sqrt(c.area / Math.PI)]);
-    }
+    for (const c of components(m2, sw, sh, false)) { const b = ballCandidate(c); if (b) fc.push(b); }
     return fc;
   }
 
@@ -998,10 +1054,16 @@
     };
     const keep = (k, x) => samples.push({ k, g: bytes(x.g, Uint8Array, 0, 255),
       u: x.u ? bytes(x.u, Int8Array, -128, 127) : null, v: x.v ? bytes(x.v, Int8Array, -128, 127) : null });
+    // A windowed capture carries its own background, medianed on the phone from the frames the
+    // flight covers and already corrected for the row brightness -- which is exactly what this
+    // pass would spend its time rebuilding whole frames to work out again.
+    const ownBg = R.windowed && R.bgPlanes ? R.bgPlanes : null;
     // Keyframes decode on their own, so a spread of them is enough to learn the background, without
     // decoding the whole video for it (phones put one every 30 frames: about half the time saved).
-    const keys = R.runKeys && R.keys ? R.keys.filter((i, j, all) => j % Math.max(1, Math.ceil(all.length / 60)) === 0) : [];
-    if (keys.length >= 12) {
+    const keys = ownBg ? [] : (R.runKeys && R.keys ? R.keys.filter((i, j, all) => j % Math.max(1, Math.ceil(all.length / 60)) === 0) : []);
+    if (ownBg) {
+      // nothing to sample: the background is in the file
+    } else if (keys.length >= 12) {
       await R.runKeys(keys, async (k, src) => { keep(k, await grabHalf(ctx, src, R.W, R.H)); progress("Learning the background", 0.1 * samples.length / keys.length); });
       samples.sort((u, v) => u.k - v.k);
     } else if (R.kind === "seek") {
@@ -1013,7 +1075,7 @@
       });
     }
     DBG.time = { background: +((performance.now() - tFind) / 1000).toFixed(1) };
-    const withColour = samples.every((s) => s.u);
+    const withColour = ownBg ? !!ownBg.u : samples.every((s) => s.u);
     function background(set) {               // still background from a set of samples
       const bgf = medianFrames(set.map((s) => s.g), sw * sh);
       const defl = set.map(({ g }) => { const d = deflickerOne(g, bgf, sw, sh, 2); for (let p = 0; p < d.length; p++) d[p] = clamp(Math.floor(d[p]), 0, 255); return d; });
@@ -1022,11 +1084,18 @@
       const bgV = withColour ? Int8Array.from(medianFrames(set.map((s) => s.v), sw * sh), Math.round) : null;
       return { bgf, bg, bgU, bgV, defl };
     }
-    const whole = background(samples), { bgf, bg, defl } = whole;
+    const whole = ownBg ? (() => {
+      const g = lumaHalf(ownBg, R.W, R.H).g;
+      const b = Uint8Array.from(g, Math.trunc);
+      return { bgf: g, bg: b, defl: [],
+               bgU: ownBg.u ? Int8Array.from(chromaHalf(ownBg, ownBg.u, R.W, R.H), Math.round) : null,
+               bgV: ownBg.v ? Int8Array.from(chromaHalf(ownBg, ownBg.v, R.W, R.H), Math.round) : null };
+    })() : background(samples);
+    const { bgf, bg, defl } = whole;
     // (one background per section of the video was tried, for a phone still being set down at
     // the start: with ~10 samples per section, the server's body leaked into the background)
     const sections = [{ from: 0, to: nFrames, bgf: whole.bgf, bg: whole.bg, bgU: whole.bgU, bgV: whole.bgV }];
-    if (opt.onScene) {                        // setup check: overall light, and how much of the view keeps changing
+    if (opt.onScene && !ownBg) {              // setup check: overall light, and how much of the view keeps changing
       let sum = 0; for (let p = 0; p < bg.length; p++) sum += bg[p];
       const moving = defl.map((d) => { let n = 0; for (let p = 0; p < d.length; p++) if (Math.abs(d[p] - bg[p]) > 30) n++; return n / d.length; });
       opt.onScene({ light: sum / bg.length, moving: median(moving) });
@@ -1034,9 +1103,28 @@
     const cands = new Array(nFrames).fill(null).map(() => []);
     // the per-frame search runs on worker threads when the browser allows it, else here
     const scanCtx = { sections, sw, sh, W: R.W, H: R.H };
-    const pool = await scanPool(scanCtx);
     let doneN = 0;
     const store = (i, fc) => { cands[i] = fc; if (++doneN % 4 === 0) progress("Looking for the ball", 0.1 + 0.75 * doneN / nFrames); };
+    if (R.windowed && R.winAt) {
+      // A windowed capture is its background everywhere but the window, so there is nowhere
+      // else for the ball to be. Only the window is rebuilt and only the window is scanned,
+      // and a frame with no window is skipped without being touched at all.
+      const margin = 8;                      // room for the opening, at full size
+      await R.run(0, nFrames, async (i, src) => {
+        const w = R.winAt(i);
+        if (!w || !src || !src.captureWindow) { store(i, []); return; }
+        const x0 = Math.max(0, (w[0] - margin) & ~1), y0 = Math.max(0, (w[1] - margin) & ~1);
+        const x1 = Math.min(R.W, w[0] + R.winW + margin), y1 = Math.min(R.H, w[1] + R.winH + margin);
+        const box = [x0, y0, (x1 - x0) & ~1, (y1 - y0) & ~1];
+        const f = windowBox(src.captureWindow, [0, 0, R.W, R.H], box);
+        const half = [box[0] >> 1, box[1] >> 1, box[2] >> 1, box[3] >> 1];
+        store(i, scanBox(halfOf(f.g, box[2], box[3]), f.u && halfOf(f.u, box[2], box[3]),
+                         f.v && halfOf(f.v, box[2], box[3]), sections[0], scanCtx, half));
+      });
+      DBG.workers = 0;
+      DBG.searchedWindows = true;
+    } else {
+    const pool = await scanPool(scanCtx);
     try {
       await R.run(0, nFrames, async (i, src) => {
         const P = await framePlanes(src, R.W, R.H);
@@ -1048,6 +1136,7 @@
       if (pool) await pool.drain();
       DBG.workers = pool ? pool.size : 0;
     } finally { if (pool) pool.close(); }
+    }
     // greedy linking with a constant-velocity guess
     let tracks = [], active = [];
     // Best matches first (close to the predicted spot, similar size), so a speck of noise near
@@ -2417,6 +2506,11 @@
     });
     return {
       kind: "capture", n, W: cw, H: ch, fullW: cap.W, fullH: cap.H, offX: cx, offY: cy, windowed: !!cap.windows,
+      // What the flight search needs to look only where the ball can be. A windowed capture is
+      // its background everywhere outside the window, by construction, so searching the rest
+      // finds nothing and rebuilding the rest to find nothing is most of what the search costs.
+      bgPlanes: cap.background ? plane(cap.background) : null, winW: cap.winW, winH: cap.winH,
+      winAt: cap.windows ? (i) => cap.windows[i] : null,
       async run(a, b, cb) {
         for (let i = Math.max(0, a); i < Math.min(b, n); i++) {
           const buf = await raw(i);

@@ -387,7 +387,8 @@ class MainActivity : Activity() {
         setStartButton(true)
         tone(Hud.CYAN)
         state("Starting: wait for Ready…")
-        say("Wait for ready, then serve. One at a time: after each, wait for the answer and ready.")
+        // nothing spoken here: the camera takes a moment to open and the picture check a moment
+        // more, and an instruction said over that is in the way. "Ready." is the whole cue.
     }
 
     /** which way round the tap's picture is, once a few frames have been recorded (tried for 5 s) */

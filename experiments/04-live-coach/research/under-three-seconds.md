@@ -518,3 +518,48 @@ Three things, so this cannot happen again quietly:
 - `CaptureGl` refuses a crop it cannot read, by shape, before it decodes anything — the skew is
   now a thrown error rather than a plane that looks plausible.
 - A single failed colour fit no longer turns the chip off for the session. Two failures do.
+
+## 0.12.3 on a phone: the ring runs
+
+Eight serves, session 20261113_18. The ring served five of them and the numbers it was built for
+came back:
+
+- **The colour fit works.** `Y 0.856x+16.8 (rms 1.01), over 288x248 of a 288px window` — the
+  camera's own frames map onto the decoder's bytes to about one grey level. The overlap fix was
+  what it needed; there were no chip failures all session.
+- **The cut all but disappears.** A ring serve decodes in 832 ms and cuts 15 frames in **94 ms**,
+  against 394 ms of cutting on the serve that made the fit and 683 ms on the longest copied one.
+- **The wait: a median of 2381 ms the session before, 1364 ms here**, and 1315 ms over the five
+  serves the ring served. The decode is now the whole of what is left, which is the next thing to
+  take (the background from between serves, so no frame of the span need be decoded at all).
+- The chip kept up: 10032 windows cut, no errors, 763 of 10795 attempts skipped for want of a
+  buffer (15% before eight buffers, 7% now).
+
+Coverage of the measured flight ran 30/37, 33/37, 44/45, 44/55, 61/63 — the three worst are the
+three with the most windows missed, not the ones with the worst prediction. Worst off centre was
+261 to 496 px against a 288 px window, so the margin is doing its job at the tail while the
+median sits far inside it.
+
+### The spin types
+
+The player reported some side spins read as backspin. That is not the new path: re-measuring the
+original clips **whole crop, at full size**, gives the same type on every serve whose rebuild is
+sound (1, 2, 3, 5, 7, 8). The capture is not losing the side component — the engine is reading
+the ball that way.
+
+What the numbers do show is a labelling edge. `spinLabel` says "side" only when the curve
+component is at least 35% of the total, so:
+
+| serve | lift | curve | gyro | side share | label |
+|---|---|---|---|---|---|
+| 7 | 32 | 10 | −16 | 26% | backspin |
+| 8 | 56 | −15 | 21 | 24% | backspin |
+| 5 | −16 | −38 | 32 | 73% | sidespin + gyro |
+
+A serve with a quarter of its spin sideways is announced as plain backspin, with nothing on the
+screen to say the rest is there. Whether that is the whole of what the player noticed needs their
+own account of which serves were which.
+
+One ring serve of the five moved: serve 8's curve read −7.9 on the phone against −15.0 whole
+crop. The other four matched to about a rev/s. That is the split drift the windowed format has
+always had, and it is enough to tip a serve across a threshold at 35%.

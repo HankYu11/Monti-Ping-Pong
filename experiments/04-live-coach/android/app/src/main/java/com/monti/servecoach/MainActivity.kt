@@ -17,7 +17,10 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import android.media.MediaCodec
+import android.media.MediaFormat
 import android.provider.MediaStore
+import java.util.concurrent.TimeUnit
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.SurfaceHolder
@@ -425,7 +428,13 @@ class MainActivity : Activity() {
             onSkippedClip = if (blocking) null else { n, why, f -> main.post { log("skipped", "not a serve ($why): clip kept"); saveClip("skipped${n}_${why.replace(Regex("[^a-z]+"), "-").trim('-')}", f) } },
             onCapture = { info, clip -> main.post { onCaptured(info, clip) } },
             onCaptureStarted = { info -> main.post { onCaptureStarted(info) } },
-            onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it; it.windowRing = windowRingOn }
+            onError = { msg -> main.post { log("error", msg) } }).also { pipeline = it; it.windowRing = windowRingOn
+                // Both colour fits belong to the session that made them. The chip's maps its own
+                // numbers onto a decoder's, and the ring's maps the CAMERA's frames onto that
+                // decoder's -- so a fit made live is wrong for a replay, where both sides are
+                // the same decode, and a fit made replaying is wrong for the camera. They cost
+                // one serve to make, so each session makes its own.
+                CaptureGl.calib = null; CaptureGl.ringCalib = null }
 
     /**
      * Cutting the ball's window on the chip as the serve happens (LiveWindows), instead of
@@ -484,6 +493,89 @@ class MainActivity : Activity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type = "video/*" }, 7)
     }
 
+    /**
+     * A video replayed through the graphics chip, as the camera's own frames go.
+     *
+     * "Test with a video" has always fed the file to the pipeline's own decoder, which measures
+     * the tracker, the capture and the engine but never touches GlTap -- so the window pass and
+     * the ring, which only exist on the camera's path, went untested by it. Here the clip is
+     * decoded into the tap's surface instead: every frame reaches the chip, the small picture
+     * comes back for the tracker, the window is cut, and a capture is built from the ring,
+     * exactly as live. What it cannot test is the camera itself -- the ring's colour fit comes
+     * out near identity because both sides of it are the same decode.
+     *
+     * Frames are fed one at a time and each waits for the tap to report it. A surface hands its
+     * buffers over through a queue that drops when the consumer falls behind, and replaying
+     * faster than the chip can cut would silently lose frames -- which is the one thing this is
+     * meant to measure. Slower than real time is fine; it is a test.
+     *
+     * Returns false if the chip cannot be set up, and the caller falls back to decoding.
+     */
+    private fun replayThroughChip(ff: FileFrames, p: LivePipeline): Boolean {
+        val fmt = ff.outputFormat ?: return false
+        val w = fmt.getInteger(MediaFormat.KEY_WIDTH); val h = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+        val ws = try {
+            GlTap.WindowShaders(
+                assets.open("shaders/quad.vert").bufferedReader().readText(),
+                assets.open("shaders/crop_y.frag").bufferedReader().readText(),
+                assets.open("shaders/crop_c.frag").bufferedReader().readText(),
+                assets.open("shaders/crop_rows.frag").bufferedReader().readText())
+        } catch (e: Exception) { null } ?: return false
+        val paced = java.util.concurrent.Semaphore(0)
+        val t = GlTap(w, h, fps = ff.captureFps,
+            onFrame = { ts, no -> p.offerTapTime(ts, no); paced.release() },
+            onPicture = { ts, no, rgba -> p.offerTapPicture(ts, no, rgba, w / 4, h / 4) },
+            onError = { msg -> main.post { log("error", msg) } },
+            windowShaders = ws, onWindow = { no, at, b -> p.offerWindow(no, at, b) })
+        tap = t
+        p.planWindows = { plan -> t.windowPlan = plan }
+        val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
+        var stalls = 0
+        try {
+            t.start()
+            codec.configure(fmt, t.surface, null, 0)
+            codec.start()
+            val info = MediaCodec.BufferInfo()
+            var k = 0; var eosIn = false; var done = false; var shown = 0; var checked = false
+            while (!done && mode == Mode.REPLAY) {
+                if (!eosIn) {
+                    val i = codec.dequeueInputBuffer(2_000)
+                    if (i >= 0) {
+                        if (k < ff.frames.size) {
+                            val fr = ff.frames[k++]
+                            codec.getInputBuffer(i)!!.apply { clear(); put(fr.data) }
+                            codec.queueInputBuffer(i, 0, fr.data.size, fr.ptsUs, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+                        } else { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
+                    }
+                }
+                val o = codec.dequeueOutputBuffer(info, 5_000)
+                if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || o == MediaCodec.INFO_TRY_AGAIN_LATER) continue
+                if (o < 0) continue
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) done = true
+                val render = info.size > 0
+                // the clip's own time, so the tap numbers the frames as the recording does and
+                // the picture check lines the two up with no clock offset at all
+                codec.releaseOutputBuffer(o, if (render) info.presentationTimeUs * 1000 else 0L)
+                if (!render) continue
+                if (!paced.tryAcquire(1, 200, TimeUnit.MILLISECONDS)) stalls++
+                shown++
+                // the picture check as soon as there are taps to check. Early on purpose: the
+                // frames before it are only buffered for the check itself, and a serve clip
+                // carries half a second of lead-in that the tracker wants for its background.
+                if (!checked && shown > 30) { checked = true; val f = p.calibrate(); main.post { log("replay", "picture check: ${p.flipCheck}") }; if (f < 0) checked = false }
+                if (shown % 60 == 0) { val pct = 100 * shown / maxOf(1, ff.frames.size); main.post { if (mode == Mode.REPLAY) state("Video test on the chip: $pct%") } }
+            }
+        } finally {
+            try { codec.stop() } catch (_: Exception) {}
+            codec.release()
+            main.post { log("replay", "chip: ${t.frames} frames, ${t.tapped} tapped, ${t.missed} missed, ${t.windowsCut} windows (${t.winSkips} skipped)" +
+                (if (stalls > 0) ", $stalls frames the chip never reported" else "")) }
+            t.stop(); if (tap === t) tap = null
+            p.planWindows = null
+        }
+        return true
+    }
+
     private var testSpotted = 0                          // a video test: serves found, and answers so far
     private var testRead = 0
     private var testGood = 0
@@ -524,11 +616,18 @@ class MainActivity : Activity() {
                 val p = newPipeline(ff, blocking = true, fps = ff.captureFps)
                 p.prime(ff.frames)
                 p.start()
-                var k = 0
-                for (fr in ff.frames) {
-                    if (mode != Mode.REPLAY) break
-                    p.offer(fr)
-                    if (++k % 60 == 0) { val pct = 100 * k / ff.frames.size; main.post { if (mode == Mode.REPLAY) state("Video test: looking for serves… $pct%") } }
+                // Through the chip when it can be: the clip's frames are decoded into the tap's
+                // own surface, so the small picture, the window pass and the ring all run the
+                // way they do off the camera. Otherwise the pipeline's own decoder, as before.
+                val byChip = if (!windowRingOn) false else try { replayThroughChip(ff, p) }
+                    catch (e: Exception) { main.post { log("error", "replay on the chip: ${e.message}; decoding instead") }; false }
+                if (!byChip) {
+                    var k = 0
+                    for (fr in ff.frames) {
+                        if (mode != Mode.REPLAY) break
+                        p.offer(fr)
+                        if (++k % 60 == 0) { val pct = 100 * k / ff.frames.size; main.post { if (mode == Mode.REPLAY) state("Video test: looking for serves… $pct%") } }
+                    }
                 }
                 if (mode == Mode.REPLAY) p.finish()
                 main.post {

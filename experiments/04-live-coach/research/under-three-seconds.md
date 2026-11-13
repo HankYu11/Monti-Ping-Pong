@@ -693,3 +693,33 @@ left duplicated, so the windowed search cannot drift from the whole-frame one.
 Not changed: how often a track is refused in the first place. That is an accuracy question, and
 with the fallback now costing a fifteenth of what it did, a refusal is no longer worth avoiding
 at the risk of measuring an arm.
+
+## Testing a setting you are not standing in: the clip through the chip
+
+"Test with a video" has always fed the file to the pipeline's own decoder. That measures the
+tracker, the capture and the engine, and never touches GlTap — so the window pass and the ring,
+which exist only on the camera's path, went untested by it. An emulator would not have helped
+either, for the same reason.
+
+The clip now goes through the chip instead, when the windows are on: decoded straight into the
+tap's own surface, so every frame reaches the chip, the small picture comes back for the tracker,
+the window is cut and a capture is built from the ring, exactly as live. A club clip replayed on
+the sofa now exercises the part that could only be tested in the club.
+
+Two things it took to make it honest:
+
+**Frames are fed one at a time, each waiting for the tap to report it.** A surface hands its
+buffers over through a queue that drops when the consumer falls behind. Replaying faster than the
+chip can cut would quietly lose frames — which is the one thing this is meant to measure. It runs
+slower than real time, and counts any frame the chip never reported.
+
+**The two colour fits are cleared when a session starts.** The chip's maps its own numbers onto a
+decoder's; the ring's maps the *camera's* frames onto that decoder's. A fit made live is wrong
+for a replay, where both sides are the same decode, and a fit made replaying is wrong for the
+camera. They cost one serve to make, so each session makes its own. (That also means a replay's
+`ringCalib` comes out near identity — the one thing a replay cannot test is the camera itself.)
+
+What a replay now covers: frame delivery and whether the chip keeps up, the window's placement
+and size from the live track, the ring's coverage of the flight, the re-cut, the capture, the
+search, and the reading. What it still cannot: the camera's own frames against the encoder's, and
+real-time pacing.

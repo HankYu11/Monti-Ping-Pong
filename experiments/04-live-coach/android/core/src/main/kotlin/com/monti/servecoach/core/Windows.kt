@@ -244,11 +244,22 @@ object Windows {
      * edge is a multiple of the stride and its top a multiple of the row step. A few pixels of
      * crop, and the ratio's bias is common to both sides and cancels; without it the two
      * samples are merely similar, which is not the same thing.
+     *
+     * The width stays a multiple of 8 and the height even, which is what [ServeTracker.cropFor]
+     * promises and what the chip's own crop (CaptureGl) needs: it packs four pixels to a texel
+     * and reads a row back as width/4 texels, so a width of 1870 reads 1868 pixels and every row
+     * after the first lands two bytes early. 0.12.0 moved the left edge and added the shift to
+     * the width without masking it again, which made almost every crop of a session two pixels
+     * wide of a multiple of four. The chip's colour fit caught the first one (rms 40 against the
+     * decoder's bytes, where 0.3 is normal) and turned the chip off for the whole session, so
+     * every capture after it was copied out by the processor instead -- right, but slow.
      */
     fun alignRect(r: IntArray, frameW: Int, frameH: Int, rowStep: Int, stride: Int = ROW_STRIDE): IntArray {
-        val dx = r[0] % stride
-        val dy = r[1] % rowStep
-        return intArrayOf(r[0] - dx, r[1] - dy, minOf(frameW - (r[0] - dx), r[2] + dx), minOf(frameH - (r[1] - dy), r[3] + dy))
+        val x0 = r[0] - r[0] % stride
+        val y0 = r[1] - r[1] % rowStep
+        val w = minOf(frameW - x0, r[2] + (r[0] - x0)) and 7.inv()
+        val h = minOf(frameH - y0, r[3] + (r[1] - y0)) and 1.inv()
+        return intArrayOf(x0, y0, w, h)
     }
 
     /**

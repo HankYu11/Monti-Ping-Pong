@@ -482,3 +482,39 @@ six. That is the headroom the design has, measured rather than hoped for.
 serve 2 70, 73, 75 and 76 of 91, and change serves 1 and 3 not at all. The window is not what
 loses frames — being on the wrong object, or having no prediction yet, is. 72 stays because it
 costs little and the phone's real lag is still unknown, but there is nothing to buy by raising it.
+
+## The crop two pixels too wide (0.12.0 → 0.12.3)
+
+The second phone session on 0.12.0 came back slower and with more serves the app would not read,
+and the report's first line said why in a way it took a simulation to recognise:
+
+    capture #1 on the chip: the chip's frames don't match the decoder's (rms 40.0):
+    BT.709, Y -0.041x+152.6 (rms 40.04)
+
+A colour fit of gain −0.04 and rms 40, where 0.3 is normal, is not a colour problem. It is what
+you get when the two pictures are not the same pixels at all. The crop was 1870 wide. The chip
+packs four pixels into a texel and reads a row back as **width/4** texels, so 1870 comes back as
+1868 pixels, and every row after the first lands two bytes early: the plane skews, progressively,
+and nothing says so. `ServeTracker.cropFor` has always masked the width to a multiple of 8 for
+exactly this reason. `alignRect`, which 0.12.0 added to line the row sample's columns up with the
+chip's, moved the left edge and added the shift to the width **without masking it again**.
+
+Reproduced from the session's own clip: reading one decoded frame back at 1870 wide gives gain
+−0.054, offset 159.4, rms 46.8 — the phone's −0.041, 152.6, 40.04. At 1864 it is exact.
+
+Six of that session's seven crops were two pixels wide of a multiple of four. The first one's fit
+caught it and, under the old rule, a fit that "doesn't match" turned the chip off for the whole
+session: every capture after it was copied out by the processor, 1.2 to 3.3 s each. So the
+readings stayed right — the copied-out path is the reference one — and everything got slow. The
+session before it was luckier: its first crop was 940 wide, which is a multiple of 4 so the
+brightness plane was exact and the fit passed, and only the fourth serve's 906 went through the
+chip skewed. That serve is the one that came back "No serve flight found", which had been written
+off as a tracker problem.
+
+Three things, so this cannot happen again quietly:
+
+- `alignRect` masks the width back to a multiple of 8 and the height to even, after clipping.
+  `AlignRectTest` sweeps every left edge and width a picture can produce.
+- `CaptureGl` refuses a crop it cannot read, by shape, before it decodes anything — the skew is
+  now a thrown error rather than a plane that looks plausible.
+- A single failed colour fit no longer turns the chip off for the session. Two failures do.

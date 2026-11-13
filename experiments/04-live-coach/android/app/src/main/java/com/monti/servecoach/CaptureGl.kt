@@ -83,6 +83,11 @@ class CaptureGl(private val assets: AssetManager) {
     fun write(frames: List<EncodedFrame>, format: MediaFormat, fromUs: Long, toUs: Long, rect: IntArray, W: Int, H: Int,
               sink: (ByteArray) -> Unit, reference: Pair<Long, ByteArray>?, keep: ((Int) -> Boolean)? = null): Result {
         check(calib != null || reference != null) { "no colour fit and no reference frame" }
+        // Four pixels to a texel, and colour is half width: a row comes back as width/4 texels,
+        // so a width that is not a multiple of 8 reads short and every row after the first
+        // lands early. The plane skews and nothing says so -- in session 20261113 the colour
+        // fit read rms 40 where 0.3 is normal, and that was the only sign.
+        check(rect[2] % 8 == 0 && rect[3] % 2 == 0) { "the crop must be a multiple of 8 wide and even tall, not ${rect[2]}x${rect[3]}" }
         check(keep == null || calib != null) { "cutting only some frames needs a colour fit already" }
         setUpGl()
         val reader = ImageReader.newInstance(W, H, ImageFormat.PRIVATE, 4, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)

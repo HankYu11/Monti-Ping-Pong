@@ -898,7 +898,7 @@ class LivePipeline(
             }
             try {
             // on the graphics chip (CaptureGl), else the frames copied out by the processor
-            if (cap == null && assets != null && gpuCaptures) try {
+            if (cap == null && assets != null && gpuCaptures && rect[2] % 8 == 0 && rect[3] % 2 == 0) try {
                 val t1 = SystemClock.elapsedRealtime()
                 val reference = if (CaptureGl.calib == null) firstDecoded(frames, fmt, fromUs, toUs, rect, w, h) else null
                 val refMs = SystemClock.elapsedRealtime() - t1
@@ -914,7 +914,11 @@ class LivePipeline(
             } catch (e: Throwable) {
                 gpuFailures++
                 onError("capture #$id on the chip: ${e.message}; copying it out instead")
-                if (gpuFailures >= 2 || e.message?.contains("don't match") == true) gpuCaptures = false
+                // Two strikes, whatever the failure. A single bad colour fit used to turn the
+                // chip off for the whole session, and when the cause was a crop the chip could
+                // not read (see CaptureGl's shape check) that cost every later serve the slow
+                // path: session 20261113 copied out all seven, 1.2 to 3.3 s each.
+                if (gpuFailures >= 2) gpuCaptures = false
             }
             if (cap == null) {
                 val dec = FrameDecoder(fmt)

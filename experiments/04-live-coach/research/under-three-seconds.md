@@ -563,3 +563,35 @@ own account of which serves were which.
 One ring serve of the five moved: serve 8's curve read −7.9 on the phone against −15.0 whole
 crop. The other four matched to about a rev/s. That is the split drift the windowed format has
 always had, and it is enough to tip a serve across a threshold at 35%.
+
+### What "I tried to make it a side spin" turned out to mean
+
+The two serves were 5 and 8. Serve 5 the app already called "side-topspin (curves left) + gyro".
+Serve 8 it called, flatly, "backspin" — and the reading behind that is:
+
+    lift 54.3    curve −7.9    gyro 27.6    (of 61.4 rev/s)
+
+The side part really is small: 13% of the total, a tilt of 8°. What is not small is the **gyro**
+— 45% of the spin is along the ball's own flight line. And spin along the flight bends nothing,
+because the Magnus force is the spin crossed with the velocity and that is zero when they point
+the same way. A player brushing round the side of the ball while the bat travels down the ball's
+own line puts plenty of spin on and gets no curve for it. The label said nothing about any of
+that, because it only named gyro above half.
+
+Six of the eighteen serves recorded so far were in that position: announced as pure back or
+topspin with 35% to 49% of their spin along the flight. So the shares the label uses moved —
+side from 0.35 to 0.25, gyro from 0.5 to 0.30 — which names those six and changes none of the
+twelve that were already right. `test/labels.mjs` holds all eighteen with the label each should
+get, so the shares can't drift back on taste.
+
+Gyro sits at 0.30 rather than 0.35 for a reason worth recording: serve 8 reads 45% of the total
+from the phone's own capture and 34% from the same serve measured whole crop at full size. At
+0.35 the label changed with the capture path rather than the ball. The gyro's own error is 1.9
+rev/s typically and 7.0 at worst, which on a 60 rev/s serve is eleven points of share, so a bar
+anywhere near a serve's value is soft by construction — better to put it where the known error
+cannot straddle it.
+
+The serve also now carries a note saying where the spin went: *"45% of this spin is along the
+ball's own path (a corkscrew), which doesn't curve it. To make it curve, brush across the ball
+rather than around it."* That is the actual coaching answer to what the player was trying to do,
+and it is the one thing neither the rate nor the type was telling them.

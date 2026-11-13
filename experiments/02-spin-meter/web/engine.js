@@ -1722,16 +1722,52 @@
     const lift = dot(magnus, u), curve = dot(magnus, right), gyro = dot(w, f);
     return { lift, curve, gyro, tilt: Math.atan2(curve, lift) * 180 / Math.PI };
   }
+  // How much of the spin a part has to be before the label names it.
+  //
+  // A serve is a mixture and the label is a sentence, so a part that is a third of the spin and
+  // goes unmentioned reads as a wrong answer rather than a short one. Set against the 18 serves
+  // recorded on a phone so far: at the old bars, six of them were announced as pure back or
+  // topspin while 35% to 49% of the spin was along the flight -- including the two a player had
+  // set out to serve as sidespin. Dropping gyro to a third and side to a quarter names those
+  // six and changes none of the twelve that were already right.
+  //
+  // The sides are not symmetric on purpose. Side and back/top bend the ball's path, so naming
+  // one is a claim about where it will go; gyro bends nothing, so naming it is only a claim
+  // about the ball, and its magnitude is the part of the reading blur hurts least (its
+  // direction is the part blur hurts most, which is what gyroDirKnown is for).
+  //
+  // Gyro sits at 0.30 rather than 0.35 because the quantity is noisy enough to straddle a bar
+  // there: the serve that prompted all this reads 45% of the total from the phone's own capture
+  // and 34% from the same serve measured whole crop at full size, so at 0.35 the label changed
+  // with the path rather than the ball. The gyro's own error is 1.9 rev/s typically and 7.0 at
+  // worst over the rendered clips, which on a 60 rev/s serve is eleven points of share.
+  const SHARE = { side: 0.25, lift: 0.35, gyro: 0.30 };
   function spinLabel(total, c) {
     if (total < 3) return "no spin";
     const parts = [];
-    if (Math.abs(c.curve) >= 0.35 * total) parts.push("side");
-    if (Math.abs(c.lift) >= 0.35 * total) parts.push(c.lift > 0 ? "back" : "top");
-    if (!parts.length) return Math.abs(c.gyro) >= 0.5 * total ? "gyro (corkscrew)" : "mixed";
+    if (Math.abs(c.curve) >= SHARE.side * total) parts.push("side");
+    if (Math.abs(c.lift) >= SHARE.lift * total) parts.push(c.lift > 0 ? "back" : "top");
+    if (!parts.length) return Math.abs(c.gyro) >= SHARE.gyro * total ? "gyro (corkscrew)" : "mixed";
     let label = parts.join("-") + "spin";
-    if (Math.abs(c.curve) >= 0.35 * total) label += ` (curves ${c.curve > 0 ? "right" : "left"})`;
-    if (Math.abs(c.gyro) >= 0.5 * total) label += " + gyro";
+    if (Math.abs(c.curve) >= SHARE.side * total) label += ` (curves ${c.curve > 0 ? "right" : "left"})`;
+    if (Math.abs(c.gyro) >= SHARE.gyro * total) label += " + gyro";
     return label;
+  }
+
+  /**
+   * A serve meant to be sidespin that came out as a corkscrew, in words.
+   *
+   * Spin along the flight line bends nothing -- the Magnus force is the spin crossed with the
+   * velocity, and that is zero when they point the same way. A player brushing round the side
+   * of the ball while the bat travels down the ball's own line puts the spin on and gets no
+   * curve for it, and the reading says "backspin" because the part that is left is backspin.
+   * Worth saying out loud, because the fix is a different bat path rather than more effort.
+   */
+  function gyroNote(total, c) {
+    if (total < 10 || Math.abs(c.gyro) < SHARE.gyro * total) return null;
+    if (Math.abs(c.curve) >= SHARE.side * total) return null;
+    return `${Math.round(100 * Math.abs(c.gyro) / total)}% of this spin is along the ball's own path ` +
+      `(a corkscrew), which doesn't curve it. To make it curve, brush across the ball rather than around it.`;
   }
 
   // ------------------------------------------------------------ setup check
@@ -2132,7 +2168,10 @@
           const ok = readings.filter((r) => !r.error);
           const head = ok.find((r) => r.phase !== "bounce" && r.reliable) || ok.find((r) => r.reliable) ||
             ok.find((r) => r.phase !== "bounce") || ok[0] || readings[0];
-          const one = Object.assign({}, head, { phases: readings, notes: segs[k].notes, clear: ok.some((r) => r.reliable) });
+          // a serve meant to be sidespin that came out a corkscrew says so beside the reading
+          const corkscrew = head && !head.error && head.rps != null ? gyroNote(head.rps, head) : null;
+          const one = Object.assign({}, head, { phases: readings, clear: ok.some((r) => r.reliable),
+            notes: corkscrew ? [corkscrew, ...segs[k].notes] : segs[k].notes });
           // something that isn't a ball for most of its frames, or a short stretch that can't be read,
           // is most likely not a serve (a ball rolling, picked up, a hand)
           const notBall = one.error && /found in too few/.test(one.error);
@@ -2424,5 +2463,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote } };
 })(typeof window !== "undefined" ? window : globalThis);

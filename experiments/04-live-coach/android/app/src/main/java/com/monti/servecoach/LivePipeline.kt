@@ -456,27 +456,8 @@ class LivePipeline(
     /** no colour fit yet: the chip's numbers as they come */
     private val ONE = floatArrayOf(1f, 0f)
 
-    /**
-     * The window's side for a ball of radius [r] (whole-picture pixels).
-     *
-     * The capture's own window is three radii (Windows.boxFor) round where the ball REALLY was,
-     * which is not known until the flight is over; this one goes where the ball is predicted to
-     * be, and has to be big enough that the capture's can be cut out of it afterwards wherever
-     * the prediction missed by. Over the seventeen recorded flights the worst miss two tracker
-     * frames back is 45 px and four back is 97, and how far behind the live track really runs
-     * is the one thing that could not be measured without a phone. So the margin is 72, well
-     * past the first and short of the second, and the capture reports how far off centre the
-     * ball actually came out ("worst px off centre"), which says what it should be. Too big
-     * only costs read-back; too small and every window misses and the serve is cut the old way.
-     *
-     * The side is rounded to 32 so that a ball that changes size a little does not make new
-     * targets and a new ring.
-     */
-    private fun sideFor(r: Float): Int {
-        val half = 3 * r + 72
-        val side = ((Math.ceil(2 * half / 32.0).toInt()) * 32)
-        return side.coerceIn(128, 384)
-    }
+    /** see [com.monti.servecoach.core.ringSide]: the size, from the live track's own radius */
+    private fun sideFor(r: Float) = com.monti.servecoach.core.ringSide(r)
 
     /**
      * The tracker's thread, every frame: what the chip should cut next.

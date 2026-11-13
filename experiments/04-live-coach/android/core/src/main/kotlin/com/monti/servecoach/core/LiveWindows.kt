@@ -17,6 +17,21 @@ package com.monti.servecoach.core
  * the window goes where the ball is *predicted* to be. [Predict] is that, and the margin the
  * window carries is what it misses by.
  */
+/**
+ * The size of the window cut live, for a ball of radius [r] (whole-picture pixels).
+ *
+ * The capture's own window is three radii round where the ball REALLY was (Windows.boxFor),
+ * measured when the flight is over. This one goes where the ball is predicted to be, from a
+ * track that is still growing, and has to be big enough that the capture's can be cut out of it
+ * wherever the prediction missed by -- hence [margin], 72 px, against a worst measured miss of
+ * 45 px two tracker frames back.
+ *
+ * Rounded to 32 so a ball that changes size a little does not make new render targets and a new
+ * ring; clamped so a huge or tiny blob cannot ask for an absurd read-back.
+ */
+fun ringSide(r: Float, margin: Int = 72): Int =
+    (Math.ceil(2.0 * (3 * r + margin) / 32.0).toInt() * 32).coerceIn(128, 384)
+
 object Predict {
     /**
      * Where the ball will be at [frame], from track points no newer than [frame] - [lag].

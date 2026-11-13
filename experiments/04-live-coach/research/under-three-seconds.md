@@ -723,3 +723,42 @@ What a replay now covers: frame delivery and whether the chip keeps up, the wind
 and size from the live track, the ring's coverage of the flight, the re-cut, the capture, the
 search, and the reading. What it still cannot: the camera's own frames against the encoder's, and
 real-time pacing.
+
+## The head-on case, without the head-on footage
+
+The club footage is the one setting the ring has never been measured in: the camera at the far
+end of the table, the ball flying into it at 45 to 62 degrees, where every session since has been
+side-on at 2 to 34. Those clips are gone — deleted with the old unpainted balls on 11 November,
+and the session that held them has been reset since. What survives is its measurements:
+
+    paddle stretches, head-on:  the radius grew x1.07 to x1.26 over 12 to 22 frames
+    bounce stretches:           x0.78 to x1.52, M14's bounce 15 -> 23 px over 60 frames
+
+That growth is the one thing about head-on play that could break the ring, and it is enough to
+test the geometry on. The window's size comes from the median radius of the track **so far**, and
+on a growing ball that median is always behind — halfway through a flight that ends half as big
+again, the median is the size the ball was a quarter of the way in. If the window falls far
+enough behind, the capture's own window stops fitting inside it and the serve is cut the old way.
+
+`HeadOnWindowTest` walks that: tracks growing at the measured rates, with a pixel and a half of
+tracker jitter so the prediction misses the way it really does, the window sized and placed as
+the phone does it, and the capture's window cut out as the capture cuts it.
+
+| | ring | capture | slack | covered |
+|---|---|---|---|---|
+| paddle, x1.07 over 22 frames, 45° | 288 | 116 | **86 px** | 100% |
+| paddle, x1.26 over 40 frames, 62° | 288 | 124 | **82 px** | 100% |
+| M14's bounce, x1.52 over 60 frames, 55° | 256 | 114 | **71 px** | 100% |
+| the same on a 9 px ball | 224 | 68 | **78 px** | 100% |
+| side-on, x1.05 — every session since | 288 | 122 | **83 px** | 100% |
+
+The answer is that the growth does not eat the slack, and the reason is structural rather than
+lucky: both windows scale with the same radius, so what is left between them is the fixed 72 px
+margin whichever way the ball is flying. The head-on cases leave 71 to 86 px, the side-on one 83.
+The test asserts 64, so if the margin ever starts being spent somewhere else, the head-on case is
+the first thing that will say so.
+
+What this does not test is pixels: whether the tracker finds a serve at all against a hall's
+background, under its lights, with other players moving. That needs footage from a hall, and the
+cheapest way to get it is a few head-on serves with a painted ball in the same session as the
+gyro and net-ball work.

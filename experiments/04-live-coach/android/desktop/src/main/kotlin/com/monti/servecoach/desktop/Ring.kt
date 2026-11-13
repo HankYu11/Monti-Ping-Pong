@@ -44,9 +44,8 @@ class RingSim(
     private val history = ArrayDeque<Pair<Long, List<FloatArray>>>()
     private var planSide = 0
 
-    /** as LivePipeline.sideFor */
-    private fun sideFor(r: Float): Int =
-        (Math.ceil(2.0 * (3 * r + margin) / 32.0).toInt() * 32).coerceIn(128, 384)
+    /** the same rule the app uses, from core, so the two cannot drift */
+    private fun sideFor(r: Float): Int = com.monti.servecoach.core.ringSide(r, margin)
 
     private val GRACE = (System.getenv("RINGGRACE") ?: "10").toInt()
     private val PCT = (System.getenv("RINGPCT") ?: "50").toInt()

@@ -595,3 +595,35 @@ The serve also now carries a note saying where the spin went: *"45% of this spin
 ball's own path (a corkscrew), which doesn't curve it. To make it curve, brush across the ball
 rather than around it."* That is the actual coaching answer to what the player was trying to do,
 and it is the one thing neither the rate nor the type was telling them.
+
+## 0.12.4: every read right, and the ring served 3 of 12
+
+Twelve serves, all read correctly bar one the player hit at the ceiling, which the app declined
+and which nobody wants read. The labels did their job: serve 5 came back "gyro (corkscrew)" at
+51 rev/s, which is what a serve meant as sidespin and struck down its own line actually is.
+
+But the ring served only three of the twelve, and the median wait went **up**, to 3364 ms — 1748
+ms over the three it served, 3395 ms over the nine it did not. The refusals all said the same
+thing: *"the chip's windows covered 42 of 65 frames"*.
+
+RingSim does not reproduce it. The same four clips, the same tracker, the same prediction, give
+**94% to 98%** of the flight covered, and `held 150 of 150` — nothing missing from the ring at
+all. The difference between the two is the only thing the simulation does not have: a ring that
+gets overwritten.
+
+The arithmetic says the same. The ring holds 360 frames, a second and a half. A serve is only
+reported once the grouping has waited 0.4 s for a better track, which is 96 frames; the longest
+span this session was 213. That is 309 before the capture thread has even started, against 360 —
+and the camera handed its frames over in bursts of up to **400** this session, where the last one
+peaked at 96. The oldest frames go first, and the oldest frames are the start of the flight.
+
+So the ring now stops taking anything from the moment a serve is reported until that serve's
+capture has had what it needs. Nothing arriving in that window is wanted: a serve during a
+measurement is ignored anyway, and the chip gets the work back for free while the engine runs.
+The refusal note now also says how many frames the ring still held, so the next report tells the
+two failures apart without a simulation: windows that did not fit, against windows that were
+no longer there.
+
+The window's size needs nothing: the simulation reaches 94–98% with sides of 224 to 288 chosen by
+the same rule, because the ring holds a mixture and the big entries cover the big misses (one
+miss of 121 px was re-cut out of a 384 px window).

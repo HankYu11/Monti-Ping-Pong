@@ -412,8 +412,21 @@ class LivePipeline(
     @Volatile var ringPlans = 0L; private set
     @Volatile var ringNote = ""; private set
 
-    /** frames the ring holds: a flight is about a second, and the capture is written right after */
+    /**
+     * Frames the ring holds: a flight is about a second, and the capture is written right after.
+     *
+     * "Right after" is not immediate. A serve is only reported once the grouping has waited
+     * 0.4 s for a better track, and the camera hands its frames over in bursts -- 400 at once in
+     * session 20261114. A span of 213 frames plus 96 of waiting plus a burst runs past 360, and
+     * the oldest frames go first, which are the start of the flight. So the ring stops taking
+     * anything from the moment a serve is reported until its capture has had what it needs
+     * ([ringHeld]); nothing that arrives in that window is wanted anyway, because a serve during
+     * a measurement is ignored.
+     */
     private val ringFrames = captureFps + captureFps / 2
+    /** captures that have not yet taken their windows: while any is open the ring stops filling */
+    private val ringHeld = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile var ringHolds = 0L; private set
     /**
      * Every other row of the whole picture (see assets/shaders/crop_rows.frag).
      *
@@ -475,7 +488,7 @@ class LivePipeline(
      */
     private fun planFromTracks(tr: ServeTracker) {
         val put = planWindows
-        if (!windowRing || put == null || frameW == 0) {
+        if (!windowRing || put == null || frameW == 0 || ringHeld.get() > 0) {
             if (planning) { planning = false; put?.invoke(null) }
             return
         }
@@ -545,6 +558,7 @@ class LivePipeline(
 
     /** one frame's window off the chip: the window's planes, then the picture's row sample */
     fun offerWindow(frameNo: Long, at: IntArray, bytes: ByteArray) {
+        if (ringHeld.get() > 0) return                   // a capture is still to take its windows
         val r = windows ?: return
         // The row sample is the same size whatever the window is, so what is left over is the
         // window, and a window is one and a half times its side squared. That is how a frame
@@ -607,8 +621,12 @@ class LivePipeline(
         val rect = tr.cropFor(serve, w, h)
         val id = ++captures
         onSpotted?.invoke(id)
+        // From here the ring stops taking frames: everything it holds for this serve has to
+        // survive until the capture has read it, and the capture is still a grouping wait and a
+        // decode away. Released in writeCapture, whatever happens there.
+        if (windowRing) { ringHeld.incrementAndGet(); ringHolds++ }
         // the capture is written on its own thread, so the tracker keeps up
-        Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
+        Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h, windowRing) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }
 
     /**
@@ -740,7 +758,7 @@ class LivePipeline(
                 val dx = rect[0] + place[0] - at[0]; val dy = rect[1] + place[1] - at[1]
                 if (dx >= 0 && dy >= 0 && dx + s0 <= pre.sides[i] && dy + s0 <= pre.sides[i]) h0++
             }
-            if (w0 == 0 || h0 < w0 * 3 / 4) return no("the chip's windows fitted $h0 of $w0 frames")
+            if (w0 == 0 || h0 < w0 * 3 / 4) return no("the chip's windows fitted $h0 of $w0 flight frames (held ${pre.have} of $nGuess)")
         }
         val crops = HashMap<Int, ByteArray>()
         var j = 0
@@ -774,7 +792,7 @@ class LivePipeline(
             b.addParts(taken.rows[i]?.let { Windows.ringRows(it, rect, w, h, rowStep) }, win, crops[i])
         }
         if (need == 0 || got < need * 3 / 4) return no("the chip's windows covered $got of $need frames (decoded already)")
-        ringNote = "$got of $need flight windows, missed $missed, worst ${worst} px off centre; " +
+        ringNote = "$got of $need flight windows, missed $missed, worst ${worst} px off centre, held ${taken.have} of $n; " +
             "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms)"
         return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
     }
@@ -837,8 +855,12 @@ class LivePipeline(
     private fun alignRect(r: IntArray, w: Int, h: Int): IntArray =
         if (!windowRing) r else Windows.alignRect(r, w, h, ringRowStep)
 
-    private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect0: IntArray, w: Int, h: Int) {
+    private fun writeCapture(id: Int, serve: ServeTracker.Serve, firstFrame: Long, fromUs: Long, toUs: Long, rect0: IntArray, w: Int, h: Int, held: Boolean = false) {
         val rect = alignRect(rect0, w, h)
+        // the ring may start filling again as soon as this serve's windows have been taken,
+        // which is inside cutFromRing; releasing at the end of the whole write is simpler and
+        // costs only the engine's share of one serve's worth of windows
+        var release = held
         try {
             val t0 = SystemClock.elapsedRealtime()
             val frames = store.between(fromUs, toUs)
@@ -960,7 +982,7 @@ class LivePipeline(
             } catch (e: Exception) { onError("clip #$id: ${e.message}") }
             onCapture(Capture.Info(id, n, c.frameBytes, head, writeMs, fromUs, toUs), clip)
         } catch (e: Exception) { onError("capture: ${e.message}") }
-        finally { writing[id]?.finish() }
+        finally { writing[id]?.finish(); if (release) { release = false; ringHeld.decrementAndGet() } }
     }
 
     /** the header, swapped in whole (the engine may be reading the old one) */

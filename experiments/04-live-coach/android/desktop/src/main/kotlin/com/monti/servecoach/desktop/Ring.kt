@@ -49,6 +49,8 @@ class RingSim(
         (Math.ceil(2.0 * (3 * r + margin) / 32.0).toInt() * 32).coerceIn(128, 384)
 
     private val GRACE = (System.getenv("RINGGRACE") ?: "10").toInt()
+    private val PCT = (System.getenv("RINGPCT") ?: "50").toInt()
+    var sideUsed = 0; private set
     private val pick = System.getenv("RINGPICK") ?: "gated"
     private val minSpeed = (System.getenv("RINGMINSPEED") ?: "2").toFloat()
 
@@ -100,9 +102,13 @@ class RingSim(
         for ((at, t) in history) if (at <= want) track = t else break
         val t = track ?: return
         val rs = t.map { it[3] }.sorted()
-        val wantSide = sideFor(rs[(rs.size - 1) / 2] * step * 2f)
+        // which radius of the live track the window is sized from. The capture's own window is
+        // three times the MEDIAN radius over every track it covers, measured when the flight is
+        // over; the live median, over a track that is still growing, reads smaller.
+        val pick = ((rs.size - 1) * PCT / 100).coerceIn(0, rs.size - 1)
+        val wantSide = sideFor(rs[pick] * step * 2f)
         val side = if (planSide > 0 && wantSide <= planSide && wantSide > planSide * 6 / 10) planSide else wantSide
-        planSide = side
+        planSide = side; sideUsed = side
         val p = Predict.at(t, frameNo.toFloat() / step, lag = 0f) ?: return
         val scale = step * 2f
         val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
@@ -183,7 +189,7 @@ class RingSim(
         misses.sort()
         val med = if (misses.isEmpty()) 0 else misses[misses.size / 2]
         val p90 = if (misses.isEmpty()) 0 else misses[(misses.size * 9) / 10]
-        val note = "${side}x$side windows, flight $flightGot of $flightNeed (all $got of $need), " +
+        val note = "ring ${sideUsed}px -> ${side}x$side windows, flight $flightGot of $flightNeed (all $got of $need), " +
             "off centre: median $med, 90th $p90, worst fitted $worstOk, worst $worst; held ${taken.have} of $n"
         return if (flightNeed == 0 || flightGot < flightNeed * 3 / 4) Built(null, "$note: NOT USED", flightGot, flightNeed, worst)
         else Built(b, note, flightGot, flightNeed, worst)

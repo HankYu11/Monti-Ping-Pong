@@ -1439,7 +1439,33 @@
     const spread = (trs) => rigidCost(trs, [0, 0, 1], 0, tm);
     const sumW = tracks.reduce((s, tr) => s + tr.w.reduce((a, q) => a + q, 0), 0);
     let V = spread(tracks);
-    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
+    // The ball is not turning: every dot sits where it sat, so no rate has anything to fit.
+    //
+    // This is the ONE test that can tell a float from a ball whose marking merely cannot be
+    // read, and it is worth saying why the obvious alternatives cannot. On a rendered 40 rev/s
+    // backspin whose inked pole lies on its own spin axis -- spinning hard, looking still --
+    // the pattern's change reads 0.074 against a float's 0.057, and the pole's swing reads
+    // 0.374 against a float's 0.672. Both put the real serve on the float's side of any line,
+    // so a rule built on either would announce a hard backspin as "no spin". The dots do not
+    // do that: they are discrete features that either move or do not, and unlike the pole's
+    // seam they do not collapse into noise when there is no rotation to dominate it.
+    //
+    // Where the bar sits, over seven rendered floats and eight spinning balls, six of them
+    // with the pole put on the axis on purpose so they look as still as a float can:
+    //
+    //   floats                     0.0036 0.0036 0.0048 0.0068 0.0069 0.0114   (one had no dots)
+    //   gyro 40, pole 8 deg off    0.0552      <- the nearest spinning ball
+    //   40 rev/s, pole 12 deg off  0.0705
+    //   15 rev/s, pole 5 deg off   0.0917
+    //   40 rev/s, pole 6 deg off   0.1309
+    //   2, 25, 10, 40 rev/s        0.2270 0.2378 0.4249 0.5415
+    //
+    // A gap of about 5x, and 0.02 sits inside it: 1.8x above the worst float, 2.8x below the
+    // nearest real spin, leaning toward refusing rather than claiming no spin, because a wrong
+    // "no spin" on a real serve is the worse of the two mistakes. It was 0.005 before, which
+    // caught two floats of seven and left the rest to be refused -- or, twice, to be announced
+    // as 2.5 and 2.7 rev/s of spin that was not there.
+    if (V / sumW < 0.02) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
     // starting points: the black half's best rates, each dot's own circle, then for every
     // starting axis the best few rates along it
     const axes = [];

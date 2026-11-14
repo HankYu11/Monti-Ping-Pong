@@ -61,7 +61,18 @@ CASES = [
     ("pole on the axis (blind spot)", dict(spin="gyro", rps=40, pole_at=8)),
     ("side-backspin 40",     dict(spin="side-backspin", rps=40)),
     ("side-topspin 40",      dict(spin="side-topspin", rps=40)),
+    # Floats from several orientations. A no-spin serve is a real serve and must come back as
+    # "no spin", not as a refusal and not as a rev/s or two of spin that is not there -- and
+    # which of those happened used to depend on which way the marking faced.
     ("float (no spin)",      dict(spin="none", rps=0)),
+    ("float, turned",        dict(spin="none", rps=0, orient=2)),
+    ("float, turned again",  dict(spin="none", rps=0, orient=5)),
+    # Spinning balls that LOOK as still as a float: the pole put near the axis on purpose. These
+    # are what stop "it looked still" from being read as "it was not spinning", and they are the
+    # reason the no-spin test is the dots' and not the pattern's or the pole's.
+    ("25 rps, pole 10 deg off", dict(spin="backspin", rps=25, pole_at=10)),
+    ("40 rps, pole 12 deg off", dict(spin="sidespin", rps=40, pole_at=12)),
+    ("15 rps, pole 5 deg off",  dict(spin="gyro", rps=15, pole_at=5)),
     ("head-on, backspin 40", dict(spin="backspin", rps=40, toward=45)),
     ("head-on, sidespin 40", dict(spin="sidespin", rps=40, toward=45)),
     ("far camera, 3.6 m",    dict(spin="backspin", rps=40, distance=3.6)),
@@ -129,6 +140,8 @@ def main():
     p.add_argument("--ring", action="store_true", help="also build each capture from the window ring")
     p.add_argument("--keep", action="store_true", help="reuse clips already rendered")
     p.add_argument("--jobs", type=int, default=4, help="clips to render at once")
+    p.add_argument("--chunk", type=int, default=6,
+                   help="captures to hold on disk at once (a whole-crop one is about 370 MB)")
     p.add_argument("--csv", default=os.path.join(HERE, "servecheck_results.csv"))
     a = p.parse_args()
     os.makedirs(a.workdir, exist_ok=True)
@@ -150,7 +163,23 @@ def main():
             rendered[name] = (clip, truth)
             print(f"  {name}: {'rendered' if clip else truth.get('error')}", file=sys.stderr)
 
-    allcaps, owner, failed, refused = [], {}, [], []
+    # A whole-crop capture is about 370 MB, so a sweep of twenty cannot have them all on disk
+    # at once. Built, measured and deleted a chunk at a time; the clips they come from are
+    # small and are kept.
+    allcaps, owner, failed, refused, got = [], {}, [], [], {}
+    chunk, pending = [], []
+    def drain():
+        if not pending:
+            return
+        print(f"  measuring {len(pending)}...", file=sys.stderr)
+        got.update(measure(pending))
+        for c in pending:
+            try:
+                os.remove(c)
+            except OSError:
+                pass
+        pending.clear()
+
     for name, _ in cases:
         clip, truth = rendered[name]
         if not clip:
@@ -162,15 +191,18 @@ def main():
             # one, and a sweep that printed only what it could read would be flattering.
             failed.append((name, why))
             continue
+        mine = []
         for c in caps:
-            allcaps.append(c)
+            mine.append(c)
             owner[os.path.basename(c)] = name
             if a.ring and os.path.exists(c[:-4] + ".ring.cap"):
-                allcaps.append(c[:-4] + ".ring.cap")
+                mine.append(c[:-4] + ".ring.cap")
                 owner[os.path.basename(c[:-4] + ".ring.cap")] = name + " (ring)"
-
-    print(f"measuring {len(allcaps)} captures...", file=sys.stderr)
-    got = measure(allcaps)
+        allcaps.extend(mine)
+        pending.extend(mine)
+        if len(pending) >= a.chunk:
+            drain()
+    drain()
 
     hdr = ("case", "form", "rps true", "rps got", "d rps", "axis err",
            "lift true", "lift got", "curve true", "curve got", "gyro true", "gyro got", "note")

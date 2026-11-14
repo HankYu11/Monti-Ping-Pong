@@ -159,6 +159,15 @@ def parse_args():
     p.add_argument("--cl-slope", type=float, default=0.45, dest="cl_slope", help="Magnus per unit spin parameter")
     p.add_argument("--crf", type=int, default=16, help="H.264 quality (lower = better)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--orient", type=int, default=0,
+                   help="which way the marking faces when the serve starts. Its own seed,\n"
+                        "because the ANSWER depends on it: the meter reads the pole's path, so a\n"
+                        "ball whose inked pole happens to lie along its own spin axis has a\n"
+                        "marking that never moves, and no method can read a rate off it. The\n"
+                        "truth file reports pole_axis_deg; under about 25 degrees is that case.")
+    p.add_argument("--pole-at", type=float, default=None, metavar="DEG", dest="pole_at",
+                   help="override --orient: put the inked pole this many degrees from the spin\n"
+                        "axis, to walk into the blind spot on purpose")
     return p.parse_args()
 
 
@@ -317,6 +326,17 @@ def spin_components(w, f):
             "tilt_deg": float(np.degrees(np.arctan2(np.dot(magnus, right), np.dot(magnus, u))))}
 
 
+def _aim_pole(R0, want):
+    """Turn [R0] so the inked pole points along [want], keeping it a rotation."""
+    have = R0 @ np.array([-1.0, 0.0, 0.0])
+    v = np.cross(have, want)
+    c = float(np.dot(have, want))
+    n = float(np.linalg.norm(v))
+    if n < 1e-9:
+        return R0 if c > 0 else rot_matrix(np.array([0.0, 1.0, 0.0]), np.pi) @ R0
+    return rot_matrix(v / n, np.arctan2(n, c)) @ R0
+
+
 def _check_signs():
     """A sign error here would be invisible, so it is asserted rather than argued.
 
@@ -426,7 +446,17 @@ def main():
     frames = a.idle + len(toss) + len(flight) + a.tail
     contact_frame = a.idle + len(toss)
     light = np.array([-0.3, -0.5, 0.8]); light /= np.linalg.norm(light)
-    R0 = rot_matrix(rng.normal(size=3), rng.uniform(0, 2 * np.pi))
+    # Its own stream, so that changing the spin does not change which way the marking faces --
+    # and so that a case can be rendered again from another angle without changing anything else.
+    orng = np.random.default_rng(1000 + a.orient)
+    R0 = rot_matrix(orng.normal(size=3), orng.uniform(0, 2 * np.pi))
+    if a.pole_at is not None:
+        # put the inked pole a chosen angle from the axis: R0 @ (-1,0,0) is where it points
+        u = np.cross(axis, orng.normal(size=3)); u /= np.linalg.norm(u)
+        want = np.cos(np.radians(a.pole_at)) * axis + np.sin(np.radians(a.pole_at)) * u
+        R0 = _aim_pole(R0, want)
+    pole = R0 @ np.array([-1.0, 0.0, 0.0])
+    pole_axis_deg = float(np.degrees(np.arccos(abs(np.clip(float(pole @ axis), -1, 1)))))
     bg = room(W, H, colour, rng)
     writer = FfmpegWriter(a.out, (W, H), a.fps, a.crf, colour)
 
@@ -501,12 +531,20 @@ def main():
                     "restitution": a.restitution if a.bounce else None,
                     "spin_kept_on_bounce": 0.80},
         "camera": {"fov_deg": a.fov, "focal_px": round(float(F), 1), "distance_m": a.distance},
+        "orient": a.orient,
+        # How far the inked pole lies from the spin axis. The meter reads the pole's path, so a
+        # small angle here means the marking barely moves however fast the ball spins, and the
+        # rate is not there to be read -- by this method or any other. Under ~25 degrees, a wrong
+        # answer is the method's blind spot, not the app losing the serve.
+        "pole_axis_deg": round(pole_axis_deg, 1),
+        "blind_spot": pole_axis_deg < 25,
         "note": "camera axes: x right, y down, z toward the camera. lift>0 is backspin.",
     }
     with open(a.out.rsplit(".", 1)[0] + ".json", "w") as fh:
         json.dump(truth, fh, indent=2)
     brief = {k: truth[k] for k in ("rps", "spin", "axis", "expected", "toward_camera_deg",
-                                   "ball_px", "contact_frame", "bounce_frame", "frames")}
+                                   "ball_px", "pole_axis_deg", "blind_spot", "contact_frame",
+                                   "bounce_frame", "frames")}
     print(json.dumps(brief))
 
 

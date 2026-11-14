@@ -48,7 +48,17 @@ CASES = [
     ("topspin 70 rps",       dict(spin="topspin", rps=70)),
     ("pure sidespin 40",     dict(spin="sidespin", rps=40)),
     ("pure sidespin 40, other way", dict(spin="sidespin-r", rps=40)),
+    # Gyro from three different starting orientations. The meter reads the inked pole's path,
+    # so a ball whose pole lies along its own spin axis has a marking that does not move and a
+    # rate that is not there to be read. Gyro is where that can happen by accident, because the
+    # axis points along the flight and so does a good deal of the picture -- one orientation is
+    # not a test of gyro, it is a test of one orientation.
     ("pure gyro 40",         dict(spin="gyro", rps=40)),
+    ("pure gyro 40, turned", dict(spin="gyro", rps=40, orient=2)),
+    ("pure gyro 40, turned again", dict(spin="gyro", rps=40, orient=5)),
+    # and the blind spot on purpose, so the sweep says what happens there instead of finding out
+    # by accident: the pole 8 degrees off the axis, where no method can read the rate
+    ("pole on the axis (blind spot)", dict(spin="gyro", rps=40, pole_at=8)),
     ("side-backspin 40",     dict(spin="side-backspin", rps=40)),
     ("side-topspin 40",      dict(spin="side-topspin", rps=40)),
     ("float (no spin)",      dict(spin="none", rps=0)),
@@ -165,9 +175,9 @@ def main():
     hdr = ("case", "form", "rps true", "rps got", "d rps", "axis err",
            "lift true", "lift got", "curve true", "curve got", "gyro true", "gyro got", "note")
     print()
-    print(f"{'case':<32}{'form':<7}{'rps':>7}{'got':>8}{'err':>7}{'axis':>7}"
+    print(f"{'case':<32}{'form':<7}{'pole':>6}{'rps':>7}{'got':>8}{'err':>7}{'axis':>7}"
           f"{'lift':>8}{'got':>8}{'curve':>8}{'got':>8}{'gyro':>8}{'got':>8}")
-    print("-" * 112)
+    print("-" * 118)
     out_rows = []
     for cap in allcaps:
         base = os.path.basename(cap)
@@ -189,17 +199,20 @@ def main():
         gn = math.hypot(*gv) or 1e-9
         cos = sum(x * y for x, y in zip(tv, gv)) / (tn * gn)
         ax = math.degrees(math.acos(max(-1.0, min(1.0, cos)))) if truth["rps"] > 1 else float("nan")
-        print(f"{who:<32}{form:<7}{truth['rps']:>7.1f}{m['rps']:>8.2f}{m['rps'] - truth['rps']:>+7.2f}"
+        pole = truth.get("pole_axis_deg", float("nan"))
+        print(f"{who:<32}{form:<7}{pole:>5.0f}°{truth['rps']:>7.1f}{m['rps']:>8.2f}"
+              f"{m['rps'] - truth['rps']:>+7.2f}"
               f"{ax:>6.1f}°{e['lift']:>8.1f}{m['lift']:>8.1f}{e['curve']:>8.1f}{m['curve']:>8.1f}"
-              f"{e['gyro']:>8.1f}{m['gyro']:>8.1f}")
+              f"{e['gyro']:>8.1f}{m['gyro']:>8.1f}" + ("   (blind spot)" if truth.get("blind_spot") else ""))
         out_rows.append([who, form, truth["rps"], round(m["rps"], 2), round(m["rps"] - truth["rps"], 2),
                          round(ax, 1), e["lift"], round(m["lift"], 1), e["curve"], round(m["curve"], 1),
-                         e["gyro"], round(m["gyro"], 1), ""])
+                         e["gyro"], round(m["gyro"], 1),
+                         "blind spot: pole %.0f deg off the axis" % pole if truth.get("blind_spot") else ""])
 
     for name, why in failed:
         truth = rendered[name][1]
         rps = truth.get("rps", "")
-        print(f"{name:<32}{'-':<7}{rps:>7}   {why}")
+        print(f"{name:<32}{'-':<7}{'':>6}{rps:>7}   {why}")
         out_rows.append([name, "", rps, "", "", "", "", "", "", "", "", "", why])
 
     with open(a.csv, "w", newline="") as fh:
@@ -208,7 +221,10 @@ def main():
         w.writerows(out_rows)
     print(f"\nwritten to {a.csv}")
 
-    good = [r for r in out_rows if r[4] != ""]
+    blind = {n for n, _ in cases if rendered.get(n, (None, {}))[1].get("blind_spot")}
+    good = [r for r in out_rows if r[4] != "" and r[0].replace(" (ring)", "") not in blind]
+    if blind:
+        print(f"\n(the blind-spot case is left out of the summary: its rate is not there to be read)")
     if good:
         rate = max(abs(r[4]) for r in good)
         axes = [r[5] for r in good if r[5] == r[5]]

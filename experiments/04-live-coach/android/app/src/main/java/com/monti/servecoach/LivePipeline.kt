@@ -88,7 +88,21 @@ class LivePipeline(
     // says so.
     private val guardWindow = 240                        // tracker frames, about 2 s at 120 Hz
     private var guardSeen = 0; private var guardLost = 0
-    /** watching every other tracker frame, because every one was too many */
+    /**
+     * Behind far enough that it is worth telling the player.
+     *
+     * It used to also DROP every other tracker frame, on the reasoning that even losses beat
+     * the clumps the queue makes -- which is true about clumps and false about the cost. Half
+     * the frames is half the points of every flight, and the bars a track is judged by are
+     * counts of points: a serve then needs twice as long in the air to be seen, 200 ms where a
+     * fast one crosses in about 200. Halving the bars to match let a body through on real
+     * footage -- a blob swelling from 16 to 220 px came back as a serve. And the sessions
+     * agree: thinning on caught one serve, thinning off caught four.
+     *
+     * So it measures and it says so, and it does not touch the frames. The advice it gives --
+     * move the phone back -- is the fix; there is no clever way to watch a 240 fps ball with
+     * half the CPU it needs.
+     */
     @Volatile var thinning = false; private set
     /** frames dropped on purpose by the guard (as against [skipped], dropped by the queue) */
     @Volatile var thinned = 0L; private set
@@ -217,7 +231,6 @@ class LivePipeline(
         if (n % step != 0L) return
         val index = n / step
         if (!blocking && guardWindowEnded()) guardDecide()
-        if (thinning && (index and 1L) == 1L) { thinned++; return }                // dropped on purpose, evenly
         guardSeen++
         if (!blocking && jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }   // the finders are behind
         frameW = yuv.width; frameH = yuv.height
@@ -226,7 +239,7 @@ class LivePipeline(
         val t0 = System.nanoTime()
         val rows = Downsample.rows(yuv)
         shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
-        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; it.minPoints = if (thinning) 6 else 12; tracker = it }
+        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); tracker = it }
         // the background learns from every 24th frame, before that frame's blobs are found
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
@@ -261,9 +274,6 @@ class LivePipeline(
             if (guardCalm >= 8) { thinning = false; guardCalm = 0 }
         }
         if (thinning != was) {
-            // both of these are counts of frames looked at, so both halve when half of them are
-            tracker?.maxGap = if (thinning) 4 else 2
-            tracker?.minPoints = if (thinning) 6 else 12
             // said once a session: it is the same advice every time, and the player is mid-serve
             val first = thinning && !guardSaid
             if (thinning) guardSaid = true
@@ -321,10 +331,9 @@ class LivePipeline(
         // this phone does NOT take -- it watches by the graphics chip -- so the first session
         // with a guard reported thinned 0 and worstBehind 0.000 while skipping 23% of its frames.
         if (guardWindowEnded()) guardDecide()
-        if (thinning && (index and 1L) == 1L) { thinned++; return }
         guardSeen++
         if (jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }
-        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; it.minPoints = if (thinning) 6 else 12; tracker = it }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); tracker = it }
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()

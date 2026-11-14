@@ -50,6 +50,11 @@ fun main(args: Array<String>) {
     // as the app: the tracker sees every 2nd frame (120 a second), the capture all of them
     val step = (System.getenv("STEP") ?: "2").toInt()
     val tracker = ServeTracker(W / 4, H / 4, 240 / step)
+    // MINPOINTS / MAXGAP: what the load guard sets on the phone when it is thinning. With
+    // STEP=4 (every other tracker frame, as thinning does) these are how the fix is told from
+    // the fault -- 6 and 4 keep a short flight, 12 and 2 throw it away as "short".
+    System.getenv("MINPOINTS")?.let { tracker.minPoints = it.toInt() }
+    System.getenv("MAXGAP")?.let { tracker.maxGap = it.toInt() }
     // warm the background up from frames spread over the clip (live, it is always warm)
     val total = countFrames(clip)
     val every = maxOf(1L, total / 6)
@@ -82,8 +87,13 @@ fun main(args: Array<String>) {
     var dsNs = 0L; var pushNs = 0L; var pushed = 0
     // PAR=1: as the phone does it: blobs found on 3 threads with the background of the moment, linked in order up to 24 frames later
     val par = if (System.getenv("PAR") != null) Parallel(tracker) else null
+    // THIN=1: the load guard's thinning, faithfully -- every OTHER tracker frame is dropped
+    // while the tracker keeps the rate it was built with. STEP=4 is not the same thing: it also
+    // halves the fps the tracker is told, which moves notABall's speed bar with it, so a serve
+    // can fail there for a reason the phone would never have.
+    val thin = System.getenv("THIN") != null
     frames(clip, W, H) { f ->
-        if (n % step == 0L) {
+        if (n % step == 0L && !(thin && (n / step) % 2L == 1L)) {
             val a = System.nanoTime()
             val q = (if (System.getenv("GPU") != null) Downsample.quarterMean(f) else Downsample.quarter(f))
             val b = System.nanoTime()

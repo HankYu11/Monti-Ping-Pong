@@ -16,9 +16,21 @@ import org.junit.Test
  * queue was full, which is bursty, so a flight did not lose a quarter of its points evenly --
  * it was cut into pieces, and a piece under twelve points is not judged, it is dropped.
  *
- * Losing a quarter of the points is survivable. Losing them three in a row is not. So the guard
- * drops every OTHER frame on purpose, which costs half of them but leaves the rest two apart,
- * and raises maxGap so one further miss does not undo it.
+ * Losing a quarter of the points is survivable. Losing them three in a row is not. Which is why
+ * dropping every OTHER frame on purpose looked like the answer: half the points, but evenly
+ * spaced, and a track survives that.
+ *
+ * It was tried and it is not the answer, and these tests are what is left of finding out. Half
+ * the points is half of every FLIGHT's points, and the bars a track is judged by count points:
+ * at 120 Hz a flight needs 100 ms to clear twelve, thinned it needs 200, and a fast serve
+ * crosses in about 200. Halving the bars to match let a body through on the real footage -- a
+ * blob swelling from 16 px to 220 px came back as a serve -- and the sessions agreed: thinning
+ * on caught one serve where thinning off caught four. The guard measures and warns now; it does
+ * not touch the frames.
+ *
+ * These stay because they are still true about the tracker, and they are the reason not to try
+ * it again: the first two say what clumped loss does, the rest say what it would cost to fix it
+ * this way.
  */
 class LoadGuardTest {
     private val FIRST = 20L

@@ -360,10 +360,17 @@ from one side, through a pinhole. That is what the real footage is for.
 
 | true rps | 10 | 25 | 40 | 60 | 70 | 90 | 0 (float) |
 |---|---|---|---|---|---|---|---|
-| measured | 9.99 | 25.01 | 39.98 | 60.01 | 70.05 | 90.01 | **0.29** |
+| measured | 9.99 | 25.01 | 39.98 | 60.01 | 70.05 | 90.01 | **refused** |
 
-Worst error on a spinning ball is 0.12 rev/s. The float is the useful row for a sceptic: a ball
-with no spin at all reads 0.3 rev/s, which is the noise floor measured rather than asserted.
+Worst error on a spinning ball is 0.12 rev/s, over 10 to 90.
+
+The float does not get a number at all: the app refuses it and says "Couldn't read that one."
+Its reading inside the engine is 0.29 rev/s, which is a fair measure of the noise floor, but
+that number never reaches the player, so it is not a thing to quote. (A real serve near zero
+can still come through: `web/test/labels.mjs` has one at 1.43 rev/s labelled "no spin". The
+line between "no spin" and "couldn't read" sits somewhere between those two, and nothing here
+pins it down.) Whether a float serve ought to be answered "no spin" rather than refused is a
+real question this sweep raises and does not settle.
 
 **Axis — median 7.5 degrees, and it depends on the kind of spin:**
 
@@ -399,18 +406,34 @@ has a marking that does not move however fast it turns, so the rate is not in th
 all — by this method or any other. The sweep carries that case on purpose, with the pole 8
 degrees off the axis:
 
-| case | pole to axis | true rps | measured |
+| case | pole to axis | true rps | what the player is told |
 |---|---|---|---|
-| pole on the axis | 8° | 40.0 | **0.21** |
-| every other case | 33-84° | | within 0.12 |
+| pole on the axis | 8° | 40.0 | **"Couldn't read that one."** |
+| every other case | 33-84° | | a rate, within 0.12 |
 
-**The app does not refuse it — it answers 0.2 rev/s.** A confident wrong number is worse than
-"couldn't read that one", and that is the clearest thing this sweep has turned up to fix. It
-has nothing to do with gyro: it is where the marking happened to be pointing. (It was found by
-accident, when `servesim.py` drew one starting orientation for every case and the gyro case
-landed 8.7 degrees from it, which looked exactly like a gyro bug until the angle was measured.
-`--orient` gives the orientation its own seed now, the truth file reports `pole_axis_deg`, and
-gyro is run from three orientations, because one orientation tests one orientation.)
+**The app refuses it**, and says "Couldn't read that one." The engine's own flags are
+unambiguous about it: `fit` 0.10 against a bar of 0.75, `turns` 0.05 against a bar of 1,
+`clear` false. `MainActivity.show()` gates on that flag before any number reaches the player.
+
+This section said the opposite for one commit: that the app answered 0.21 rev/s rather than
+refusing, and that fixing it was the most important thing the sweep had found. That was the
+harness, not the app. `measureCapture` carries a rate NEXT TO the flag saying whether it stands
+behind it, and `cap.mjs` printed the rate without reading the flag. Both now report the app's
+answer, and refusals are counted on their own rather than averaged in. The lesson is worth more
+than the bug: a test harness that prints a number the player never sees will be believed.
+
+What remains imperfect is the WORDING. The player is told "the ball turned only a little in
+this stretch", when the ball turned 9.8 times and it was the marking that did not move. The
+engine has a better line for this -- "the ball showed the same side all the way... film from
+the side of the ball's path" -- but it is suppressed for balls marked with colour dots, which
+the painted ball is. From the inside the engine cannot easily tell the two apart: the rate it
+would need is the one it just failed to measure.
+
+(The blind spot was found by accident, when `servesim.py` drew one starting orientation for
+every case and the gyro case landed 8.7 degrees from it -- which looked exactly like a gyro bug
+until the angle was measured. `--orient` gives the orientation its own seed now, the truth file
+reports `pole_axis_deg`, and gyro is run from three orientations, because one orientation tests
+one orientation.)
 
 **Two serves the app never found at all**, which is what the simulator buys that a recording
 session does not:
@@ -434,7 +457,9 @@ per pixel — all three tracks land within 8% of the truth.
 
 ### What this does and does not prove
 
-Proves: the measurement and the plumbing, against an answer, on serves nobody can play.
+Proves: the measurement and the plumbing, against an answer, on serves nobody can play --
+including whether the app stands behind a reading or refuses it, which is not the same question
+as whether the engine produced a number.
 Does not prove: the camera — real rolling shutter, the phone's own encoder, real room light,
 a scuffed ball. Those stay the club clips' and the hand counts' job, and the two tests cover
 different halves. Neither replaces the other.

@@ -18,8 +18,8 @@ loop -- an incomplete texture); 0.13.18's unbind/invalidate did not help, which 
 | build | serves found | exact repeats among masked pictures |
 |---|---|---|
 | 0.12.8 (`b3b0a71`) | 6 / 6 | (no mask passes) |
-| 0.13.9 (`92b2f87`) | 4 / 4 (+1 later run that completed) | (no mask passes) |
-| tip without the fix (`f82dc43^` + reports) | **0 / 6** | 213-236 of 214-237 (all but the first) |
+| 0.13.9 (`92b2f87`) | 5 / 5 completed runs | (no mask passes) |
+| 0.13.18 + the new report lines, without the fix | **0 / 6** | 213-236 of 214-237 (all but the first) |
 | tip with the fix | **12 / 12 completed runs** | **0** in every run |
 
 Finder time in the clean window: 4.2-5.2 ms with 0 pictures skipped, for every build.

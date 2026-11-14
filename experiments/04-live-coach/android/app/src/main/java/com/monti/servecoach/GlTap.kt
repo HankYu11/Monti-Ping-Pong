@@ -116,6 +116,49 @@ class GlTap(
     @Volatile var maskFrames = 0L; private set
     /** read-backs the chip was still not done with after 100 ms */
     @Volatile var readWaits = 0L; private set
+
+    /**
+     * Pictures that came back byte for byte the same as the one before.
+     *
+     * A camera frame is never identical to the next: sensor noise alone moves every pixel. So an
+     * exact repeat means the chip handed back a picture it had already handed back, and the
+     * finders are watching a photograph. That is what the mask passes did on a Mali, and
+     * nothing downstream could tell -- the mask of a frozen picture against itself is empty
+     * and perfectly self-consistent. Counted over 1,024 pixels spread across the picture,
+     * colour only (the alpha byte is the mask, and a frozen mask is frozen too).
+     */
+    @Volatile var repeats = 0L; private set
+    @Volatile var repeatsMasked = 0L; private set
+    @Volatile var comparedMasked = 0L; private set
+    /** the mask passes, stopped for the session because they froze the picture */
+    @Volatile var maskOff = false; private set
+    @Volatile var maskOffNote = ""; private set
+    private var lastHash = 0L
+
+    private fun checkFrozen(b: ByteArray, masked: Boolean) {
+        var h = 1469598103934665603L
+        val stride = maxOf(4, (b.size / 1024) and 3.inv())
+        var i = 0
+        while (i + 2 < b.size) {
+            h = (h xor (b[i].toLong() and 0xff)) * 1099511628211L
+            h = (h xor (b[i + 1].toLong() and 0xff)) * 1099511628211L
+            h = (h xor (b[i + 2].toLong() and 0xff)) * 1099511628211L
+            i += stride
+        }
+        val same = h == lastHash
+        lastHash = h
+        if (same) repeats++
+        if (!masked) return
+        comparedMasked++
+        if (same) repeatsMasked++
+        // a healthy camera repeats ~never; one in twenty over the first two seconds is a chip
+        // handing back stale pictures, and the session is better off without the passes
+        if (!maskOff && comparedMasked >= 240 && repeatsMasked * 20 > comparedMasked) {
+            maskOff = true
+            maskOffNote = "mask passes stopped: $repeatsMasked of $comparedMasked pictures were exact repeats"
+            onError(maskOffNote)
+        }
+    }
     private var showProgram = 0
     private var texture: SurfaceTexture? = null
     private var textureSurface: Surface? = null
@@ -517,6 +560,7 @@ class GlTap(
     /** the small picture: drawn into the framebuffer, read back (see [onPicture]) */
     private fun tap(ts: Long, no: Long) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
+        fresh()
         GLES20.glViewport(0, 0, qw, qh)
         GLES20.glUseProgram(tapProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -563,7 +607,7 @@ class GlTap(
      * when anything is missing, in which case the caller reads the picture back as it always has.
      */
     private fun maskPasses(): Boolean {
-        if (maskProgram == 0 || rowsProgram == 0) return false
+        if (maskOff || maskProgram == 0 || rowsProgram == 0) return false
         bgPending.getAndSet(null)?.let { (b, gen, flip) ->
             if (b.size == qw * qh * 4) {
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE0)   // whichever unit the last pass left active
@@ -582,6 +626,7 @@ class GlTap(
         GLES20.glDisable(GLES20.GL_BLEND)
         val pos2 = GLES20.glGetAttribLocation(rowsProgram, "pos")
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, rowFbo)
+        fresh()
         GLES20.glViewport(0, 0, 1, qh)
         GLES20.glUseProgram(rowsProgram)
         bind2D(1, fboTex, rowsProgram, "smallTex"); bind2D(2, bgTex, rowsProgram, "bgTex")
@@ -594,6 +639,7 @@ class GlTap(
 
         val pos3 = GLES20.glGetAttribLocation(maskProgram, "pos")
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo)
+        fresh()
         GLES20.glViewport(0, 0, qw, qh)
         GLES20.glUseProgram(maskProgram)
         bind2D(1, fboTex, maskProgram, "smallTex"); bind2D(2, bgTex, maskProgram, "bgTex")
@@ -605,8 +651,36 @@ class GlTap(
         // a program's "pos" need not be attribute 0, and an attribute left enabled still points
         // at this client-side array when the next program draws
         GLES20.glDisableVertexAttribArray(pos3)
+        // Unbind everything these passes sampled, before anything draws again.
+        //
+        // fboTex is where the NEXT frame's pass 1 draws the camera picture, and rowTex is where
+        // the next pass 2 draws. Left bound to units 1 and 3 they are textures being rendered
+        // into while bound for sampling: a feedback loop, undefined in GL. llvmpipe and desktop
+        // drivers let it go. A Mali drops the draw -- so fboTex kept the previous picture, the
+        // read-back handed the same frame over again and again, and every finder downstream, the
+        // processor's as well as the chip's, was looking at a still photograph. Before the mask
+        // passes nothing ever sampled fboTex, which is why 0.13.7 found serves and 0.13.10 did not.
+        for (u in 1..3) { GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + u); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0) }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         maskFrames++
         return true
+    }
+
+    /**
+     * Tell the chip the bound framebuffer's old contents are not wanted.
+     *
+     * Every pass here draws a quad over the whole target, so nothing of the previous picture
+     * survives anyway -- but a tile-based GPU does not know that. Without being told, a Mali
+     * loads last frame's pixels into tile memory before drawing, and if the draw is then
+     * dropped it writes them straight back: a perfectly frozen picture, indistinguishable from
+     * a real one, which is what the finders were handed. Told, there is nothing to load, so a
+     * dropped draw would leave rubbish that no background matches rather than a photograph that
+     * every background does. It is also less work for the chip on every frame.
+     */
+    private val colour0 = intArrayOf(GLES30.GL_COLOR_ATTACHMENT0)
+    private fun fresh() {
+        if (gl3) GLES30.glInvalidateFramebuffer(GLES20.GL_FRAMEBUFFER, 1, colour0, 0)
+        else { GLES20.glClearColor(0f, 0f, 0f, 0f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT) }
     }
 
     private fun bind2D(unit: Int, id: Int, prog: Int, name: String) {
@@ -637,7 +711,7 @@ class GlTap(
         } catch (e: Exception) { onError("read-back: ${e.message}") }
         busy.set(k, 0)
         readMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - readMsAvg) / minOf(++readN, 240L)
-        out?.let { onPicture(ts, no, it, maskSlotGen[k]) }
+        out?.let { checkFrozen(it, maskSlotGen[k] >= 0); onPicture(ts, no, it, if (maskOff) -1 else maskSlotGen[k]) }
     }
 
     // ---- the ball's window, cut as the frame goes past (see LiveWindows) ----

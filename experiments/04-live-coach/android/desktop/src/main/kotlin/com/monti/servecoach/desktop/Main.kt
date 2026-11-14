@@ -66,7 +66,10 @@ fun main(args: Array<String>) {
     val spread = ArrayList<com.monti.servecoach.core.Quarter>()
     var j = 0L
     frames(clip, W, H) { f -> if (j % every == 0L && spread.size < 5) spread.add((if (System.getenv("GPU") != null) Downsample.quarterMean(f) else Downsample.quarter(f))); j++ }
-    tracker.prime(spread)
+    // NOPRIME=1: as the phone. It has no future to warm a background from -- at the moment of
+    // a serve its background is the median of what came BEFORE, and nothing else. Priming from
+    // frames spread over the whole clip hands the harness a background the phone never has.
+    if (System.getenv("NOPRIME") == null) tracker.prime(spread)
     if (System.getenv("DEBUG") != null) tracker.onTrack = { pts, why ->
         val a = pts.first(); val b = pts.last()
         // the radii, not just the ends: a blob's area is a LOWER bound on the ball (anything

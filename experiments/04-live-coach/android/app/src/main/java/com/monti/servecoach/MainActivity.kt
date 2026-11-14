@@ -494,7 +494,7 @@ class MainActivity : Activity() {
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("readWaits", t.readWaits).put("maskFrames", t.maskFrames).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
+            .put("readMs", t.readMsAvg).put("readWaits", t.readWaits).put("repeats", "${t.repeats} pictures repeated exactly, ${t.repeatsMasked} of ${t.comparedMasked} with the mask passes on").put("maskOff", t.maskOffNote).put("maskFrames", t.maskFrames).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)
             .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)

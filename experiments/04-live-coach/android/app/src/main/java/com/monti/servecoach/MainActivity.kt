@@ -611,7 +611,9 @@ class MainActivity : Activity() {
             try { codec.stop() } catch (_: Exception) {}
             codec.release()
             main.post { log("replay", "chip: ${t.frames} frames, ${t.tapped} tapped, ${t.missed} missed, ${t.windowsCut} windows (${t.winSkips} skipped)" +
-                (if (stalls > 0) ", $stalls frames the chip never reported" else "")) }
+                (if (stalls > 0) ", $stalls frames the chip never reported" else "") +
+                "; mask passes on ${t.maskFrames} pictures, repeats ${t.repeats} (${t.repeatsMasked} of ${t.comparedMasked} with the mask passes on)" +
+                (if (t.maskOff) "; ${t.maskOffNote}" else "")) }
             t.stop(); if (tap === t) tap = null
             p.planWindows = null
         }

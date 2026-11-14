@@ -15,6 +15,11 @@ import java.io.File
  * serve it reports, those frames decoded again and cropped into a capture file for the engine.
  *   desktop clip.mp4 outDir      -> outDir/<clip>_<n>.cap and a line of JSON per serve
  */
+private val allDetectors = java.util.Collections.synchronizedList(ArrayList<com.monti.servecoach.core.Detector>())
+private val benchFind = java.util.concurrent.atomic.AtomicLong()
+private val benchAlpha = java.util.concurrent.atomic.AtomicLong()
+private val benchFrames = java.util.concurrent.atomic.AtomicLong()
+
 fun main(args: Array<String>) {
     // fit chip.bin decoded.yuv: ColourFit on two planes of the same size (tests)
     if (args[0] == "fit") {
@@ -165,6 +170,17 @@ fun main(args: Array<String>) {
         }
         println("""{"clip":"${clip.name}","serve":${k + 1},"frames":"${s.first}-${s.last}","rect":[${c.rect.joinToString(",")}],"ballR":${"%.1f".format(s.ballRadius * 4)},"tracks":${s.tracks},"why":"${s.why}","file":"${file.path}"}""")
     }
+    if (benchFrames.get() > 0) {
+        val f = benchFrames.get()
+        println("""{"maskbench":"$f frames","findMs":${"%.3f".format(benchFind.get() / 1e6 / f)},"fromChipMs":${"%.3f".format(benchAlpha.get() / 1e6 / f)}}""")
+    }
+    run {
+        val ds = synchronized(allDetectors) { allDetectors.toList() }
+        val parts = LongArray(3); var frames = 0L
+        for (d in ds) { for (i in 0..2) parts[i] += d.nanos[i] }
+        frames = pushed.toLong()
+        if (frames > 0) println("""{"findParts":{"mask":${"%.2f".format(parts[0] / 1e6 / frames)},"open":${"%.2f".format(parts[1] / 1e6 / frames)},"blobs":${"%.2f".format(parts[2] / 1e6 / frames)}}}""")
+    }
     println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}","blobsRefused":"small=${tracker.refusedBlobs[0]} big=${tracker.refusedBlobs[1]} long=${tracker.refusedBlobs[2]} hollow=${tracker.refusedBlobs[3]}","worstAspect":${"%.2f".format(tracker.worstAspect)}}""")
 }
 
@@ -203,7 +219,19 @@ class Parallel(private val tracker: ServeTracker) {
         tracker.sample(q, index)
         val bg = tracker.background()
         val f = if (bg == null) null else pool.submit(java.util.concurrent.Callable<List<FloatArray>> {
-            val d = detectors.get() ?: com.monti.servecoach.core.Detector(q.w, q.h).also { detectors.set(it) }
+            val d = detectors.get() ?: com.monti.servecoach.core.Detector(q.w, q.h).also { detectors.set(it); allDetectors.add(it) }
+            // MASKBENCH: the same frame found twice -- the mask cut here, then taken as the
+            // graphics chip hands it over. The chip's own two passes are not in this (they run
+            // while the chip is already holding the picture); what is in it is everything the
+            // processor stops doing: makeMask, and the small picture fromRgba built for it.
+            if (System.getenv("MASKBENCH") != null) {
+                val rgba = ByteArray(q.w * q.h * 4)
+                var t0 = System.nanoTime(); d.find(q, bg); benchFind.addAndGet(System.nanoTime() - t0)
+                // the chip's mask, as it would arrive: this frame's own, before open2 erodes it
+                d.maskInto(q, bg, rgba, 3)
+                t0 = System.nanoTime(); d.findFromAlpha(rgba, 0); benchAlpha.addAndGet(System.nanoTime() - t0)
+                benchFrames.incrementAndGet()
+            }
             d.find(q, bg)
         })
         waiting.addLast(index to f)

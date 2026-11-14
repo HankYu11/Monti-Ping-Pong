@@ -26,14 +26,15 @@ uniform vec2 smallSize;         // 480 x 270
 // Measured, not guessed at: 96 pixels of 129,600 on random footage, every one of them a pixel
 // sitting on the threshold, which is exactly where a ball's edge sits.
 uniform float col0;
-in vec2 uv;
 out vec4 fragColor;
 
 vec2 twoBytes(float v) { float hi = floor(v / 256.0); return vec2(v - hi * 256.0, hi) / 255.0; }
 
 void main() {
     float sg = 0.0, sb = 0.0;
-    float y = uv.y;
+    // the row this texel stands for. quad.vert hands on nothing but a position -- every shader
+    // here works from gl_FragCoord, and these two must as well, or they do not link
+    float y = gl_FragCoord.y / smallSize.y;
     for (int i = 0; i < 120; i++) {
         float x = (float(i) * 4.0 + col0 + 0.5) / smallSize.x;
         float b = floor(clamp(texture(bgTex, vec2(x, y)).r * 255.0 + 0.5, 0.0, 255.0));

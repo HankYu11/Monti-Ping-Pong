@@ -15,8 +15,7 @@
 uniform sampler2D smallTex;     // the small picture: r = y, g = u + 0.5, b = v + 0.5
 uniform sampler2D bgTex;        // the background, stored the same way
 uniform sampler2D rowTex;       // pass 2: each row's two sums, as byte pairs
-uniform float rows;             // 270
-in vec2 uv;
+uniform vec2 smallSize;         // 480 x 270
 out vec4 fragColor;
 
 float fromBytes(vec2 b) { return b.x * 255.0 + b.y * 255.0 * 256.0; }
@@ -25,7 +24,9 @@ void main() {
     // the row's ratio, averaged with its neighbours' -- the ratios, as the processor averages
     // them, and over however many of the five exist at the picture's edges
     float sum = 0.0, n = 0.0;
-    float row = floor(uv.y * rows);
+    float rows = smallSize.y;
+    vec2 uv = gl_FragCoord.xy / smallSize;      // quad.vert hands on no uv; nothing here may
+    float row = floor(gl_FragCoord.y);          // depend on an interpolator it does not have
     for (int k = -2; k <= 2; k++) {
         float r = row + float(k);
         if (r < 0.0 || r > rows - 1.0) continue;

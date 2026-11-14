@@ -52,7 +52,10 @@ def reference(fy, fu, fv, by, bu, bv, col0=0):
 def main():
     ctx = moderngl.create_context(standalone=True, backend="egl")
     body = open(os.path.join(SH, "mask_body.glsl")).read()
-    vert = HEAD + "in vec2 pos; out vec2 uv;\nvoid main(){uv=pos*0.5+0.5;gl_Position=vec4(pos,0.0,1.0);}"
+    # the app's OWN vertex shader. Substituting a convenient one here is how a missing
+    # interpolator got past this check once already: quad.vert hands on nothing but a position,
+    # and a fragment shader that declared "in vec2 uv" would not have linked on a phone.
+    vert = HEAD + open(os.path.join(SH, "quad.vert")).read().split("\n", 1)[1]
     rows_prog = ctx.program(vertex_shader=vert, fragment_shader=HEAD + open(os.path.join(SH, "rows.frag")).read())
     mask_prog = ctx.program(vertex_shader=vert, fragment_shader=HEAD + body + open(os.path.join(SH, "mask.frag")).read())
     quad = ctx.buffer(np.array([-1, -1, 3, -1, -1, 3], np.float32).tobytes())
@@ -105,7 +108,7 @@ def main():
         ctx.disable(moderngl.BLEND)
         tS.use(0); tB.use(1); tR.use(2)
         mask_prog["smallTex"].value = 0; mask_prog["bgTex"].value = 1; mask_prog["rowTex"].value = 2
-        mask_prog["rows"].value = float(H)
+        mask_prog["smallSize"].value = (float(W), float(H))
         ctx.vertex_array(mask_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
         got = (np.frombuffer(fOut.read(components=4), np.uint8).reshape(H, W, 4)[:, :, 3] > 127).astype(np.uint8)
 

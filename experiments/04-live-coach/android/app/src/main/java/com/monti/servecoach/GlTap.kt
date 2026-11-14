@@ -115,6 +115,8 @@ class GlTap(
     /** the chip is cutting the mask and the alpha byte can be believed */
     @Volatile var maskReady = false; private set
     @Volatile var maskFrames = 0L; private set
+    /** read-backs the chip was still not done with after 100 ms */
+    @Volatile var readWaits = 0L; private set
     private var showProgram = 0
     private var texture: SurfaceTexture? = null
     private var textureSurface: Surface? = null
@@ -563,6 +565,7 @@ class GlTap(
         if (maskProgram == 0 || rowsProgram == 0) return false
         bgPending.getAndSet(null)?.let { (b, gen, flip) ->
             if (b.size == qw * qh * 4) {
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0)   // whichever unit the last pass left active
                 val buf = ByteBuffer.allocateDirect(b.size).order(ByteOrder.nativeOrder()).put(b).also { it.position(0) }
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTex)
                 GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
@@ -580,23 +583,27 @@ class GlTap(
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, rowFbo)
         GLES20.glViewport(0, 0, 1, qh)
         GLES20.glUseProgram(rowsProgram)
-        bind2D(0, fboTex, rowsProgram, "smallTex"); bind2D(1, bgTex, rowsProgram, "bgTex")
+        bind2D(1, fboTex, rowsProgram, "smallTex"); bind2D(2, bgTex, rowsProgram, "bgTex")
         GLES20.glUniform2f(GLES20.glGetUniformLocation(rowsProgram, "smallSize"), qw.toFloat(), qh.toFloat())
         GLES20.glUniform1f(GLES20.glGetUniformLocation(rowsProgram, "col0"), maskCol0.toFloat())
         GLES20.glEnableVertexAttribArray(pos2)
         GLES20.glVertexAttribPointer(pos2, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDisableVertexAttribArray(pos2)
 
         val pos3 = GLES20.glGetAttribLocation(maskProgram, "pos")
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo)
         GLES20.glViewport(0, 0, qw, qh)
         GLES20.glUseProgram(maskProgram)
-        bind2D(0, fboTex, maskProgram, "smallTex"); bind2D(1, bgTex, maskProgram, "bgTex")
-        bind2D(2, rowTex, maskProgram, "rowTex")
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(maskProgram, "rows"), qh.toFloat())
+        bind2D(1, fboTex, maskProgram, "smallTex"); bind2D(2, bgTex, maskProgram, "bgTex")
+        bind2D(3, rowTex, maskProgram, "rowTex")
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(maskProgram, "smallSize"), qw.toFloat(), qh.toFloat())
         GLES20.glEnableVertexAttribArray(pos3)
         GLES20.glVertexAttribPointer(pos3, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        // a program's "pos" need not be attribute 0, and an attribute left enabled still points
+        // at this client-side array when the next program draws
+        GLES20.glDisableVertexAttribArray(pos3)
         maskFrames++
         return true
     }
@@ -612,12 +619,19 @@ class GlTap(
         val t0 = SystemClock.elapsedRealtimeNanos()
         var out: ByteArray? = null
         try {
-            GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L)
+            // the wait's answer was being dropped. Mapping does not then return rubbish -- a
+            // read map without GL_MAP_UNSYNCHRONIZED_BIT waits for the transfer itself -- but it
+            // waits on THIS thread, silently, so a chip falling behind looked like a reader
+            // that had slowed down. Counted now, and reported.
+            if (GLES30.glClientWaitSync(fence, GLES30.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L) == GLES30.GL_TIMEOUT_EXPIRED) readWaits++
             GLES30.glDeleteSync(fence)
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
             val m = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, qw * qh * 4, GLES30.GL_MAP_READ_BIT) as ByteBuffer?
-            if (m != null) { out = ByteArray(qw * qh * 4); m.order(ByteOrder.nativeOrder()).position(0); m.get(out) }
-            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            // the unmap has to happen even if the copy throws: a buffer left mapped can never
+            // be read back into again, so one bad frame would cost that slot for the session
+            if (m != null) try {
+                out = ByteArray(qw * qh * 4); m.order(ByteOrder.nativeOrder()).position(0); m.get(out)
+            } finally { GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER) }
             GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
         } catch (e: Exception) { onError("read-back: ${e.message}") }
         busy.set(k, 0)

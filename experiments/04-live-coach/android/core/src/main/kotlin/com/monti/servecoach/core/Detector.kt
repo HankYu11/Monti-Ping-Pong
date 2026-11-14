@@ -105,6 +105,15 @@ class Detector(val w: Int, val h: Int) {
         return found
     }
 
+    /**
+     * The mask just cut, into [into] at [offset] of every 4 bytes: what the graphics chip would
+     * have handed back for this frame. For measuring what the chip's mask saves without a chip.
+     */
+    fun maskInto(q: Quarter, bg: Background, into: ByteArray, offset: Int) {
+        makeMask(q, bg)                       // the mask BEFORE open2, which erodes it in place
+        for (p in mask.indices) into[p * 4 + offset] = mask[p]
+    }
+
     /** the chip's answer out of the alpha bytes, turned the way the small picture is turned */
     private fun readAlpha(rgba: ByteArray, flip: Int, into: ByteArray) {
         val fx = flip and 1 != 0; val fy = flip and 2 != 0

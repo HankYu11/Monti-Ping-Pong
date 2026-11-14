@@ -486,7 +486,7 @@ class MainActivity : Activity() {
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
+            .put("readMs", t.readMsAvg).put("readWaits", t.readWaits).put("maskFrames", t.maskFrames).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)
             .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)
@@ -1005,7 +1005,7 @@ class MainActivity : Activity() {
             .put("skipped", p.skipped).put("thinned", p.thinned).put("thinning", p.thinning).put("ringLate", p.ringLate)
             .put("behind", "%.3f".format(p.behindShare)).put("worstBehind", "%.3f".format(p.worstBehind)).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
-            .put("readMs", t.readMsAvg).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
+            .put("readMs", t.readMsAvg).put("readWaits", t.readWaits).put("maskFrames", t.maskFrames).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)
             .put("queued", t.queued).put("encodeMs", t.encodeMsAvg).put("bindFailures", t.bindFailures).put("fenceWaitMs", t.fenceWaitMsAvg)
             .put("swapMs", t.swapMsAvg).put("busy", "%.2f".format(t.busyShare)).put("framesPerWake", if (t.drains > 0) "%.1f".format(t.queued.toDouble() / t.drains) else "-").put("maxBurst", t.maxBurst)
             .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)

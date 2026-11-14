@@ -12,7 +12,14 @@ android {
         applicationId = "com.monti.servecoach"
         minSdk = 29
         targetSdk = 35
-        ndk { abiFilters += listOf("arm64-v8a") }       // the native part is built for it only
+        // The phone's own. -PemuAbi adds x86_64 as well, which is the only way to run this on
+        // an emulator -- and an emulator is the only way to exercise the graphics chip's own
+        // code (GlTap, assets/shaders) without a phone in hand. It doubles the APK, so it is
+        // not what ships.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+            if (project.hasProperty("emuAbi")) abiFilters += "x86_64"
+        }
         versionCode = 68
         versionName = "0.13.9"
     }

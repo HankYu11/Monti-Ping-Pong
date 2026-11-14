@@ -150,7 +150,7 @@ def main():
             rendered[name] = (clip, truth)
             print(f"  {name}: {'rendered' if clip else truth.get('error')}", file=sys.stderr)
 
-    allcaps, owner, failed = [], {}, []
+    allcaps, owner, failed, refused = [], {}, [], []
     for name, _ in cases:
         clip, truth = rendered[name]
         if not clip:
@@ -187,9 +187,22 @@ def main():
         m = got.get(base)
         form = "ring" if who.endswith("(ring)") else "crop"
         if not m or m.get("error"):
-            print(f"{who:<32}{form:<7}{truth['rps']:>7.1f}   could not read: {m and m.get('error')}")
+            print(f"{who:<32}{form:<7}{'':>6}{truth['rps']:>7.1f}   could not read: {m and m.get('error')}")
             out_rows.append([who, form, truth["rps"], "", "", "", "", "", "", "", "", "",
                              str(m and m.get("error"))])
+            continue
+        # The app refuses a reading it is not sure of and says "Couldn't read that one." The
+        # engine hands back a rate anyway, next to the flag. Print the app's answer, not the
+        # engine's: a number the player never sees is not a result, and reporting one as though
+        # it were is how this sweep once had the app "answering 0.21 rev/s" in its blind spot
+        # when the app had in fact refused it.
+        if m.get("appClear") is False:
+            why = (m.get("issues") or ["no clear reading"])[0]
+            print(f"{who:<32}{form:<7}{truth.get('pole_axis_deg', float('nan')):>5.0f}°"
+                  f"{truth['rps']:>7.1f}{'refused':>8}   {why[:60]}")
+            out_rows.append([who, form, truth["rps"], "refused", "", "", "", "", "", "", "", "",
+                             why])
+            refused.append((who, why))
             continue
         e = truth["expected"]
         # the angle between the spin we rendered and the spin that came back
@@ -233,6 +246,9 @@ def main():
     if failed:
         print(f"{len(failed)} serve{'s' if len(failed) > 1 else ''} the app never found: "
               + ", ".join(n for n, _ in failed))
+    if refused:
+        print(f"{len(refused)} the app found and refused rather than guess: "
+              + ", ".join(n for n, _ in refused))
 
 
 if __name__ == "__main__":

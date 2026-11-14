@@ -87,10 +87,26 @@ async function measure(file) {
     }
     const t0 = performance.now();
     const out = await window.SpinMeter.measureCapture(cap, { useTrack: true, single: true, serveDir: 'any', robust: true });
+    // exactly what the app reads (assets/engine.html -> MainActivity.show): the serve object
+    // out of res.serves, and the "clear" flag it refuses on. Reported so this harness cannot
+    // print a number the app would never have shown.
+    const appSv = (out.serves || [])[0] || null;
     return { ms: performance.now() - t0, rps: out.rps, error: out.error || null, phase: out.phase,
              refused: (out.meta && out.meta.debug && out.meta.debug.trackRefused) || false,
              lift: out.lift, curve: out.curve, gyro: out.gyro, toward: out.toward != null ? out.toward : (out.flight && out.flight.towardCameraDeg), type: out.spinType,
-             bytes: b.length, windowed: !!head.windows, box: head.winW || 0 };
+             bytes: b.length, windowed: !!head.windows, box: head.winW || 0,
+             // why the engine did or did not stand behind the reading
+             fit: out.fit, reliable: out.reliable, clear: out.clear, runnerUp: out.runnerUp,
+             turns: out.turns, change: out.change, method: out.method, marking: out.marking,
+             notes: (out.notes || []).map((n) => n.text || n),
+             // What the APP would do with this, which is not the same as what the engine
+             // returns. MainActivity.show() refuses on `clear` and says "Couldn't read that
+             // one."; the engine still carries a rate alongside that flag. A harness that
+             // printed the rate on its own would be reporting a number no player ever sees --
+             // which is exactly how a blind-spot reading of 0.21 rev/s got written up as the
+             // app answering 0.21 rev/s.
+             appClear: appSv ? !!appSv.clear : null, appRps: appSv ? appSv.rps : null,
+             issues: appSv ? (appSv.issues || []).map((i) => i.text || i) : [] };
   }, `http://127.0.0.1:${srv.address().port}/${key}`);
   return r;
 }

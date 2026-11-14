@@ -254,6 +254,21 @@ object Windows {
      * decoder's bytes, where 0.3 is normal) and turned the chip off for the whole session, so
      * every capture after it was copied out by the processor instead -- right, but slow.
      */
+    /**
+     * What a live window at [at], [side] px square, has in common with a capture's crop [rect].
+     *
+     * Both the ring's colour fit and the search for a frame to fit on need this, and it is the
+     * kind of arithmetic that is wrong in only one of two copies. Returns the overlap's width
+     * and height, each rounded down to an even number so the colour planes divide; either can
+     * come back zero or NEGATIVE, which means the window misses the crop on that axis -- a real
+     * session reported -20 x 340, a window off the left edge of the crop entirely.
+     */
+    fun overlap(at: IntArray, side: Int, rect: IntArray): IntArray {
+        val x0 = maxOf(0, at[0] - rect[0]); val y0 = maxOf(0, at[1] - rect[1])
+        val x1 = minOf(rect[2], at[0] - rect[0] + side); val y1 = minOf(rect[3], at[1] - rect[1] + side)
+        return intArrayOf((x1 - x0) and 1.inv(), (y1 - y0) and 1.inv())
+    }
+
     fun alignRect(r: IntArray, frameW: Int, frameH: Int, rowStep: Int, stride: Int = ROW_STRIDE): IntArray {
         val x0 = r[0] - r[0] % stride
         val y0 = r[1] - r[1] % rowStep

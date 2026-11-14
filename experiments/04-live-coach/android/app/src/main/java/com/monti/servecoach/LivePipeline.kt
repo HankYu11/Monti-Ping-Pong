@@ -926,6 +926,35 @@ class LivePipeline(
      * plan, and refitting then would compose it with itself, so it is only ever fitted once.
      * The rms is recorded either way, which is how a fit that has gone stale shows up.
      */
+    /**
+     * Which frame of this capture to fit the ring's colours on: the one whose live window has
+     * the most pixels in common with the crop, or -1 when none has enough.
+     *
+     * It used to be the middle frame, picked before anything was known about where that frame's
+     * window actually sat. On 14 Nov every serve of a session came back with "the window and the
+     * crop overlap by only -20x340" -- the window was off the left edge of the crop entirely, so
+     * the fit never happened, ringCalib stayed null, and every capture of that session fell back
+     * to decode-and-cut at 2.2 to 3.0 s. The ring was carried all session and never once used.
+     *
+     * The ring holds a window for most frames of a flight and [WindowRing.take] only reads them,
+     * so there is no need to guess: ask it where all of them are and pick. A window that misses
+     * the crop says nothing about how the chip's bytes map onto the decoder's, and one that
+     * overlaps by more says it with less noise, which is why it is the largest and not the first.
+     */
+    private fun fitFrameFor(firstFrame: Long, n: Int, rect: IntArray): Int {
+        val ring = windows ?: return -1
+        val t = ring.take(firstFrame, n)
+        var best = -1; var bestArea = 0; var held = 0
+        for (i in 0 until n) {
+            val at = t.at[i] ?: continue
+            held++
+            val (ow, oh) = Windows.overlap(at, t.sides[i], rect).let { it[0] to it[1] }
+            if (ow >= 64 && oh >= 64 && ow * oh > bestArea) { bestArea = ow * oh; best = i }
+        }
+        if (best < 0) CaptureGl.ringNote = "none of the $held windows held overlaps the crop by 64x64"
+        return best
+    }
+
     private fun fitRing(frameNo: Long, crop: ByteArray, rect: IntArray) {
         val ring = windows ?: return
         val taken = ring.take(frameNo, 1)
@@ -939,8 +968,7 @@ class LivePipeline(
         // never happened. Only the pixels both of them hold are compared.
         val w = rect[2]; val h = rect[3]
         val x0 = maxOf(0, at[0] - rect[0]); val y0 = maxOf(0, at[1] - rect[1])
-        val x1 = minOf(w, at[0] - rect[0] + side); val y1 = minOf(h, at[1] - rect[1] + side)
-        val ow = (x1 - x0) and 1.inv(); val oh = (y1 - y0) and 1.inv()
+        val both = Windows.overlap(at, side, rect); val ow = both[0]; val oh = both[1]
         if (ow < 64 || oh < 64) { CaptureGl.ringNote = "the window and the crop overlap by only ${ow}x$oh"; return }
         val cSide = side / 2; val cw = w / 2
         val a = ByteArray(ow * oh + 2 * (ow / 2) * (oh / 2))     // the chip's
@@ -1029,7 +1057,7 @@ class LivePipeline(
             val out = if (builder == null) FrameCountingOut(bin, prog) else null
             // one crop kept back, when the chip's windows still need a map onto the decoder's
             // bytes: a serve cut the old way goes past every frame anyway, so the fit is free
-            val fitAt = if (windowRing && CaptureGl.ringCalib == null && windows != null) nGuess / 2 else -1
+            val fitAt = if (windowRing && CaptureGl.ringCalib == null && windows != null) fitFrameFor(firstFrame, nGuess, rect) else -1
             var fitCrop: ByteArray? = null
             var seenAt = 0
             val sink: (ByteArray) -> Unit = { b ->

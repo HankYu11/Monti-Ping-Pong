@@ -140,15 +140,17 @@ def main():
             rendered[name] = (clip, truth)
             print(f"  {name}: {'rendered' if clip else truth.get('error')}", file=sys.stderr)
 
-    allcaps, owner = [], {}
+    allcaps, owner, failed = [], {}, []
     for name, _ in cases:
         clip, truth = rendered[name]
         if not clip:
-            print(f"  {name}: did not render", file=sys.stderr)
+            failed.append((name, "did not render: " + str(truth.get("error"))))
             continue
         caps, why = captures(clip, os.path.join(a.workdir, "out"), a.ring)
         if not caps:
-            print(f"  {name}: {why}", file=sys.stderr)
+            # The app never got as far as measuring. That is a result, not an absence of
+            # one, and a sweep that printed only what it could read would be flattering.
+            failed.append((name, why))
             continue
         for c in caps:
             allcaps.append(c)
@@ -161,7 +163,7 @@ def main():
     got = measure(allcaps)
 
     hdr = ("case", "form", "rps true", "rps got", "d rps", "axis err",
-           "lift true", "lift got", "curve true", "curve got", "gyro true", "gyro got")
+           "lift true", "lift got", "curve true", "curve got", "gyro true", "gyro got", "note")
     print()
     print(f"{'case':<32}{'form':<7}{'rps':>7}{'got':>8}{'err':>7}{'axis':>7}"
           f"{'lift':>8}{'got':>8}{'curve':>8}{'got':>8}{'gyro':>8}{'got':>8}")
@@ -175,8 +177,9 @@ def main():
         m = got.get(base)
         form = "ring" if who.endswith("(ring)") else "crop"
         if not m or m.get("error"):
-            print(f"{who:<32}{form:<7}{truth['rps']:>7.1f}   {'the app could not read it':<}")
-            out_rows.append([who, form, truth["rps"], "", "", "", "", "", "", "", "", ""])
+            print(f"{who:<32}{form:<7}{truth['rps']:>7.1f}   could not read: {m and m.get('error')}")
+            out_rows.append([who, form, truth["rps"], "", "", "", "", "", "", "", "", "",
+                             str(m and m.get("error"))])
             continue
         e = truth["expected"]
         # the angle between the spin we rendered and the spin that came back
@@ -191,7 +194,13 @@ def main():
               f"{e['gyro']:>8.1f}{m['gyro']:>8.1f}")
         out_rows.append([who, form, truth["rps"], round(m["rps"], 2), round(m["rps"] - truth["rps"], 2),
                          round(ax, 1), e["lift"], round(m["lift"], 1), e["curve"], round(m["curve"], 1),
-                         e["gyro"], round(m["gyro"], 1)])
+                         e["gyro"], round(m["gyro"], 1), ""])
+
+    for name, why in failed:
+        truth = rendered[name][1]
+        rps = truth.get("rps", "")
+        print(f"{name:<32}{'-':<7}{rps:>7}   {why}")
+        out_rows.append([name, "", rps, "", "", "", "", "", "", "", "", "", why])
 
     with open(a.csv, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -205,6 +214,9 @@ def main():
         axes = [r[5] for r in good if r[5] == r[5]]
         print(f"{len(good)} of {len(out_rows)} read · worst rate error {rate:+.2f} rev/s · "
               f"worst axis error {max(axes):.1f}° · median axis {sorted(axes)[len(axes) // 2]:.1f}°")
+    if failed:
+        print(f"{len(failed)} serve{'s' if len(failed) > 1 else ''} the app never found: "
+              + ", ".join(n for n, _ in failed))
 
 
 if __name__ == "__main__":

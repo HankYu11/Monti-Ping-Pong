@@ -398,6 +398,28 @@ class LivePipeline(
     }
 
 
+    // ---------------------------------------------- what the finders actually saw
+
+    /** candidates the finders handed the tracker, per frame the tracker looked at */
+    val candidatesPerFrame: Double get() {
+        val tr = tracker ?: return 0.0
+        // the tracker's own count of frames it was handed, so this means the same thing whether
+        // the app is watching by the graphics chip or by the decoder
+        return if (tr.framesSeen <= 0) 0.0 else tr.candidatesSeen.toDouble() / tr.framesSeen
+    }
+
+    /** why blobs were thrown away before they could ever be linked into a track */
+    val blobsRefused: String get() {
+        val r = tracker?.refusedBlobs ?: return ""
+        return "small=${r[0]} big=${r[1]} long=${r[2]} hollow=${r[3]} worstAspect=${"%.1f".format(tracker?.worstAspect ?: 0f)}"
+    }
+
+    /** the longest track judged this session: points, ball radius, and what was said about it */
+    val longestTrack: String get() {
+        val tr = tracker ?: return ""
+        return "${tr.longest} points, r ${"%.1f".format(tr.longestR)}: ${tr.longestWhy}"
+    }
+
     // ---------------------------------------------- the mask the graphics chip cuts
 
     /**

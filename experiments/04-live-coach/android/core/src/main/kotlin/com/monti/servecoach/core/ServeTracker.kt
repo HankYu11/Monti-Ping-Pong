@@ -300,8 +300,32 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (tr.score > bestScore) bestScore = tr.score
     }
 
+    /**
+     * The longest track this session judged: how many points it had, how big the ball looked,
+     * and what was said about it.
+     *
+     * The rejection tally says what was turned away but not what was there to turn away. A
+     * session that reports forty "short" tracks is a different fault depending on whether the
+     * longest of them was four points or eleven: four means the ball is barely being found at
+     * all, eleven means it is found the whole way and thrown out one point under the bar. The
+     * tally cannot tell those apart. This can.
+     */
+    @Volatile var longest = 0; private set
+    @Volatile var longestR = 0f; private set
+    @Volatile var longestWhy = ""; private set
+
     /** The engine's flight tests (scaled to quarter size); null when it flies like a serve. */
     private fun judge(tr: Track): String? {
+        val said = judged(tr)
+        if (tr.pts.size > longest) {
+            longest = tr.pts.size
+            longestR = median(tr.pts.map { it[3] })
+            longestWhy = said ?: "flies like a serve"
+        }
+        return said
+    }
+
+    private fun judged(tr: Track): String? {
         val p = tr.pts
         if (p.size < minPoints) return "short"
         val a = p[0]; val b = p[p.size - 1]

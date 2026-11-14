@@ -21,7 +21,7 @@ android {
             if (project.hasProperty("emuAbi")) abiFilters += "x86_64"
         }
         versionCode = 68
-        versionName = "0.13.11"
+        versionName = "0.13.12"
     }
     buildTypes {
         release {

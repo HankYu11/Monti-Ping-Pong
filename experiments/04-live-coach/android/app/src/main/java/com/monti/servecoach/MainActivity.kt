@@ -478,6 +478,11 @@ class MainActivity : Activity() {
             .put("behind", "%.3f".format(p.behindShare)).put("worstBehind", "%.3f".format(p.worstBehind)).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)
             // where the mask was cut, and what the two were counted at. "chip" only ever
             // follows a clean count; one differing pixel reads "processor (chip differed...)"
+            // what the finders saw, not just what the tracker turned away: a session that reports
+            // forty "short" tracks says nothing about whether the ball was there to be found
+            .put("candidatesPerFrame", "%.2f".format(p.candidatesPerFrame))
+            .put("blobsRefused", p.blobsRefused)
+            .put("longestTrack", p.longestTrack)
             .put("maskBy", when (p.maskTrust) {
                 1 -> "chip"
                 -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst.get()})"

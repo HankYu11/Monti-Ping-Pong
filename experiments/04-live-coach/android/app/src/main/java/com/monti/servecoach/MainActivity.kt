@@ -677,6 +677,9 @@ class MainActivity : Activity() {
                 main.post {
                     if (mode == Mode.REPLAY) {
                         log("replay", "done: ${p.servesFound} serve(s) spotted, tracker ${"%.1f".format(p.trackMsAvg)} ms a frame")
+                        log("replay", "finders: ${p.skipped} pictures skipped (finders behind), find ${"%.1f".format(p.findMsAvg)} ms; " +
+                            "chip mask trust ${p.maskTrust} after ${p.maskChecks.get()} checks, ${p.maskDisagreed.get()} pixels disagreed; " +
+                            "tracker turned down: ${p.tracker?.rejected ?: emptyMap<String, Int>()}")
                         val why = whyNoServe(p.tracker?.rejected ?: emptyMap())
                         stopAll()
                         testSpotted = p.servesFound

@@ -302,8 +302,14 @@ class LivePipeline(
             return
         }
         val index = frameNo / step
-        if (jobs.remainingCapacity() == 0) { skipped++; return }
-        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); tracker = it }
+        // the same guard as the decoder's path below. It was only on that one, which is the path
+        // this phone does NOT take -- it watches by the graphics chip -- so the first session
+        // with a guard reported thinned 0 and worstBehind 0.000 while skipping 23% of its frames.
+        if (guardWindowEnded()) guardDecide()
+        if (thinning && (index and 1L) == 1L) { thinned++; return }
+        guardSeen++
+        if (jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; tracker = it }
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()

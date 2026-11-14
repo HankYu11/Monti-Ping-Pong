@@ -37,6 +37,16 @@ class RingSim(
     private val rowStep: Int,
     capacity: Int,
 ) {
+    /**
+     * Tracker pixels to picture pixels. The tracker works on a QUARTER of the picture each way,
+     * always, so this is 4 -- it has nothing to do with [step], which is how many camera frames
+     * go by between the ones it looks at. It was written `step * 2`, which is 4 only when step
+     * is 2, so running this harness at any other step silently doubled every window's position:
+     * at STEP=4 the windows came out a median of 493 px off the ball and the ring read as
+     * useless, which is a thing about this file and not about the ring.
+     */
+    private val QUARTER = 4f
+
     val ring = WindowRing(capacity)
     var cut = 0; private set
     var placed = 0; private set
@@ -106,11 +116,11 @@ class RingSim(
         // three times the MEDIAN radius over every track it covers, measured when the flight is
         // over; the live median, over a track that is still growing, reads smaller.
         val pick = ((rs.size - 1) * PCT / 100).coerceIn(0, rs.size - 1)
-        val wantSide = sideFor(rs[pick] * step * 2f)
+        val wantSide = sideFor(rs[pick] * QUARTER)
         val side = if (planSide > 0 && wantSide <= planSide && wantSide > planSide * 6 / 10) planSide else wantSide
         planSide = side; sideUsed = side
         val p = Predict.at(t, frameNo.toFloat() / step, lag = 0f) ?: return
-        val scale = step * 2f
+        val scale = QUARTER
         val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
         val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
         // the chip's three draws, on the processor: the window in the capture's own layout, and

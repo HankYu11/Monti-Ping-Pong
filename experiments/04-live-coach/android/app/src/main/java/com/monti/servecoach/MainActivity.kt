@@ -747,7 +747,7 @@ class MainActivity : Activity() {
             if (uris.size <= 1 || isFinishing) return@postDelayed
             android.app.AlertDialog.Builder(this)
                 .setTitle("Send this session?")
-                .setMessage("${uris.size} files (${bytes / 1_000_000} MB) in Download/ServeCoach/$name. Send them to Drive, into the shared folder, to train the spin model.")
+                .setMessage("${uris.size} files (${bytes / 1_000_000} MB) in Download/ServeCoach/$name, report.json among them. Send them to Drive, into the shared folder, to train the spin model.")
                 .setPositiveButton("Send") { _, _ -> shareSession(uris) }
                 .setNegativeButton("Not now", null)
                 .show()
@@ -836,7 +836,7 @@ class MainActivity : Activity() {
             // from "Got it" to the answer: the wait the player has
             spottedAt.remove(id)?.let { r.put("answerMs", SystemClock.uptimeMillis() - it) }
             results.put(r)
-            if (session.isNotEmpty() && mode != Mode.REPLAY) { saveServeData(id, r, data); writeReport() }
+            if (session.isNotEmpty() && mode != Mode.REPLAY) saveServeData(id, r, data)
             LivePipeline.writing.remove(id)
             File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)
@@ -983,42 +983,49 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The session's report, into the session's folder beside its clips, after every serve.
+     * The session's report, into the session's folder beside the clips it describes, so that it
+     * goes out with them in the one share and nobody has to copy and paste anything.
      *
-     * It used to be written once, by finishSession at Stop -- and finishSession never called
-     * what is now fillReport, so that copy carried the events and the results and NONE of the
-     * counters. Everything worth diagnosing from -- how far behind the tracker ran, how many
-     * frames it skipped, whether the ring ever fitted -- was only in the clipboard copy the
-     * REPORT button made. A session that was never stopped left its clips with no report at all.
+     * Written once, at Stop. It is not worth a line of work while a serve is being measured:
+     * the session this was built for was spending 70 ms a frame against a 4 ms budget, and the
+     * report only grows, so rewriting the whole of it after every serve is work that gets
+     * heavier exactly as the app gets more desperate for CPU. The cost of waiting is that a
+     * session killed before Stop leaves its clips without one.
      *
-     * So: the full report, written after every serve, and updated IN PLACE. "wt" truncates the
-     * file rather than appending, which is what keeps a session to one report.json instead of a
-     * drawer of report(1).json.
+     * The old Stop-time copy never called what is now [fillReport], so it carried the events
+     * and the results and NONE of the counters -- how far behind the tracker ran, how many
+     * frames it skipped, whether the ring ever fitted. All of that lived only in the clipboard
+     * copy the REPORT button made, which is why the button was the only way to get a report
+     * worth reading.
      *
-     * The text is built here on the main thread and the background thread is handed a String,
-     * not the JSONObject: [report], [events] and [results] belong to the main thread, and a
-     * writer walking them while a serve lands would read them half-written.
+     * The MediaStore row is made HERE, not on the writer thread, because the share dialog is
+     * offered 1.5 s later off a list of this session's files: a row added by a thread that has
+     * not got there yet is a report that quietly misses the upload. The bytes still go on the
+     * thread. "wt" truncates, so a second Stop rewrites the file instead of making another.
+     *
+     * The text is built here too and the thread is handed a String: [report], [events] and
+     * [results] belong to the main thread.
      */
     private fun writeReport() {
         if (session.isEmpty() || mode == Mode.REPLAY) return
         fillReport()
         report.put("events", events).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
         val text = report.toString(1)
-        val folder = session
+        val uri = reportUri ?: try {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, "report.json")
+                put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$session")
+            }
+            (contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("the phone's storage refused a new file"))
+                .also { reportUri = it; synchronized(sessionFiles) { sessionFiles.add(it) } }
+        } catch (e: Exception) { log("error", "report: ${e.message}"); return }
         Thread {
             try {
-                val uri = reportUri ?: run {
-                    val values = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, "report.json")
-                        put(MediaStore.Downloads.MIME_TYPE, "application/json")
-                        put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
-                    }
-                    (contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                        ?: throw IllegalStateException("the phone's storage refused a new file"))
-                        .also { reportUri = it; synchronized(sessionFiles) { sessionFiles.add(it) } }
-                }
                 contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
                     ?: throw IllegalStateException("couldn't open report.json")
+                main.post { log("saved", "Download/ServeCoach/$session/report.json") }
             } catch (e: Exception) { main.post { log("error", "report: ${e.message}") } }
         }.start()
     }

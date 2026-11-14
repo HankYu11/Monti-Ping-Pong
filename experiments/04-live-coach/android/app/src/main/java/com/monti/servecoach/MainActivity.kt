@@ -687,10 +687,13 @@ class MainActivity : Activity() {
     private var sessionFrom = 0                         // results before this session
     private val sessionFiles = ArrayList<android.net.Uri>()
     private var sessionBytes = 0L
+    /** this session's report.json, so it is rewritten rather than written again */
+    @Volatile private var reportUri: android.net.Uri? = null
 
     private fun newSession() {
         session = "Session_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
         sessionFrom = results.length()
+        reportUri = null
         synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0 }
     }
 
@@ -736,9 +739,7 @@ class MainActivity : Activity() {
         if (session.isEmpty()) return
         // a serve still being measured: its answer (and data) first, up to 30 s
         if ((measuring != null || waiting.isNotEmpty()) && tries < 60) { main.postDelayed({ finishSession(tries + 1) }, 500); return }
-        report.put("events", events).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
-        val text = report.toString(1)
-        saveToSession("report.json", "application/json") { it.write(text.toByteArray()) }
+        writeReport()
         val name = session
         // once the clips still being written are in (they go on their own threads)
         main.postDelayed({
@@ -835,7 +836,7 @@ class MainActivity : Activity() {
             // from "Got it" to the answer: the wait the player has
             spottedAt.remove(id)?.let { r.put("answerMs", SystemClock.uptimeMillis() - it) }
             results.put(r)
-            if (session.isNotEmpty() && mode != Mode.REPLAY) saveServeData(id, r, data)
+            if (session.isNotEmpty() && mode != Mode.REPLAY) { saveServeData(id, r, data); writeReport() }
             LivePipeline.writing.remove(id)
             File(capDir, "cap_$id.bin").delete(); File(capDir, "cap_$id.json").delete()
             show(r)
@@ -965,7 +966,8 @@ class MainActivity : Activity() {
         if (kind == "error") Toast.makeText(this, text, Toast.LENGTH_LONG).show()
     }
 
-    private fun copyReport() {
+    /** the counters as they stand, into [report]: shared by the file and the clipboard */
+    private fun fillReport() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
@@ -978,9 +980,55 @@ class MainActivity : Activity() {
                 .put("note", pipeline?.ringNote ?: "").put("fit", CaptureGl.ringNote)
                 .put("room", pipeline?.sceneNote ?: ""))) }
         poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
+    }
+
+    /**
+     * The session's report, into the session's folder beside its clips, after every serve.
+     *
+     * It used to be written once, by finishSession at Stop -- and finishSession never called
+     * what is now fillReport, so that copy carried the events and the results and NONE of the
+     * counters. Everything worth diagnosing from -- how far behind the tracker ran, how many
+     * frames it skipped, whether the ring ever fitted -- was only in the clipboard copy the
+     * REPORT button made. A session that was never stopped left its clips with no report at all.
+     *
+     * So: the full report, written after every serve, and updated IN PLACE. "wt" truncates the
+     * file rather than appending, which is what keeps a session to one report.json instead of a
+     * drawer of report(1).json.
+     *
+     * The text is built here on the main thread and the background thread is handed a String,
+     * not the JSONObject: [report], [events] and [results] belong to the main thread, and a
+     * writer walking them while a serve lands would read them half-written.
+     */
+    private fun writeReport() {
+        if (session.isEmpty() || mode == Mode.REPLAY) return
+        fillReport()
+        report.put("events", events).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
+        val text = report.toString(1)
+        val folder = session
+        Thread {
+            try {
+                val uri = reportUri ?: run {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, "report.json")
+                        put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                        put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
+                    }
+                    (contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: throw IllegalStateException("the phone's storage refused a new file"))
+                        .also { reportUri = it; synchronized(sessionFiles) { sessionFiles.add(it) } }
+                }
+                contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
+                    ?: throw IllegalStateException("couldn't open report.json")
+            } catch (e: Exception) { main.post { log("error", "report: ${e.message}") } }
+        }.start()
+    }
+
+    /** the same report onto the clipboard, with every session's results, not just this one's */
+    private fun copyReport() {
+        fillReport()
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))
-        Toast.makeText(this, "Report copied: paste it into the chat", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Report copied (it is also in the session's folder)", Toast.LENGTH_LONG).show()
     }
 }

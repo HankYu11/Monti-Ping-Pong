@@ -318,6 +318,99 @@ saying the intended spin before each one:
 Frame the camera wide enough to see the first floor bounce: the bounce direction is a second,
 independent check of the spin type.
 
+## Whole serves with a known answer (`servesim.py`, `servecheck.py`)
+
+**The problem this solves.** A player cannot serve a pure sidespin, so no real serve has ever
+had a known answer for the *type*. The rate has hand counts; the split has only the player's
+intention, which is not a measurement. And `sweep.py` above tests the meter on a ball flying
+across grey — it cannot test the app, because the app has to FIND a serve before it measures
+one, and a straight line across grey is not a serve.
+
+`servesim.py` renders the serve the app actually sees — idle room, a toss, the contact, a
+flight that drags and curves, a bounce — at 1920x1080 and 240 fps, with the painted ball's own
+marking, mains flicker, sensor noise and motion blur. `servecheck.py` then runs the **shipping
+pipeline** over a set of them and marks what comes back against what went in:
+
+```
+servesim.py -> .mp4 -> desktop (the real ServeTracker, the real WindowRing, the real
+                       Windows.Builder) -> .cap -> web/test/cap.mjs (the real engine.js)
+```
+
+Everything but the shader's arithmetic and the camera itself is the code that ships, and
+nothing in that chain is told the answer. It needs no phone and no table tennis court:
+
+```
+python servecheck.py --workdir /tmp/servecheck --ring
+```
+
+A named spin is named against the **flight**, not the room, and heavy spin bends the flight —
+so the renderer flies the ball, looks at where it actually went, re-aims and flies again, four
+times. `--spin sidespin` is therefore exactly lift 0, curve 40, gyro 0. That is the known
+answer nobody can play.
+
+Not circular: the ground truth is the spin the renderer was told to put on the ball's surface,
+geometrically; it never computes a spin. The flight uses published aerodynamics (Cd 0.40, a
+Magnus coefficient saturating at 0.35, the ITTF 40 mm / 2.7 g ball), not the app's model. What
+a simulator cannot catch is an error shared by renderer and meter — both assume a sphere, lit
+from one side, through a pinhole. That is what the real footage is for.
+
+### Results (2026-11-14, 32 captures over 18 serves)
+
+**Rate, end to end, through tracker and capture writer and engine:**
+
+| true rps | 10 | 25 | 40 | 60 | 70 | 90 | 0 (float) |
+|---|---|---|---|---|---|---|---|
+| measured | 10.00 | 25.00 | 40.01 | 60.01 | 70.00 | 90.00 | **0.41** |
+
+Worst error on a spinning ball is 0.08 rev/s. The float is the useful row for a sceptic: a ball
+with no spin at all reads 0.4 rev/s, which is the noise floor measured rather than asserted.
+
+**Axis — median 5.0 degrees, and it depends on the kind of spin:**
+
+| case | true lift / curve / gyro | measured | axis error |
+|---|---|---|---|
+| backspin 40 | 40.0 / 0 / 0 | 39.9 / 1.7 / -3.1 | 5.0° |
+| topspin 40 | -40.0 / 0 / 0 | -40.0 / -0.3 / 1.8 | 2.6° |
+| **pure sidespin 40** | 0 / 40.0 / 0 | -4.1 / 39.4 / 5.6 | **10.0°** |
+| **pure sidespin, other way** | 0 / -40.0 / 0 | 7.7 / -39.0 / -4.9 | **13.9°** |
+| side-backspin 40 | 28.3 / 28.3 / 0 | 26.8 / 29.4 / 3.7 | 6.0° |
+| head-on backspin 40 | 40.0 / 0 / 0 | 39.5 / -1.9 / -5.3 | 8.1° |
+| head-on sidespin 40 | 0 / 40.0 / 0 | -5.6 / 39.2 / 5.5 | 11.4° |
+
+So the split is real — a pure sidespin comes back as 39.4 of 40 sidespin — but **sidespin
+carries about twice the axis error of back/topspin**. This is the first hard number for what
+the sections above could only call "not validated yet". The honest statement to make about the
+app is that the rate is a measurement and the axis is a measurement with a ±10° cloud on it.
+
+**The window ring loses nothing.** Every case was rebuilt through the 0.13.0 chip-side ring as
+well: 14 pairs, largest disagreement anywhere 0.05 rev/s and 0.7°.
+
+**Four serves the app never found at all**, which is what the simulator buys that a recording
+session does not:
+
+| case | what the tracker said |
+|---|---|
+| pure gyro 40 | the flight breaks into two tracks, both rejected as "tiny" |
+| far camera (16 px ball) | 0.04 candidates a frame — barely detected |
+| dim room (gain 0.55, noise 6) | 0.03 candidates a frame — barely detected |
+| full blur (1/240 s) | "tiny", "short" |
+
+The gyro failure is the interesting one. With the axis along the flight the dark hemisphere
+rotates in the image plane, the blob detector measures a half-ball, the radius falls from 9.3
+to 7.8 px and the track snaps; backspin on identical geometry holds one clean 69-frame track.
+Two things keep it from being a bug to fix today: a *pure* gyro serve is as unplayable as a
+pure sidespin, and the six gyro-heavy serves in `web/test/labels.mjs` (up to 45% gyro) all
+tracked fine. It marks the edge of the envelope. The rendered ink is also blacker than real
+ink, so the real effect is milder. The other three set working limits: the ball wants to be
+above roughly 20 px, in a reasonably lit room.
+
+### What this does and does not prove
+
+Proves: the measurement and the plumbing, against an answer, on serves nobody can play.
+Does not prove: the camera — real rolling shutter, the phone's own encoder, real room light,
+a scuffed ball. Those stay the club clips' and the hand counts' job, and the two tests cover
+different halves. Neither replaces the other.
+
 ## Using the line and dot: whole-marking consistency (`--method marks`, experimental)
 
 The pole method only uses the black half. `--method marks` keeps the pole method's rate
@@ -362,9 +455,13 @@ serving a deliberately pure backspin chop.
 ## Files
 
 - `spinmeter.py` — the meter (`--method pole` default for real footage; `3d` for large sharp balls; `2d` = v1; `--auto` finds the flight)
-- `spinsim.py` — synthetic clip renderer with ground truth
-- `sweep.py` — accuracy sweep, writes `sweep_results.csv`
+- `spinsim.py` — synthetic clip renderer with ground truth (a ball, flying across grey)
+- `sweep.py` — accuracy sweep of the meter, writes `sweep_results.csv`
 - `axis_test.py` — axis accuracy on simulated serves, pole vs marks method
+- `servesim.py` — a whole serve with a known spin: toss, contact, a flight that drags and
+  curves, a bounce, in a room, at the phone's size and frame rate
+- `servecheck.py` — the shipping pipeline over a set of them, marked against the truth;
+  writes `servecheck_results.csv`
 
 ## Sources
 

@@ -109,6 +109,8 @@ async function measure(file) {
              issues: appSv ? (appSv.issues || []).map((i) => i.text || i) : [],
              diag: out.diag || null, dots: out.dots || null, turns: out.turns,
              fall: out.flight && out.flight.downAccel, accel3: out.flight && out.flight.accel3,
+             // m/s: over the measured stretch, and extrapolated back to the hit
+             speed: out.flight && out.flight.speed, launchSpeed: out.flight && out.flight.launchSpeed,
              minTurns: out.minTurns, runner: out.runnerUp };
   }, `http://127.0.0.1:${srv.address().port}/${key}`);
   return r;

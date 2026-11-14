@@ -521,6 +521,9 @@ def main():
         "flight_dir": [round(float(q), 6) for q in f_dir],
         "toward_camera_deg": round(float(np.degrees(np.arcsin(np.clip(f_dir[2], -1, 1)))), 2),
         "expected": {k: round(v, 3) for k, v in comp.items()},
+        # two different things, both needed: what the paddle gave the ball, and how fast it was
+        # going when the engine's own stretch begins (12 frames later, after drag has bitten)
+        "contact_speed_m_s": round(float(np.linalg.norm(v0)), 3),
         "speed_m_s": round(launch, 3),
         "fps": a.fps, "size": [W, H], "frames": frames,
         "contact_frame": contact_frame,

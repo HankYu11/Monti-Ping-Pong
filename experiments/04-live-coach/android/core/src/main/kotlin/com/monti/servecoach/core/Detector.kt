@@ -142,11 +142,29 @@ class Detector(val w: Int, val h: Int) {
     /** scratch for the chip's mask while the two are being compared */
     private val chip by lazy { ByteArray(w * h) }
 
+    /**
+     * Frames whose mask came out more than half moving, and the worst one's numbers.
+     *
+     * A phone session reported masks that were empty 96% of the time and completely full the
+     * rest -- every one of 129,600 pixels moving -- with nothing in between, where a serve
+     * through the desktop harness sits around a tenth. "Everything moved" has only a few
+     * possible causes and they are told apart by which channel did it: the brightness, after
+     * its row gain, or one of the two colour channels, which have no gain at all. The camera
+     * adjusting its own exposure is cancelled by the row gain; the camera adjusting its white
+     * balance is not cancelled by anything.
+     *
+     * [worstSaturation]: the share moved, then the mean distance from the background in
+     * brightness (after the gain), in u and in v, then the lowest and highest row gain.
+     */
+    @Volatile var saturatedFrames = 0L; private set
+    val worstSaturation = FloatArray(6)
+
     private fun makeMask(q: Quarter, bg: Background) {
         rowRatios(q.y, bg.y)
         val qy = q.y; val qu = q.u; val qv = q.v; val by = bg.y; val bu = bg.u; val bv = bg.v
         val m = mask
         val cLim = 30f / chromaGain
+        var moved = 0
         for (y in 0 until h) {
             val inv = 1f / rows[y]
             var p = y * w
@@ -154,8 +172,32 @@ class Detector(val w: Int, val h: Int) {
             while (p < end) {
                 var gv = (qy[p] * inv).toInt()
                 if (gv < 0) gv = 0 else if (gv > 255) gv = 255
-                m[p] = if (abs(gv - by[p]) > 30f || abs(qu[p] - bu[p]) > cLim || abs(qv[p] - bv[p]) > cLim) 1 else 0
+                val mv = if (abs(gv - by[p]) > 30f || abs(qu[p] - bu[p]) > cLim || abs(qv[p] - bv[p]) > cLim) 1 else 0
+                m[p] = mv.toByte(); moved += mv
                 p++
+            }
+        }
+        if (moved * 2 > m.size) {
+            saturatedFrames++
+            val share = moved.toFloat() / m.size
+            if (share >= worstSaturation[0]) {           // a second pass, only on a frame already lost
+                var dy = 0.0; var du = 0.0; var dv = 0.0
+                for (y in 0 until h) {
+                    val inv = 1f / rows[y]
+                    var p = y * w; val end = p + w
+                    while (p < end) {
+                        var gv = (qy[p] * inv).toInt()
+                        if (gv < 0) gv = 0 else if (gv > 255) gv = 255
+                        dy += abs(gv - by[p]); du += abs(qu[p] - bu[p]); dv += abs(qv[p] - bv[p])
+                        p++
+                    }
+                }
+                val n = m.size.toDouble()
+                var lo = Float.MAX_VALUE; var hi = 0f
+                for (y in 0 until h) { if (rows[y] < lo) lo = rows[y]; if (rows[y] > hi) hi = rows[y] }
+                worstSaturation[0] = share; worstSaturation[1] = (dy / n).toFloat()
+                worstSaturation[2] = (du / n).toFloat(); worstSaturation[3] = (dv / n).toFloat()
+                worstSaturation[4] = lo; worstSaturation[5] = hi
             }
         }
     }

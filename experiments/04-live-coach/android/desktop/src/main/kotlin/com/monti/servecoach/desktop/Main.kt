@@ -179,6 +179,9 @@ fun main(args: Array<String>) {
         val parts = LongArray(3); var frames = 0L
         for (d in ds) { for (i in 0..2) parts[i] += d.nanos[i] }
         frames = pushed.toLong()
+        val sat = ds.sumOf { it.saturatedFrames }
+        val w = ds.maxByOrNull { it.worstSaturation[0] }?.worstSaturation
+        if (w != null) println("""{"saturated":$sat,"worst":${"%.3f".format(w[0])},"meanDy":${"%.1f".format(w[1])},"meanDu":${"%.1f".format(w[2])},"meanDv":${"%.1f".format(w[3])},"gain":"${"%.3f".format(w[4])}-${"%.3f".format(w[5])}"}""")
         if (frames > 0) println("""{"findParts":{"mask":${"%.2f".format(parts[0] / 1e6 / frames)},"open":${"%.2f".format(parts[1] / 1e6 / frames)},"blobs":${"%.2f".format(parts[2] / 1e6 / frames)}}}""")
     }
     println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}","blobsRefused":"small=${tracker.refusedBlobs[0]} big=${tracker.refusedBlobs[1]} long=${tracker.refusedBlobs[2]} hollow=${tracker.refusedBlobs[3]}","worstAspect":${"%.2f".format(tracker.worstAspect)}}""")

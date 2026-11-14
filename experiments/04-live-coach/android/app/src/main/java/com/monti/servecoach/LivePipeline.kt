@@ -395,7 +395,7 @@ class LivePipeline(
                     // starts in a still room grants the chip its 240 frames before a ball has
                     // ever crossed the picture, which is how a mask that is empty when it
                     // matters came to be trusted. Only frames the PROCESSOR called moving count.
-                    else if (m[1] >= movedEnough &&
+                    else if (m[1] in movedEnough..movedCeiling &&
                              maskChecks.incrementAndGet() >= maskChecksWanted && maskTrust == 0) maskTrust = 1
                     c0
                 }
@@ -458,6 +458,35 @@ class LivePipeline(
         movingFrames.incrementAndGet(); movingSum.addAndGet(q)
         if (q > 0) movingAny.incrementAndGet()
         movingMax.accumulateAndGet(q) { a, b -> maxOf(a, b) }
+        // A mean hides the shape, and the shape is the whole story: a working mask spends its
+        // time in the middle, around a ball's worth of pixels. This one was reported as empty
+        // or full with nothing between, and a mean of 0.03 is what both look like.
+        movingBuckets[when {
+            q == 0L -> 0                 // nothing at all
+            q < 1_000L -> 1              // under a thousandth: a ball is about this
+            q < 10_000L -> 2             // under a hundredth
+            q < 100_000L -> 3            // under a tenth: a serve, through the harness
+            q < 500_000L -> 4
+            else -> 5                    // half the picture or more: not a mask, a fault
+        }].incrementAndGet()
+    }
+    private val movingBuckets = Array(6) { java.util.concurrent.atomic.AtomicLong() }
+
+    /** how the mask's moving share was spread over the session */
+    val maskSpread: String get() =
+        "none ${movingBuckets[0].get()}, tiny ${movingBuckets[1].get()}, small ${movingBuckets[2].get()}, " +
+        "a serve's worth ${movingBuckets[3].get()}, large ${movingBuckets[4].get()}, saturated ${movingBuckets[5].get()}"
+
+    /** which channel put a mask over half moving, on the worst such frame */
+    val maskSaturation: String get() {
+        val ds = allDetectors.toList()
+        if (ds.isEmpty()) return ""
+        val n = ds.sumOf { it.saturatedFrames }
+        val w = ds.maxByOrNull { it.worstSaturation[0] }?.worstSaturation ?: return ""
+        if (n == 0L) return "none"
+        return "$n frames over half moving; worst ${"%.3f".format(w[0])} at " +
+               "mean |dy| ${"%.1f".format(w[1])} (bar 30), |du| ${"%.1f".format(w[2])}, |dv| ${"%.1f".format(w[3])} " +
+               "(bar ${"%.1f".format(30f / 1.5f)}), row gain ${"%.3f".format(w[4])}-${"%.3f".format(w[5])}"
     }
 
     /** the longest track judged this session: points, ball radius, and what was said about it */
@@ -487,7 +516,11 @@ class LivePipeline(
      */
     @Volatile var maskTrust = 0; private set
     private val maskChecksWanted = 60           // frames with real motion in them, not just frames
-    private val movedEnough = 200               // moving pixels of 129,600: a ball and then some
+    private val movedEnough = 50                // moving pixels of 129,600: about a ball
+    // ...and not a frame that is already broken. A bar of 200 with no ceiling picked out
+    // exactly the saturated frames -- 50 of them, all 129,600 pixels moving, both masks
+    // agreeing perfectly on nonsense -- and never once compared them on a ball.
+    private val movedCeiling = 20_000
     val maskChecks = java.util.concurrent.atomic.AtomicInteger()
     val maskDisagreed = java.util.concurrent.atomic.AtomicLong()
     val maskCpuMoved = java.util.concurrent.atomic.AtomicLong()

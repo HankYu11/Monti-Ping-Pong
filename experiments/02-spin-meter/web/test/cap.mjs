@@ -12,7 +12,9 @@ import { fileURLToPath } from 'url';
 const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
 const pair = argv[0] === '--pair';
-const files = pair ? argv.slice(1) : argv;
+// --json: one object a line instead of the table, so a sweep can join it to a ground truth
+const asJson = argv[0] === '--json';
+const files = pair || asJson ? argv.slice(1) : argv;
 if (!files.length) { console.error('usage: node test/cap.mjs [--pair] file.cap ...'); process.exit(2); }
 
 function readCap(file) {
@@ -112,6 +114,11 @@ if (pair) {
     console.log(`\ndrift ${d.toFixed(2)} rev/s, split ${sp.toFixed(2)} rev/s, toward ${Math.abs(a.toward - b.toward).toFixed(1)} deg` +
       ` · ${(a.bytes / b.bytes).toFixed(0)}x fewer bytes`);
     if (d > 0.5 || sp > 1.0) process.exitCode = 1;
+  }
+} else if (asJson) {
+  for (const f of files) {
+    const r = await measure(f);
+    console.log(JSON.stringify({ file: path.basename(f), ...r }));
   }
 } else {
   console.log(head());

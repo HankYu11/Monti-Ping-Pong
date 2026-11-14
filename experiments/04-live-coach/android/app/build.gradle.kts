@@ -13,8 +13,8 @@ android {
         minSdk = 29
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }       // the native part is built for it only
-        versionCode = 66
-        versionName = "0.13.7"
+        versionCode = 67
+        versionName = "0.13.8"
     }
     buildTypes {
         release {

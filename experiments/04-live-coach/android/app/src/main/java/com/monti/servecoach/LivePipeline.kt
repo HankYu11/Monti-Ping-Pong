@@ -61,6 +61,7 @@ class LivePipeline(
     // finding blobs, on a few threads; their results are linked in order
     private val finders = Executors.newFixedThreadPool(3) { r -> Thread(r, "finder").apply { priority = Thread.NORM_PRIORITY + 1 } }
     private val detectors = ThreadLocal<Detector>()
+    private val scratch = ThreadLocal<Quarter>()
     private class Job(val index: Long, val found: Future<List<FloatArray>>?, val end: Boolean = false)
     private val jobs = LinkedBlockingQueue<Job>(if (blocking) 16 else 24)   // 0.2 s of frames waiting (1.5 MB each)
 
@@ -340,7 +341,10 @@ class LivePipeline(
         val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
-            val q = q0 ?: Downsample.fromRgba(rgba, w, h, f)
+            // its own scratch, so the common frame allocates nothing. q0 is NOT reused: it is
+            // made on the calling thread and read on this one, so a shared buffer would be
+            // overwritten under the finder by the next frame.
+            val q = q0 ?: Downsample.fromRgba(rgba, w, h, f, scratch.get()).also { scratch.set(it) }
             if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
             val c = d.find(q, bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)

@@ -52,8 +52,20 @@ object Downsample {
     }
 
     /** The small picture as the graphics chip makes it (R brightness, G and B colour + 128, full range), flipped as [flip] says (bit 0: x, bit 1: y). */
-    fun fromRgba(b: ByteArray, w: Int, h: Int, flip: Int = 0): Quarter {
-        val y = FloatArray(w * h); val u = FloatArray(w * h); val v = FloatArray(w * h)
+    /**
+     * The chip's small picture as a [Quarter], into [into] when one of the right size is handed
+     * in, and into fresh arrays when it is not.
+     *
+     * Three FloatArrays of w*h is 1.56 MB at 480x270, and this runs on every frame the finders
+     * look at -- 120 a second, 187 MB a second of garbage, on a phone, for the whole session.
+     * A finder that is handed its own scratch back allocates none of it. The caller must be
+     * sure nothing kept the last one: ServeTracker.addSample copies what it keeps, the pose
+     * watcher makes its bitmap before it returns, and Detector.find only reads.
+     */
+    fun fromRgba(b: ByteArray, w: Int, h: Int, flip: Int = 0, into: Quarter? = null): Quarter {
+        val out = if (into != null && into.w == w && into.h == h) into
+                  else Quarter(w, h, FloatArray(w * h), FloatArray(w * h), FloatArray(w * h))
+        val y = out.y; val u = out.u; val v = out.v
         for (qy in 0 until h) {
             val sy = if (flip and 2 != 0) h - 1 - qy else qy
             for (qx in 0 until w) {
@@ -64,7 +76,7 @@ object Downsample {
                 v[q] = ((b[i + 2].toInt() and 0xff) - 128).toFloat()
             }
         }
-        return Quarter(w, h, y, u, v)
+        return out
     }
 
     /**

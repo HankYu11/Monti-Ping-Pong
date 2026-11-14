@@ -3,6 +3,7 @@ package com.monti.servecoach.desktop
 import com.monti.servecoach.core.Capture
 import com.monti.servecoach.core.Plane
 import com.monti.servecoach.core.Predict
+import com.monti.servecoach.core.SceneBackground
 import com.monti.servecoach.core.ServeTracker
 import com.monti.servecoach.core.WindowRing
 import com.monti.servecoach.core.Windows
@@ -134,6 +135,51 @@ class RingSim(
         return out
     }
 
+    /**
+     * The room's background, built from frames OUTSIDE the serve -- what the phone now builds
+     * between serves, so that a capture decodes nothing of the span at all. Fed here from the
+     * clip's own frames away from the flight, which is the same thing the phone does with
+     * keyframes from the seconds before.
+     */
+    val scene = SceneBackground(frameW, frameH, SceneBackground.stripsFor(frameH))
+    fun seeRoom(f: Yuv, frameNo: Long) {
+        scene.addWhole(Capture(frameW, frameH, intArrayOf(0, 0, frameW, frameH), false, 240).crop(f), frameNo)
+    }
+
+    /**
+     * How far the room's background is from what the chip saw, on the windows' outer edges --
+     * the same check LivePipeline makes before trusting it. The ball is in the middle of its
+     * window; the edges are the room. A camera that has been moved since the background was
+     * built shows up here and nowhere else cheap.
+     */
+    private fun edgeRms(taken: WindowRing.Taken, rect: IntArray, back: ByteArray, frames: Int): Double {
+        val edge = 6
+        val diffs = IntArray(1 shl 17)
+        var n = 0; var looked = 0
+        for (i in 0 until frames step maxOf(1, frames / 8)) {
+            val at = taken.at.getOrNull(i) ?: continue
+            val win = taken.pixels.getOrNull(i) ?: continue
+            val side = taken.sides[i]
+            val x0 = at[0] - rect[0]; val y0 = at[1] - rect[1]
+            for (y in 0 until side) {
+                val cy = y0 + y
+                if (cy < 0 || cy >= rect[3]) continue
+                val top = y < edge || y >= side - edge
+                for (x in 0 until side) {
+                    if (!top && x >= edge && x < side - edge) continue
+                    val cx = x0 + x
+                    if (cx < 0 || cx >= rect[2] || n >= diffs.size) continue
+                    diffs[n++] = Math.abs((win[y * side + x].toInt() and 255) - (back[cy * rect[2] + cx].toInt() and 255))
+                }
+            }
+            if (++looked >= 8) break
+        }
+        // the middle difference, not the average of the squares: an arm across one edge, or the
+        // ball clipping a corner, is a handful of pixels that an rms chases and a median does
+        // not. Over seven recorded serves the rms ran to 24 where the median stays under 6.
+        return if (n < 2000) -1.0 else Windows.medianOf(diffs, n).toDouble()
+    }
+
     /** how a serve's capture came out of the ring, as the phone's cutFromRing would report it */
     class Built(val builder: Windows.Builder?, val note: String, val fitted: Int, val need: Int, val worst: Int)
 
@@ -143,7 +189,8 @@ class RingSim(
      * sample mapped onto the crop's rows, and the whole crop only for the frames the background
      * is medianed from.
      */
-    fun build(rect: IntArray, tracks: List<List<FloatArray>>, crops: List<ByteArray>, firstFrame: Long): Built {
+    fun build(rect: IntArray, tracks: List<List<FloatArray>>, crops: List<ByteArray>, firstFrame: Long,
+              useScene: Boolean = System.getenv("SCENE") != null): Built {
         // the frames the engine will actually measure: the serve's own track. A capture covers
         // more than that -- the near tracks, and the frames offsets() fills in on either side --
         // and a window missing out there costs nothing, so counting it as a miss is what turned
@@ -155,6 +202,8 @@ class RingSim(
         val hi = main.maxOfOrNull { it[0] }?.toInt() ?: -1
         val n = crops.size
         val b = Windows.Builder(rect, n, tracks)
+        val fromRoom = if (useScene) scene.crop(rect) else null
+        b.given = fromRoom
         val side = b.side
         val wanted = b.backgroundFrames.toHashSet()
         val taken = ring.take(firstFrame, n)
@@ -188,7 +237,9 @@ class RingSim(
         misses.sort()
         val med = if (misses.isEmpty()) 0 else misses[misses.size / 2]
         val p90 = if (misses.isEmpty()) 0 else misses[(misses.size * 9) / 10]
-        val note = "ring ${sideUsed}px -> ${side}x$side windows, flight $flightGot of $flightNeed (all $got of $need), " +
+        val edges = if (fromRoom == null) -1.0 else edgeRms(taken, rect, fromRoom, n)
+        val note = (if (fromRoom != null) "scene background (${scene.ready}/${scene.strips} strips, ${scene.taken} readings, edges %.1f, ".format(edges) else "") +
+            "ring ${sideUsed}px -> ${side}x$side windows, flight $flightGot of $flightNeed (all $got of $need), " +
             "off centre: median $med, 90th $p90, worst fitted $worstOk, worst $worst; held ${taken.have} of $n"
         return if (flightNeed == 0 || flightGot < flightNeed * 3 / 4) Built(null, "$note: NOT USED", flightGot, flightNeed, worst)
         else Built(b, note, flightGot, flightNeed, worst)

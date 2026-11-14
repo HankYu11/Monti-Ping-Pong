@@ -7,6 +7,7 @@ import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Quarter
 import com.monti.servecoach.core.Predict
+import com.monti.servecoach.core.SceneBackground
 import com.monti.servecoach.core.ServeTracker
 import com.monti.servecoach.core.WindowRing
 import com.monti.servecoach.core.Windows
@@ -364,6 +365,7 @@ class LivePipeline(
                 linkMsAvg = avg(linkMsAvg, ms, n)
                 trackMsAvg = shrinkMsAvg + findMsAvg + linkMsAvg
                 planFromTracks(tr)
+                refreshScene()
                 if (serve != null) onServe(tr, serve)
             }
         } catch (_: InterruptedException) {
@@ -535,6 +537,117 @@ class LivePipeline(
         val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
         val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
         return intArrayOf(x, y)
+    }
+
+    // ------------------------------------------------------------ the scene's background
+
+    /**
+     * The background, built from the room between serves instead of from the serve.
+     *
+     * With the ring taking the cutting away, decoding the span is what is left of the wait --
+     * 0.9 s of a 1.3 s serve, and 3 s on a wide crop -- and all it is decoded FOR is fifteen
+     * frames to median into a background. A background is a property of the room, though, not
+     * of the serve: the table and the wall are the same between serves as during one.
+     *
+     * So it is built between serves from the recording's own keyframes, which decode on their
+     * own without the frames around them (the same trick the engine's search uses). Fifteen of
+     * them spread over the last few seconds cost fifteen frame-decodes on a spare thread while
+     * nobody is waiting, instead of a hundred and forty on the thread that owes an answer.
+     */
+    @Volatile var scene: SceneBackground? = null; private set
+    @Volatile var sceneNote = ""; private set
+    private var sceneAt = 0L
+    private val sceneBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** the decoder's colour range, from the last serve that decoded one: a capture has to say */
+    @Volatile private var lastFullRange: Boolean? = null
+    private val sceneEveryMs = 4_000L
+    private val sceneSpanUs = 6_000_000L
+
+    /** the tracker's thread, between serves: keep the room's background fresh */
+    private fun refreshScene() {
+        if (!windowRing || frameW == 0 || frameH == 0) return
+        if (ringHeld.get() > 0 || planning) return               // a serve is in the air or still owed
+        val now = SystemClock.elapsedRealtime()
+        if (now - sceneAt < sceneEveryMs) return
+        if (!sceneBusy.compareAndSet(false, true)) return
+        sceneAt = now
+        Thread({
+            try { buildScene() } catch (e: Exception) { sceneNote = "could not build: ${e.message}" }
+            finally { sceneBusy.set(false) }
+        }, "scene-bg").apply { priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    private fun buildScene() {
+        val fmt = store.outputFormat ?: return
+        val until = lastPts
+        val keys = store.between(until - sceneSpanUs, until).filter { it.key }
+        if (keys.size < 5) { sceneNote = "only ${keys.size} keyframes in the last ${sceneSpanUs / 1000} ms"; return }
+        val want = minOf(15, keys.size)
+        val pick = (0 until want).map { keys[it * (keys.size - 1) / maxOf(1, want - 1)] }.distinct()
+        val sb = scene ?: SceneBackground(frameW, frameH, SceneBackground.stripsFor(frameH)).also { scene = it }
+        val whole = intArrayOf(0, 0, frameW, frameH)
+        var got = 0
+        val t0 = SystemClock.elapsedRealtime()
+        for (k in pick) {
+            if (ringHeld.get() > 0) break                        // a serve came: the room can wait
+            val dec = FrameDecoder(fmt)
+            try {
+                var fed = false; var eos = false; var tries = 0; var took = false
+                while (!dec.ended && tries++ < 400 && !took) {
+                    if (!fed) fed = dec.feed(k, 5_000) else if (!eos) eos = dec.endOfStream()
+                    dec.drain(5_000) { _, yuv ->
+                        if (!took) {
+                            took = true
+                            lastFullRange = dec.fullRange
+                            sb.addWhole(Capture(frameW, frameH, whole, dec.fullRange, captureFps).crop(yuv), until / 1000)
+                        }
+                    }
+                }
+                if (took) got++
+            } finally { dec.release() }
+        }
+        sceneNote = "$got of ${pick.size} keyframes in ${SystemClock.elapsedRealtime() - t0} ms, " +
+            "${sb.ready} of ${sb.strips} strips, ${sb.taken} readings"
+    }
+
+    /**
+     * How far the scene's background is from what the chip saw, on the edges of the windows.
+     *
+     * The ball is in the middle of its window; the outermost pixels are the room. If the camera
+     * has been moved or the light has changed since the background was built, those edges stop
+     * matching and every pixel of the capture reads as foreground -- which costs the serve, so
+     * it is worth a cheap look before trusting it. Flicker alone moves a row by a few percent,
+     * so a handful of levels is normal and forty is a different room.
+     *
+     * The middle difference, not the average of the squares: an arm across one edge, or the ball
+     * clipping a corner, is a handful of pixels that an rms chases and a median does not.
+     */
+    private fun sceneEdges(taken: WindowRing.Taken, rect: IntArray, back: ByteArray, frames: Int): Double {
+        val edge = 6
+        val diffs = IntArray(1 shl 17)
+        var n = 0; var looked = 0
+        for (i in 0 until frames step maxOf(1, frames / 8)) {
+            val at = taken.at.getOrNull(i) ?: continue
+            val win = taken.pixels.getOrNull(i) ?: continue
+            val side = taken.sides[i]
+            val x0 = at[0] - rect[0]; val y0 = at[1] - rect[1]
+            for (y in 0 until side) {
+                val cy = y0 + y
+                if (cy < 0 || cy >= rect[3]) continue
+                val top = y < edge || y >= side - edge
+                for (x in 0 until side) {
+                    if (!top && x >= edge && x < side - edge) continue
+                    val cx = x0 + x
+                    if (cx < 0 || cx >= rect[2] || n >= diffs.size) continue
+                    diffs[n++] = Math.abs((win[y * side + x].toInt() and 255) - (back[cy * rect[2] + cx].toInt() and 255))
+                }
+            }
+            if (++looked >= 8) break
+        }
+        // the middle difference, not the average of the squares: an arm across one edge, or the
+        // ball clipping a corner, is a handful of pixels that an rms chases and a median does
+        // not. Over seven recorded serves the rms ran to 24 where the median stays under 6.
+        return if (n < 2000) -1.0 else Windows.medianOf(diffs, n).toDouble()
     }
 
     /** one frame's window off the chip: the window's planes, then the picture's row sample */
@@ -741,14 +854,39 @@ class LivePipeline(
             }
             if (w0 == 0 || h0 < w0 * 3 / 4) return no("the chip's windows fitted $h0 of $w0 flight frames (held ${pre.have} of $nGuess)")
         }
+        // The room's own background, built between serves: with it there is nothing in the span
+        // left to decode, and the capture is written out of the ring alone.
+        val scene = if (lastFullRange == null) null else scene?.crop(rect)
         val crops = HashMap<Int, ByteArray>()
         var j = 0
-        val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h,
-            { b -> if (j < want.size) crops[want[j++]] = b }, null, { i -> i in wanted })
-        val n = r.seen
-        if (n <= 0 || crops.isEmpty()) return no("decoded $n frames, kept ${crops.size}")
+        var n: Int
+        var fullRange: Boolean
+        var how: String
+        if (scene != null) {
+            n = nGuess
+            fullRange = lastFullRange!!
+            how = "nothing decoded"
+        } else {
+            val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h,
+                { b -> if (j < want.size) crops[want[j++]] = b }, null, { i -> i in wanted })
+            n = r.seen
+            fullRange = r.fullRange
+            lastFullRange = r.fullRange
+            how = "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms, waiting ${r.waitMs} ms)"
+            if (n <= 0 || crops.isEmpty()) return no("decoded $n frames, kept ${crops.size}")
+        }
         val taken = ring.take(firstFrame, n)
+        // does the room still look like the room? the windows' edges are the room, not the ball
+        if (scene != null) {
+            // 30 levels: over seven recorded serves a sound background sits at 1 to 16, and a
+            // camera that has been moved differs by the scene's own contrast, which is tens.
+            // The number is reported either way, so the next session says where real ones sit.
+            val edges = sceneEdges(taken, rect, scene, n)
+            how += ", room background off by ${"%.0f".format(edges)} at the windows' edges (${sceneNote})"
+            if (edges < 0 || edges > 30.0) return no("the room's background no longer matches the picture (off by ${"%.0f".format(edges)})")
+        }
         val b = Windows.Builder(rect, n, tracks)
+        b.given = scene
         val side = b.side
         // the live window went where the ball was PREDICTED to be and the capture's goes where
         // it really was, so every one is cut again; how often that fails is how far the
@@ -774,8 +912,8 @@ class LivePipeline(
         }
         if (need == 0 || got < need * 3 / 4) return no("the chip's windows covered $got of $need frames (decoded already)")
         ringNote = "$got of $need flight windows, missed $missed, worst ${worst} px off centre, held ${taken.have} of $n; " +
-            "decoded ${r.decodeMs} ms (cutting ${crops.size} frames, ${r.cutMs} ms, waiting ${r.waitMs} ms), ${rect[2]}x${rect[3]} crop"
-        return RingCut(b, n, r.fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
+            "$how, ${rect[2]}x${rect[3]} crop"
+        return RingCut(b, n, fullRange, "chip windows: $ringNote, ${SystemClock.elapsedRealtime() - t0} ms")
     }
 
     /**
@@ -908,6 +1046,7 @@ class LivePipeline(
                 val r = CaptureGl(assets).write(frames, fmt, fromUs, toUs, rect, w, h, sink, reference?.let { it.first to it.second })
                 if (r.frames > 0) {
                     cap = Capture(w, h, rect, reference?.third ?: r.fullRange, captureFps)
+                    lastFullRange = reference?.third ?: r.fullRange
                     n = r.frames
                     // replaying a video (testing): the first 20 frames cut the old way too, compared
                     if (blocking && builder == null) { chipCheck = compareWithCopied(bin, frames, fmt, fromUs, toUs, rect, w, h, 20); onNote("capture #$id, chip against copied: $chipCheck") }

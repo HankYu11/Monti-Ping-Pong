@@ -467,7 +467,8 @@ class MainActivity : Activity() {
             .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)
                 .put("ms", t.winMsAvg).put("readMs", t.winReadMsAvg).put("side", pipeline?.ringSide ?: 0).put("plans", pipeline?.ringPlans ?: 0L)
                 .put("kept", pipeline?.windows?.kept ?: 0L).put("dropped", pipeline?.windows?.dropped ?: 0L)
-                .put("note", pipeline?.ringNote ?: "").put("fit", CaptureGl.ringNote))) }
+                .put("note", pipeline?.ringNote ?: "").put("fit", CaptureGl.ringNote)
+                .put("room", pipeline?.sceneNote ?: ""))) }
         tap?.stop(); tap = null
         recorder?.onFrame = null
         poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
@@ -971,7 +972,8 @@ class MainActivity : Activity() {
             .put("windows", JSONObject().put("on", pipeline?.windowRing == true).put("cut", t.windowsCut).put("skips", t.winSkips).put("errors", t.winErrors)
                 .put("ms", t.winMsAvg).put("readMs", t.winReadMsAvg).put("side", pipeline?.ringSide ?: 0).put("plans", pipeline?.ringPlans ?: 0L)
                 .put("kept", pipeline?.windows?.kept ?: 0L).put("dropped", pipeline?.windows?.dropped ?: 0L)
-                .put("note", pipeline?.ringNote ?: "").put("fit", CaptureGl.ringNote))) }
+                .put("note", pipeline?.ringNote ?: "").put("fit", CaptureGl.ringNote)
+                .put("room", pipeline?.sceneNote ?: ""))) }
         poseWatcher?.let { w -> report.put("pose", JSONObject().put("ready", w.ready).put("looked", w.looked).put("found", w.found).put("ms", w.msAvg).put("notServes", w.rejected)) }
         report.put("events", events).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager

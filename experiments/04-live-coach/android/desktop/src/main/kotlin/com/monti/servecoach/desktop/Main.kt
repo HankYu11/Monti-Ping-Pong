@@ -85,6 +85,9 @@ fun main(args: Array<String>) {
             ring?.seen(tracker, n / step)
         }
         ring?.cut(f, n)
+        // the room, from frames the serve does not cover: one in sixteen, as the phone takes
+        // keyframes from between serves
+        if (ring != null && n % 16 == 0L) ring.seeRoom(f, n)
         n++
     }
     par?.drain()?.let { serves.addAll(it.map { s -> s.copy(first = s.first * step, last = s.last * step + step - 1) }) }

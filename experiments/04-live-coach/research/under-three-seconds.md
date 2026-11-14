@@ -762,3 +762,53 @@ What this does not test is pixels: whether the tracker finds a serve at all agai
 background, under its lights, with other players moving. That needs footage from a hall, and the
 cheapest way to get it is a few head-on serves with a painted ball in the same session as the
 gyro and net-ball work.
+
+## 0.13.0: the background comes from the room, so a capture decodes nothing
+
+With the ring taking the cutting away, decoding the span was all that was left of the wait — 0.9 s
+of a 1.3 s serve, and 3 s on a wide crop. And the only thing it was decoded *for* was fifteen
+frames to median into a background.
+
+A background is a property of the room, not of the serve. The table, the floor and the wall are
+the same between serves as during one. So it is built between serves now, from the recording's
+own keyframes, which decode on their own without the frames around them — the same trick the
+engine's search has always used. Fifteen of them spread over the last six seconds cost fifteen
+frame-decodes on a spare thread while nobody is waiting, instead of a hundred and forty on the
+thread that owes an answer. A ring serve then writes its capture **out of the ring alone**.
+
+### What it took to make it the same background
+
+**The median has to be of corrected frames.** The engine compares a frame against a background it
+has already corrected for the light's flicker, so the background must be the median of frames
+that have each had their own row brightness divided out — which is what `Windows.Builder` does
+and what the first version of this did not. Shipping the raw median instead moved a serve's rate
+by 0.1 rev/s and its lift by 1.3. The ratio is measured against the background it defines, so it
+is broken the way the Builder breaks it: median raw once, measure each reading's rows against
+that, correct, median again.
+
+**Measured against the real thing**, on two recorded serves, the whole crop against the ring with
+a flight background against the ring with a room background:
+
+| | whole crop | ring, flight bg | ring, room bg |
+|---|---|---|---|
+| serve 5 | 51.55 | 51.55 | **51.55** |
+| serve 9 | 46.04 | 45.99 | **46.05** |
+
+The rate is exact. The split moves — serve 5's lift reads 11.4, 16.2 and 18.2 — but most of that
+is the windowed format itself, which the room background adds 2 rev/s to. On a serve whose lift
+sits near a label's bar that is enough to change the words, and it is the same borderline the
+0.12.4 label work ran into.
+
+### Knowing when the room has changed
+
+A stale background — the camera moved, the lights changed — would make every pixel read as
+foreground and cost the serve. The check is free: the ball sits in the middle of its window, so
+the window's outer edge is room, and comparing that against the background says whether they
+still agree.
+
+Two things had to be right. The check first demanded the window lie wholly inside the crop, which
+it usually does not — the same fault the colour fit had — so three of seven serves returned
+nothing at all; it now compares the overlap. And an rms ran to 24 on sound backgrounds, because
+an arm across one edge is a handful of pixels an rms chases; the **middle** difference does not,
+and over seven recorded serves it sits at 1, 1, 1, 2, 2, 7 and 16. The bar is 30, and the number
+is reported either way so the next session says where real ones sit.

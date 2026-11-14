@@ -62,7 +62,7 @@ class ChipMaskTest {
 
     @Test fun `agreeing masks are counted as agreeing`() {
         val (q, bg, rgba) = colourShift()
-        val bad = IntArray(1)
+        val bad = IntArray(3)
         Detector(w, h).findChecked(q, bg, rgba, 0, bad)
         assertEquals("every pixel moved, and the chip said so", 0, bad[0])
     }
@@ -70,9 +70,35 @@ class ChipMaskTest {
     @Test fun `every pixel the two differ on is counted`() {
         val (q, bg, rgba) = colourShift()
         for (p in 0 until 37) rgba[p * 4 + 3] = 0                  // the chip loses 37 of them
-        val bad = IntArray(1)
+        val bad = IntArray(3)
         Detector(w, h).findChecked(q, bg, rgba, 0, bad)
         assertEquals("the count is the disagreement, not a sample of it", 37, bad[0])
+    }
+
+    @Test fun `two empty masks agree on everything and prove nothing`() {
+        // Why the count cannot simply be 240 frames. A still room gives the processor an empty
+        // mask and the chip an empty mask, they agree on all 129,600 pixels, and 240 of those
+        // in a row say exactly nothing about whether the chip can cut a mask when a ball
+        // crosses. A session that starts still hands over its trust before the first serve.
+        val y = FloatArray(w * h) { 120f }
+        val q = Quarter(w, h, y, FloatArray(w * h), FloatArray(w * h))
+        val bg = Background(y.copyOf(), FloatArray(w * h), FloatArray(w * h))
+        val rgba = ByteArray(w * h * 4)
+        for (p in 0 until w * h) { rgba[p * 4] = 120; rgba[p * 4 + 1] = -128; rgba[p * 4 + 2] = -128 }
+        val m = IntArray(3)
+        Detector(w, h).findChecked(q, bg, rgba, 0, m)
+        assertEquals("nothing differs", 0, m[0])
+        assertEquals("because the processor found nothing moving", 0, m[1])
+        assertEquals("and neither did the chip", 0, m[2])
+    }
+
+    @Test fun `a frame with motion in it is what the count is after`() {
+        val (q, bg, rgba) = colourShift()
+        val m = IntArray(3)
+        Detector(w, h).findChecked(q, bg, rgba, 0, m)
+        assertEquals("they agree", 0, m[0])
+        assertEquals("on a frame that has something to agree about", w * h, m[1])
+        assertEquals(w * h, m[2])
     }
 
     @Test fun `a mask handed over the wrong way round is counted as wrong`() {
@@ -89,7 +115,7 @@ class ChipMaskTest {
             for (p in 0 until w * h) { b[p * 4] = 120; b[p * 4 + 1] = (u[p].toInt() - 128).toByte(); b[p * 4 + 2] = -128 }
         }, w, h, 3)                                                 // the finders' picture, flipped
         val bg = Background(y, FloatArray(w * h), FloatArray(w * h))
-        val bad = IntArray(1)
+        val bad = IntArray(3)
         Detector(w, h).findChecked(q, bg, rgba, 3, bad)
         assertEquals("flipped on both sides, the two agree", 0, bad[0])
         Detector(w, h).findChecked(q, bg, rgba, 0, bad)

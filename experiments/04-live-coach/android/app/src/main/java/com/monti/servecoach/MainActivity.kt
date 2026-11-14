@@ -483,6 +483,9 @@ class MainActivity : Activity() {
             .put("candidatesPerFrame", "%.2f".format(p.candidatesPerFrame))
             .put("blobsRefused", p.blobsRefused).put("maskMoving", p.maskMoving)
             .put("longestTrack", p.longestTrack).put("rejectedTracks", org.json.JSONArray(p.rejectedTracks))
+            // what the two masks each called moving over the checked frames: if the chip's is
+            // far from the processor's, that is the fault, whatever the pixel count says
+            .put("maskCheck", "${p.maskChecks.get()} moving frames checked, processor called ${p.maskCpuMoved.get()} px moving, chip ${p.maskChipMoved.get()}")
             .put("maskBy", when (p.maskTrust) {
                 1 -> "chip"
                 -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst.get()})"

@@ -89,13 +89,24 @@ class Detector(val w: Int, val h: Int) {
      * has earned it. Costs a whole makeMask while it runs, which is the point: it is the thing
      * being replaced, so the comparison is exactly as expensive as not having bothered.
      */
+    /**
+     * Both masks for one frame: the processor's is used, and [out] carries how far apart they
+     * were -- out[0] pixels differing, out[1] the processor's moving count, out[2] the chip's.
+     */
     fun findChecked(q: Quarter, bg: Background, rgba: ByteArray, flip: Int, out: IntArray): Found {
         var t = System.nanoTime()
         makeMask(q, bg)
         readAlpha(rgba, flip, chip)
-        var bad = 0
-        for (p in mask.indices) if (mask[p] != chip[p]) bad++
-        out[0] = bad
+        var bad = 0; var mine = 0; var theirs = 0
+        for (p in mask.indices) {
+            val a = mask[p].toInt(); val b = chip[p].toInt()
+            if (a != b) bad++
+            mine += a; theirs += b
+        }
+        // how much each of them called moving, BEFORE the opening. Two masks that are both
+        // empty agree on every pixel and prove nothing by it, so the caller needs to know
+        // whether this frame had anything in it to agree about.
+        out[0] = bad; out[1] = mine; out[2] = theirs
         var n = System.nanoTime(); nanos[0] += n - t; t = n
         val moved = open2()
         n = System.nanoTime(); nanos[1] += n - t; t = n

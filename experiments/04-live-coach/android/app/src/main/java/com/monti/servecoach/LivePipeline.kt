@@ -383,16 +383,20 @@ class LivePipeline(
                 trust == 0 && checkable && bg != null -> {
                     val q = quarter()
                     if (index % 16 == 0L) pose?.offer(q, index * step)
-                    val bad = IntArray(1)
-                    val c0 = d.findChecked(q, bg, rgba, f, bad)
-                    maskDisagreed.addAndGet(bad[0].toLong())
-                    maskWorst.accumulateAndGet(bad[0]) { a, b -> maxOf(a, b) }
-                    // one differing pixel settles it, the moment it is seen. Counting them up
-                    // and judging at the end leaves a window: three finders run at once, so a
-                    // frame still in flight can land its disagreement just after the 240th
-                    // frame has already read the total and switched over.
-                    if (bad[0] > 0) maskTrust = -1
-                    else if (maskChecks.incrementAndGet() >= maskChecksWanted && maskTrust == 0) maskTrust = 1
+                    val m = IntArray(3)
+                    val c0 = d.findChecked(q, bg, rgba, f, m)
+                    maskDisagreed.addAndGet(m[0].toLong())
+                    maskWorst.accumulateAndGet(m[0]) { a, b -> maxOf(a, b) }
+                    maskCpuMoved.addAndGet(m[1].toLong()); maskChipMoved.addAndGet(m[2].toLong())
+                    // one differing pixel settles it, the moment it is seen
+                    if (m[0] > 0) maskTrust = -1
+                    // ...but agreeing proves nothing on a frame where neither mask found
+                    // anything. Two empty masks agree on all 129,600 pixels. A session that
+                    // starts in a still room grants the chip its 240 frames before a ball has
+                    // ever crossed the picture, which is how a mask that is empty when it
+                    // matters came to be trusted. Only frames the PROCESSOR called moving count.
+                    else if (m[1] >= movedEnough &&
+                             maskChecks.incrementAndGet() >= maskChecksWanted && maskTrust == 0) maskTrust = 1
                     c0
                 }
                 else -> {
@@ -482,9 +486,12 @@ class LivePipeline(
      * 0 while they are being compared, 1 once the chip's is believed, -1 once it is not.
      */
     @Volatile var maskTrust = 0; private set
-    private val maskChecksWanted = 240          // 2 s of frames at the finders' rate
+    private val maskChecksWanted = 60           // frames with real motion in them, not just frames
+    private val movedEnough = 200               // moving pixels of 129,600: a ball and then some
     val maskChecks = java.util.concurrent.atomic.AtomicInteger()
     val maskDisagreed = java.util.concurrent.atomic.AtomicLong()
+    val maskCpuMoved = java.util.concurrent.atomic.AtomicLong()
+    val maskChipMoved = java.util.concurrent.atomic.AtomicLong()
     val maskWorst = java.util.concurrent.atomic.AtomicInteger()
 
     /** set by the owner: the chip's background, from any thread (see GlTap.setBackground) */

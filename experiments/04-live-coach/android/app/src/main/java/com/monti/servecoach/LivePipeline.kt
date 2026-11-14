@@ -62,6 +62,15 @@ class LivePipeline(
     // finding blobs, on a few threads; their results are linked in order
     private val finders = Executors.newFixedThreadPool(3) { r -> Thread(r, "finder").apply { priority = Thread.NORM_PRIORITY + 1 } }
     private val detectors = ThreadLocal<Detector>()
+    /**
+     * Every detector the finders made, so the report can read the ones that RAN.
+     *
+     * blobsRefused used to come off ServeTracker.refusedBlobs, which is the tracker's own
+     * detector -- and the live path never uses it: the finders have a pool of their own and
+     * hand the tracker finished candidates. The report said "small=0 big=0 long=0 hollow=0"
+     * for a whole session and meant nothing by it.
+     */
+    private val allDetectors = java.util.concurrent.CopyOnWriteArrayList<Detector>()
     private val scratch = ThreadLocal<Quarter>()
     private class Job(val index: Long, val found: Future<List<FloatArray>>?, val end: Boolean = false)
     private val jobs = LinkedBlockingQueue<Job>(if (blocking) 16 else 24)   // 0.2 s of frames waiting (1.5 MB each)
@@ -244,11 +253,12 @@ class LivePipeline(
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
         val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
-            val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it) }
+            val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it); allDetectors.add(it) }
             val t = System.nanoTime()
             val q = q0 ?: Downsample.quarter(rows)
             if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
             val c = d.find(q, bg)
+            noteMoving(c)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
         })
@@ -356,7 +366,7 @@ class LivePipeline(
         // worse mask while the chip was proving it could cut a good one.
         val checkable = cutAgainst != null && cutAgainst === bg
         val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
-            val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
+            val d = detectors.get() ?: Detector(w, h).also { detectors.set(it); allDetectors.add(it) }
             val t = System.nanoTime()
             // its own scratch, so the common frame allocates nothing. q0 is NOT reused: it is
             // made on the calling thread and read on this one, so a shared buffer would be
@@ -392,6 +402,7 @@ class LivePipeline(
                 }
             }
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
+            noteMoving(c)
             c
         })
         jobs.offer(Job(index, found))
@@ -410,8 +421,39 @@ class LivePipeline(
 
     /** why blobs were thrown away before they could ever be linked into a track */
     val blobsRefused: String get() {
-        val r = tracker?.refusedBlobs ?: return ""
-        return "small=${r[0]} big=${r[1]} long=${r[2]} hollow=${r[3]} worstAspect=${"%.1f".format(tracker?.worstAspect ?: 0f)}"
+        val ds = allDetectors.toList()
+        if (ds.isEmpty()) return ""
+        val t = LongArray(4); var aspect = 0f
+        for (d in ds) { for (i in 0..3) t[i] += d.refused[i]; if (d.worstAspect > aspect) aspect = d.worstAspect }
+        return "small=${t[0]} big=${t[1]} long=${t[2]} hollow=${t[3]} worstAspect=${"%.1f".format(aspect)}"
+    }
+
+    /**
+     * How much of the picture the mask called moving, over the session.
+     *
+     * The one number that says whether there is a mask at all. If the chip (or the processor)
+     * is handing back an empty mask, nothing downstream can find a ball and every other
+     * count in this report is a consequence rather than a cause. A still room sits near zero
+     * and a serve lifts it; all three of these at zero means the mask is dead.
+     */
+    val maskMoving: String get() {
+        val n = movingFrames.get()
+        if (n == 0L) return ""
+        val mean = movingSum.get() / n / 1e6
+        return "mean ${"%.4f".format(mean)}, max ${"%.4f".format(movingMax.get() / 1e6)}, " +
+               "frames with any ${Math.round(100.0 * movingAny.get() / n)}%"
+    }
+    private val movingFrames = java.util.concurrent.atomic.AtomicLong()
+    private val movingSum = java.util.concurrent.atomic.AtomicLong()      // share x 1e6, summed
+    private val movingAny = java.util.concurrent.atomic.AtomicLong()
+    private val movingMax = java.util.concurrent.atomic.AtomicLong()
+
+    private fun noteMoving(c: List<FloatArray>) {
+        val m = (c as? com.monti.servecoach.core.Found)?.moving ?: return
+        val q = Math.round(m * 1e6).toLong()
+        movingFrames.incrementAndGet(); movingSum.addAndGet(q)
+        if (q > 0) movingAny.incrementAndGet()
+        movingMax.accumulateAndGet(q) { a, b -> maxOf(a, b) }
     }
 
     /** the longest track judged this session: points, ball radius, and what was said about it */

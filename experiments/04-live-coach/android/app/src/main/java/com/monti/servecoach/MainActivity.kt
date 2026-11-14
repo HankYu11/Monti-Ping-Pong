@@ -481,7 +481,7 @@ class MainActivity : Activity() {
             // what the finders saw, not just what the tracker turned away: a session that reports
             // forty "short" tracks says nothing about whether the ball was there to be found
             .put("candidatesPerFrame", "%.2f".format(p.candidatesPerFrame))
-            .put("blobsRefused", p.blobsRefused)
+            .put("blobsRefused", p.blobsRefused).put("maskMoving", p.maskMoving)
             .put("longestTrack", p.longestTrack)
             .put("maskBy", when (p.maskTrust) {
                 1 -> "chip"

@@ -150,6 +150,15 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
 
     // ------------------------------------------------------------ candidates in one frame
     private val detector = Detector(w, h)
+    /**
+     * Tracker frames a track may go unseen before it is finished.
+     *
+     * Two, normally: the finder misses the ball now and then and a track should survive it. But
+     * when the app cannot keep up it is fed every OTHER tracker frame on purpose (LivePipeline's
+     * load guard), and then consecutive points are two apart by design, right on the limit --
+     * one further miss and every track dies. The caller raises it while it is thinning.
+     */
+    @Volatile var maxGap = 2
     /** blobs the finder turned away, by rule: too small, too big, too long, too hollow */
     val refusedBlobs: LongArray get() = detector.refused
     /** the longest/shortest ratio of the worst blob turned away for being too long */
@@ -235,7 +244,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
             active[ti].pts.add(floatArrayOf(i.toFloat(), c[0], c[1], c[2]))
         }
         val still = ArrayList<Track>()
-        for (tr in active) { if (i - tr.last()[0] <= 2) still.add(tr) else finish(tr, i) }
+        for (tr in active) { if (i - tr.last()[0] <= maxGap) still.add(tr) else finish(tr, i) }
         for ((j, c) in cs.withIndex()) if (j !in used) still.add(Track().also { it.pts.add(floatArrayOf(i.toFloat(), c[0], c[1], c[2])) })
         active = still
         liveTracks = active.mapNotNull { if (it.pts.size >= 4) ArrayList<FloatArray>(it.pts) else null }

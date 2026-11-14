@@ -68,6 +68,33 @@ class LivePipeline(
     @Volatile var decoded = 0L; private set              // frames decoded (or, from the tap, seen)
     @Volatile var dropped = 0L; private set              // encoded frames dropped (the decoder fell behind)
     @Volatile var skipped = 0L; private set
+
+    // ---- the load guard ----------------------------------------------------------------
+    // A frame is skipped when the finders are behind, and WHICH frames is whatever the queue
+    // happens to be doing -- so the losses come in clumps. A track is finished after
+    // ServeTracker.maxGap unseen frames, two by default, so a clump of three ends it: the
+    // 14 Nov session skipped 24% of its frames, threw away 2363 tracks as "short", reported no
+    // serve at all, and sat in Ready looking perfectly well.
+    //
+    // So the skipping is made deliberate, and it is made visible. The share lost is measured
+    // over a window; past a bar, every other tracker frame is dropped ON PURPOSE. That halves
+    // what the finders are asked to do and leaves what is left evenly spaced, two apart, which
+    // a track survives -- where a clump of three was killing it. maxGap goes to four at the
+    // same time so one further miss does not undo it.
+    //
+    // It is one step and not a ladder: at 120 Hz a 0.25 s flight is 30 points and thinned it is
+    // 15, still over the 12 a track needs, but thinned twice it is 7 and there is no track to
+    // have. Past that the answer is not less work, it is a camera further back, and the note
+    // says so.
+    private val guardWindow = 240                        // tracker frames, about 2 s at 120 Hz
+    private var guardSeen = 0; private var guardLost = 0
+    /** watching every other tracker frame, because every one was too many */
+    @Volatile var thinning = false; private set
+    /** frames dropped on purpose by the guard (as against [skipped], dropped by the queue) */
+    @Volatile var thinned = 0L; private set
+    /** the share of frames the queue lost over the last window, and the worst any window saw */
+    @Volatile var behindShare = 0.0; private set
+    @Volatile var worstBehind = 0.0; private set
     @Volatile var decoderFull = 0L; private set          // times the decoder had no room for the next frame (5 ms waits)
     @Volatile var waitingForKey = 0L; private set        // frames passed over after a drop, until the next keyframe              // frames the tracker skipped (finding blobs fell behind)
     @Volatile var trackMsAvg = 0.0; private set         // per tracker frame: shrinking + finding + linking (on several threads)
@@ -187,14 +214,17 @@ class LivePipeline(
         lastPts = pts
         if (n % step != 0L) return
         val index = n / step
-        if (!blocking && jobs.remainingCapacity() == 0) { skipped++; return }      // the finders are behind: skip it
+        if (!blocking && guardWindowEnded()) guardDecide()
+        if (thinning && (index and 1L) == 1L) { thinned++; return }                // dropped on purpose, evenly
+        guardSeen++
+        if (!blocking && jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }   // the finders are behind
         frameW = yuv.width; frameH = yuv.height
         // here only the rows the small picture is made from are copied (the decoder wants its
         // picture back); the finders make the small picture
         val t0 = System.nanoTime()
         val rows = Downsample.rows(yuv)
         shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
-        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); tracker = it }
+        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; tracker = it }
         // the background learns from every 24th frame, before that frame's blobs are found
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
@@ -208,6 +238,26 @@ class LivePipeline(
             c
         })
         jobs.put(Job(index, found))
+    }
+
+    private fun guardWindowEnded() = guardSeen >= guardWindow
+
+    /** at the end of a window: how much was lost, whether to thin, and a word when that changes */
+    private fun guardDecide() {
+        val share = if (guardSeen == 0) 0.0 else guardLost.toDouble() / guardSeen
+        behindShare = share
+        if (share > worstBehind) worstBehind = share
+        val was = thinning
+        // thin on a tenth lost, stop at a fiftieth: the gap between them is what keeps it from
+        // flapping in and out every window
+        if (!thinning && share > 0.10) thinning = true else if (thinning && share < 0.02) thinning = false
+        if (thinning != was) {
+            tracker?.maxGap = if (thinning) 4 else 2
+            onNote(if (thinning)
+                "too slow to watch every frame (${Math.round(100 * share)}% lost): watching every other one. If this stays on, move the phone back."
+            else "keeping up again: watching every frame")
+        }
+        guardSeen = 0; guardLost = 0
     }
 
     // ------------------------------------------------------------ live, from the graphics chip (GlTap)

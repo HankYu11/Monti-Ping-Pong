@@ -63,7 +63,7 @@ class ChipMaskTest {
     @Test fun `agreeing masks are counted as agreeing`() {
         val (q, bg, rgba) = colourShift()
         val bad = IntArray(3)
-        Detector(w, h).findChecked(q, bg, rgba, 0, bad)
+        Detector(w, h).findChecked(q, bg, rgba, 0, bad, 0f, 0f)
         assertEquals("every pixel moved, and the chip said so", 0, bad[0])
     }
 
@@ -71,7 +71,7 @@ class ChipMaskTest {
         val (q, bg, rgba) = colourShift()
         for (p in 0 until 37) rgba[p * 4 + 3] = 0                  // the chip loses 37 of them
         val bad = IntArray(3)
-        Detector(w, h).findChecked(q, bg, rgba, 0, bad)
+        Detector(w, h).findChecked(q, bg, rgba, 0, bad, 0f, 0f)
         assertEquals("the count is the disagreement, not a sample of it", 37, bad[0])
     }
 
@@ -86,7 +86,7 @@ class ChipMaskTest {
         val rgba = ByteArray(w * h * 4)
         for (p in 0 until w * h) { rgba[p * 4] = 120; rgba[p * 4 + 1] = -128; rgba[p * 4 + 2] = -128 }
         val m = IntArray(3)
-        Detector(w, h).findChecked(q, bg, rgba, 0, m)
+        Detector(w, h).findChecked(q, bg, rgba, 0, m, 0f, 0f)
         assertEquals("nothing differs", 0, m[0])
         assertEquals("because the processor found nothing moving", 0, m[1])
         assertEquals("and neither did the chip", 0, m[2])
@@ -95,7 +95,7 @@ class ChipMaskTest {
     @Test fun `a frame with motion in it is what the count is after`() {
         val (q, bg, rgba) = colourShift()
         val m = IntArray(3)
-        Detector(w, h).findChecked(q, bg, rgba, 0, m)
+        Detector(w, h).findChecked(q, bg, rgba, 0, m, 0f, 0f)
         assertEquals("they agree", 0, m[0])
         assertEquals("on a frame that has something to agree about", w * h, m[1])
         assertEquals(w * h, m[2])
@@ -116,9 +116,9 @@ class ChipMaskTest {
         }, w, h, 3)                                                 // the finders' picture, flipped
         val bg = Background(y, FloatArray(w * h), FloatArray(w * h))
         val bad = IntArray(3)
-        Detector(w, h).findChecked(q, bg, rgba, 3, bad)
+        Detector(w, h).findChecked(q, bg, rgba, 3, bad, 0f, 0f)
         assertEquals("flipped on both sides, the two agree", 0, bad[0])
-        Detector(w, h).findChecked(q, bg, rgba, 0, bad)
+        Detector(w, h).findChecked(q, bg, rgba, 0, bad, 0f, 0f)
         assertTrue("read the wrong way round, the count says so (${bad[0]})", bad[0] > 40)
     }
 }

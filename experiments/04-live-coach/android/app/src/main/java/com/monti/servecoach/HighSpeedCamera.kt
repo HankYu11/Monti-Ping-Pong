@@ -128,21 +128,57 @@ class HighSpeedCamera(private val context: Context) {
                             val hs = s as CameraConstrainedHighSpeedCaptureSession
                             session = hs
                             try {
-                                val b = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
-                                surfaces.forEach { b.addTarget(it) }
-                                b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
-                                b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                                val list = hs.createHighSpeedRequestList(b.build())
-                                // Android's list sends the preview only the 1st frame of each 8 (30 a
-                                // second); its 1st request goes to both, so every frame does with it 8 times
-                                // over (the app watches the preview stream). If refused: Android's own.
-                                everyFrameToPreview = false
-                                if (surfaces.size == 2 && list.size > 1 && allToPreview) try {
-                                    hs.setRepeatingBurst(List(list.size) { list[0] }, null, handler)
-                                    everyFrameToPreview = true
-                                } catch (e: Exception) { burstNote = "every frame to the preview refused: ${e.message}" }
-                                if (!everyFrameToPreview) hs.setRepeatingBurst(list, null, handler)
+                                fun burst(lock: Boolean, freezeFocus: Boolean): List<CaptureRequest> {
+                                    val b = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                                    surfaces.forEach { b.addTarget(it) }
+                                    b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(cfg.fps, cfg.fps))
+                                    b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                                    if (lock) {
+                                        b.set(CaptureRequest.CONTROL_AE_LOCK, true)
+                                        b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                                    }
+                                    if (freezeFocus) b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
+                                    return hs.createHighSpeedRequestList(b.build())
+                                }
+                                fun send(list: List<CaptureRequest>) {
+                                    // Android's list sends the preview only the 1st frame of each 8 (30 a
+                                    // second); its 1st request goes to both, so every frame does with it 8 times
+                                    // over (the app watches the preview stream). If refused: Android's own.
+                                    everyFrameToPreview = false
+                                    if (surfaces.size == 2 && list.size > 1 && allToPreview) try {
+                                        hs.setRepeatingBurst(List(list.size) { list[0] }, null, handler)
+                                        everyFrameToPreview = true
+                                    } catch (e: Exception) { burstNote = "every frame to the preview refused: ${e.message}" }
+                                    if (!everyFrameToPreview) hs.setRepeatingBurst(list, null, handler)
+                                }
+                                send(burst(lock = false, freezeFocus = false))
                                 onRunning()
+                                // Then hold the camera still.
+                                //
+                                // Exposure, white balance and focus were left hunting for the whole
+                                // session. Every one of them moves the WHOLE picture away from the
+                                // background at once, which is a mask with everything in it moving --
+                                // and that is what a phone session reported: 129,600 pixels of 129,600,
+                                // fifty times. The row gain cancels an exposure change; nothing cancels
+                                // a white balance change, and nothing cancels focus breathing, which
+                                // moves every edge in the room at the same moment.
+                                //
+                                // A second and a half of hunting first, so it settles on this room
+                                // rather than on whatever the preview was pointed at, and then locked.
+                                // Only three keys, all of which a constrained high-speed session is
+                                // documented to take -- and if a device still refuses, it is refused
+                                // one at a time rather than losing the session.
+                                handler.postDelayed({
+                                    if (gen != generation) return@postDelayed
+                                    lockNote = try { send(burst(lock = true, freezeFocus = true)); "exposure, white balance and focus locked" }
+                                    catch (e: Exception) {
+                                        try { send(burst(lock = true, freezeFocus = false)); "exposure and white balance locked; focus left to the camera (${e.message})" }
+                                        catch (e2: Exception) {
+                                            try { send(burst(lock = false, freezeFocus = false)) } catch (_: Exception) {}
+                                            "nothing could be locked (${e2.message})"
+                                        }
+                                    }
+                                }, 1500)
                             } catch (e: Exception) { onError("request: ${e.message}") }
                         }
                         override fun onConfigureFailed(s: CameraCaptureSession) { onError("the camera refused the slow-motion session") }
@@ -195,6 +231,8 @@ class HighSpeedCamera(private val context: Context) {
     var allToPreview = false
     @Volatile var everyFrameToPreview = false; private set
     @Volatile var burstNote = ""; private set
+    /** what the camera let us hold still once the scene had settled */
+    @Volatile var lockNote = "not yet"
 
     /** counts starts and stops, so a camera that opens after it was stopped is closed at once */
     @Volatile private var generation = 0

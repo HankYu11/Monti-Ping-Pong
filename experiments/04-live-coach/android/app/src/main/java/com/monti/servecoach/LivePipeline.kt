@@ -384,7 +384,11 @@ class LivePipeline(
                     val q = quarter()
                     if (index % 16 == 0L) pose?.offer(q, index * step)
                     val m = IntArray(3)
-                    val c0 = d.findChecked(q, bg, rgba, f, m)
+                    // the chip's shader subtracts no colour drift, so the comparison must not
+                    // either, or the two would differ for a reason that is not the chip's fault.
+                    // If the room IS drifting, they differ anyway -- correctly, because the
+                    // chip's mask is then the wrong one and the processor's is not.
+                    val c0 = d.findChecked(q, bg, rgba, f, m, 0f, 0f)
                     maskDisagreed.addAndGet(m[0].toLong())
                     maskWorst.accumulateAndGet(m[0]) { a, b -> maxOf(a, b) }
                     maskCpuMoved.addAndGet(m[1].toLong()); maskChipMoved.addAndGet(m[2].toLong())
@@ -476,6 +480,15 @@ class LivePipeline(
     val maskSpread: String get() =
         "none ${movingBuckets[0].get()}, tiny ${movingBuckets[1].get()}, small ${movingBuckets[2].get()}, " +
         "a serve's worth ${movingBuckets[3].get()}, large ${movingBuckets[4].get()}, saturated ${movingBuckets[5].get()}"
+
+    /** how far the room's colour has drifted from the background, as the mask last measured it */
+    val colourDrift: String get() {
+        val ds = allDetectors.toList()
+        if (ds.isEmpty()) return ""
+        val u = ds.maxByOrNull { kotlin.math.abs(it.shiftU) }?.shiftU ?: 0f
+        val v = ds.maxByOrNull { kotlin.math.abs(it.shiftV) }?.shiftV ?: 0f
+        return "u ${"%.1f".format(u)}, v ${"%.1f".format(v)} (bar ${"%.1f".format(30f / 1.5f)})"
+    }
 
     /** which channel put a mask over half moving, on the worst such frame */
     val maskSaturation: String get() {

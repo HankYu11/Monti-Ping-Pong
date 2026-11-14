@@ -181,6 +181,9 @@ fun main(args: Array<String>) {
         frames = pushed.toLong()
         val sat = ds.sumOf { it.saturatedFrames }
         val w = ds.maxByOrNull { it.worstSaturation[0] }?.worstSaturation
+        val su = ds.maxByOrNull { kotlin.math.abs(it.shiftU) }?.shiftU ?: 0f
+        val sv = ds.maxByOrNull { kotlin.math.abs(it.shiftV) }?.shiftV ?: 0f
+        println("""{"drift":{"u":${"%.1f".format(su)},"v":${"%.1f".format(sv)}}}""")
         if (w != null) println("""{"saturated":$sat,"worst":${"%.3f".format(w[0])},"meanDy":${"%.1f".format(w[1])},"meanDu":${"%.1f".format(w[2])},"meanDv":${"%.1f".format(w[3])},"gain":"${"%.3f".format(w[4])}-${"%.3f".format(w[5])}"}""")
         if (frames > 0) println("""{"findParts":{"mask":${"%.2f".format(parts[0] / 1e6 / frames)},"open":${"%.2f".format(parts[1] / 1e6 / frames)},"blobs":${"%.2f".format(parts[2] / 1e6 / frames)}}}""")
     }

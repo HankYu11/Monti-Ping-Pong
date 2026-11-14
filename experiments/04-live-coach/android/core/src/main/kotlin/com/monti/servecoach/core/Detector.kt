@@ -93,9 +93,9 @@ class Detector(val w: Int, val h: Int) {
      * Both masks for one frame: the processor's is used, and [out] carries how far apart they
      * were -- out[0] pixels differing, out[1] the processor's moving count, out[2] the chip's.
      */
-    fun findChecked(q: Quarter, bg: Background, rgba: ByteArray, flip: Int, out: IntArray): Found {
+    fun findChecked(q: Quarter, bg: Background, rgba: ByteArray, flip: Int, out: IntArray, du: Float, dv: Float): Found {
         var t = System.nanoTime()
-        makeMask(q, bg)
+        makeMask(q, bg, du, dv)
         readAlpha(rgba, flip, chip)
         var bad = 0; var mine = 0; var theirs = 0
         for (p in mask.indices) {
@@ -159,7 +159,54 @@ class Detector(val w: Int, val h: Int) {
     @Volatile var saturatedFrames = 0L; private set
     val worstSaturation = FloatArray(6)
 
+    /**
+     * How far the whole picture's colour has drifted from the background's, u and v.
+     *
+     * The brightness test has had a per-row gain since the beginning, so a camera changing its
+     * exposure cancels out. The two colour tests had nothing, and a camera changing its white
+     * balance moves u and v EVERYWHERE at once -- past the bar on every pixel in the frame, so
+     * the mask comes back with all 129,600 pixels moving and the finders are handed a picture
+     * in which everything is a candidate. Auto white balance runs for the whole session.
+     *
+     * The median and not the mean, because the mean is what a player in a red shirt walks into
+     * and drags: this is meant to measure the ROOM's drift, and half the picture would have to
+     * be shirt before a median moved. Exact and in one pass, from a 511-bin histogram over one
+     * pixel in sixteen (8,100 of them), which costs nothing beside the mask itself.
+     *
+     * Clamped to 30: a real white balance shift is small and slow, and anything larger is a
+     * scene that genuinely changed, which the mask should be allowed to see.
+     */
+    private val hist = IntArray(512)
+    private fun chromaShift(a: FloatArray, b: FloatArray): Float {
+        java.util.Arrays.fill(hist, 0)
+        var n = 0
+        var y = 0
+        while (y < h) {
+            var p = y * w; val end = p + w
+            while (p < end) {
+                var d = (a[p] - b[p]).toInt() + 255
+                if (d < 0) d = 0 else if (d > 510) d = 510
+                hist[d]++; n++; p += 4
+            }
+            y += 4
+        }
+        if (n == 0) return 0f
+        var c = 0
+        for (i in 0..510) { c += hist[i]; if (c * 2 >= n) return (i - 255).toFloat().coerceIn(-30f, 30f) }
+        return 0f
+    }
+
+    /** the colour drift the last mask was cut against, for the report and for the chip */
+    @Volatile var shiftU = 0f; private set
+    @Volatile var shiftV = 0f; private set
+
     private fun makeMask(q: Quarter, bg: Background) {
+        shiftU = chromaShift(q.u, bg.u); shiftV = chromaShift(q.v, bg.v)
+        makeMask(q, bg, shiftU, shiftV)
+    }
+
+    private fun makeMask(q: Quarter, bg: Background, du: Float, dv: Float) {
+        shiftU = du; shiftV = dv
         rowRatios(q.y, bg.y)
         val qy = q.y; val qu = q.u; val qv = q.v; val by = bg.y; val bu = bg.u; val bv = bg.v
         val m = mask
@@ -172,7 +219,7 @@ class Detector(val w: Int, val h: Int) {
             while (p < end) {
                 var gv = (qy[p] * inv).toInt()
                 if (gv < 0) gv = 0 else if (gv > 255) gv = 255
-                val mv = if (abs(gv - by[p]) > 30f || abs(qu[p] - bu[p]) > cLim || abs(qv[p] - bv[p]) > cLim) 1 else 0
+                val mv = if (abs(gv - by[p]) > 30f || abs(qu[p] - bu[p] - du) > cLim || abs(qv[p] - bv[p] - dv) > cLim) 1 else 0
                 m[p] = mv.toByte(); moved += mv
                 p++
             }
@@ -181,14 +228,14 @@ class Detector(val w: Int, val h: Int) {
             saturatedFrames++
             val share = moved.toFloat() / m.size
             if (share >= worstSaturation[0]) {           // a second pass, only on a frame already lost
-                var dy = 0.0; var du = 0.0; var dv = 0.0
+                var dy = 0.0; var su = 0.0; var sv = 0.0
                 for (y in 0 until h) {
                     val inv = 1f / rows[y]
                     var p = y * w; val end = p + w
                     while (p < end) {
                         var gv = (qy[p] * inv).toInt()
                         if (gv < 0) gv = 0 else if (gv > 255) gv = 255
-                        dy += abs(gv - by[p]); du += abs(qu[p] - bu[p]); dv += abs(qv[p] - bv[p])
+                        dy += abs(gv - by[p]); su += abs(qu[p] - bu[p] - du); sv += abs(qv[p] - bv[p] - dv)
                         p++
                     }
                 }
@@ -196,7 +243,7 @@ class Detector(val w: Int, val h: Int) {
                 var lo = Float.MAX_VALUE; var hi = 0f
                 for (y in 0 until h) { if (rows[y] < lo) lo = rows[y]; if (rows[y] > hi) hi = rows[y] }
                 worstSaturation[0] = share; worstSaturation[1] = (dy / n).toFloat()
-                worstSaturation[2] = (du / n).toFloat(); worstSaturation[3] = (dv / n).toFloat()
+                worstSaturation[2] = (su / n).toFloat(); worstSaturation[3] = (sv / n).toFloat()
                 worstSaturation[4] = lo; worstSaturation[5] = hi
             }
         }

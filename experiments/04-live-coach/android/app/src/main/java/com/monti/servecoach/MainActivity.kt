@@ -481,7 +481,7 @@ class MainActivity : Activity() {
             // what the finders saw, not just what the tracker turned away: a session that reports
             // forty "short" tracks says nothing about whether the ball was there to be found
             .put("candidatesPerFrame", "%.2f".format(p.candidatesPerFrame))
-            .put("blobsRefused", p.blobsRefused).put("maskMoving", p.maskMoving).put("maskSpread", p.maskSpread).put("maskSaturation", p.maskSaturation)
+            .put("blobsRefused", p.blobsRefused).put("maskMoving", p.maskMoving).put("maskSpread", p.maskSpread).put("maskSaturation", p.maskSaturation).put("colourDrift", p.colourDrift).put("cameraHeld", camera.lockNote)
             .put("longestTrack", p.longestTrack).put("rejectedTracks", org.json.JSONArray(p.rejectedTracks))
             // what the two masks each called moving over the checked frames: if the chip's is
             // far from the processor's, that is the fault, whatever the pixel count says

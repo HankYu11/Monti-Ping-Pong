@@ -1439,7 +1439,7 @@
     const spread = (trs) => rigidCost(trs, [0, 0, 1], 0, tm);
     const sumW = tracks.reduce((s, tr) => s + tr.w.reduce((a, q) => a + q, 0), 0);
     let V = spread(tracks);
-    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots" };
+    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
     // starting points: the black half's best rates, each dot's own circle, then for every
     // starting axis the best few rates along it
     const axes = [];
@@ -1518,7 +1518,7 @@
     const minTurns = dotFrames >= 4 && dotTurns >= 0.25 ? 0.25 : 1;
     const candidates = [];
     for (const f of fits) if (!candidates.some((c) => Math.abs(c.rps - f.rps) < 0.5)) candidates.push({ rps: f.rps, r2: 1 - f.res / V });
-    return { rps: best.rps, axis: best.a, score, runner, r2, swing, plusMinus, turns, minTurns, dotFrames, dotTurns,
+    return { rps: best.rps, axis: best.a, score, runner, r2, swing, plusMinus, turns, minTurns, dotFrames, dotTurns, dotSpread: V / sumW,
       candidates: candidates.slice(0, 5), method: "dots" };
   }
 
@@ -2108,7 +2108,7 @@
       gyro: c.gyro, gyroDirKnown, lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, oneSide: stats.oneSide, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing, dotSpread: r.dotSpread, dotFrames: r.dotFrames }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
         // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)

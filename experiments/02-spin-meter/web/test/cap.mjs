@@ -106,7 +106,10 @@ async function measure(file) {
              // which is exactly how a blind-spot reading of 0.21 rev/s got written up as the
              // app answering 0.21 rev/s.
              appClear: appSv ? !!appSv.clear : null, appRps: appSv ? appSv.rps : null,
-             issues: appSv ? (appSv.issues || []).map((i) => i.text || i) : [] };
+             issues: appSv ? (appSv.issues || []).map((i) => i.text || i) : [],
+             diag: out.diag || null, dots: out.dots || null, turns: out.turns,
+             fall: out.flight && out.flight.downAccel, accel3: out.flight && out.flight.accel3,
+             minTurns: out.minTurns, runner: out.runnerUp };
   }, `http://127.0.0.1:${srv.address().port}/${key}`);
   return r;
 }

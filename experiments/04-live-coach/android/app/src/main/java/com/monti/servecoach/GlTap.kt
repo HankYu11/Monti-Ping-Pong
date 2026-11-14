@@ -111,7 +111,6 @@ class GlTap(
     @Volatile var maskGen = -1; private set
     private var maskCol0 = 0
     /** per read-back slot, the generation that slot's picture was cut against */
-    private var maskSlotGen = IntArray(4) { -1 }
     /** the chip is cutting the mask and the alpha byte can be believed */
     @Volatile var maskReady = false; private set
     @Volatile var maskFrames = 0L; private set
@@ -488,6 +487,8 @@ class GlTap(
     // the reader takes it out when the chip is done (a fence) and frees the buffer
     private var gl3 = false
     private val pbo = IntArray(8)
+    /** per read-back slot, the background generation that slot's picture was cut against */
+    private val maskSlotGen = IntArray(pbo.size) { -1 }
     private var busy = java.util.concurrent.atomic.AtomicIntegerArray(8)
     private var slot = 0
 

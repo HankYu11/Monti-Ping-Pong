@@ -335,14 +335,25 @@ class LivePipeline(
         if (guardWindowEnded()) guardDecide()
         guardSeen++
         if (jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }
-        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); tracker = it }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also {
+            watchSkips(it); tracker = it
+            // a new tracker is a new room, and its generations start again from nothing: a
+            // background sent for the old one must not be found under a number reused here
+            sentBackgrounds.clear(); sentVersion = -1
+        }
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()
-        if (bg != null) offerBackground(tr, bg, w, h, f)
-        // the background this frame's mask was cut against, when the chip cut one: kept so the
-        // comparison is against the same background a finder would have used, not a newer one
+        // the background this frame's mask was cut against, looked up BEFORE a new one is sent,
+        // which is what prunes the old ones
         val cutAgainst = if (maskGen >= 0) sentBackgrounds[maskGen] else null
+        if (bg != null) offerBackground(tr, bg, w, h, f)
+        // Only a frame the chip cut against the SAME background the finder will use can be
+        // counted -- and the finder then uses that background, not an older one. The other way
+        // round (cut both against the chip's older background, to make them comparable) would
+        // have meant 240 frames found against a background 200 ms stale, for no reason: a
+        // worse mask while the chip was proving it could cut a good one.
+        val checkable = cutAgainst != null && cutAgainst === bg
         val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
@@ -358,16 +369,19 @@ class LivePipeline(
                     d.findFromAlpha(rgba, f)
                 }
                 // both, counted against each other. The processor's answer is the one used
-                trust == 0 && cutAgainst != null -> {
+                trust == 0 && checkable && bg != null -> {
                     val q = quarter()
                     if (index % 16 == 0L) pose?.offer(q, index * step)
                     val bad = IntArray(1)
-                    val c0 = d.findChecked(q, cutAgainst, rgba, f, bad)
+                    val c0 = d.findChecked(q, bg, rgba, f, bad)
                     maskDisagreed.addAndGet(bad[0].toLong())
-                    if (bad[0] > maskWorst) maskWorst = bad[0]
-                    if (maskChecks.incrementAndGet() >= maskChecksWanted) {
-                        maskTrust = if (maskDisagreed.get() == 0L) 1 else -1
-                    }
+                    maskWorst.accumulateAndGet(bad[0]) { a, b -> maxOf(a, b) }
+                    // one differing pixel settles it, the moment it is seen. Counting them up
+                    // and judging at the end leaves a window: three finders run at once, so a
+                    // frame still in flight can land its disagreement just after the 240th
+                    // frame has already read the total and switched over.
+                    if (bad[0] > 0) maskTrust = -1
+                    else if (maskChecks.incrementAndGet() >= maskChecksWanted && maskTrust == 0) maskTrust = 1
                     c0
                 }
                 else -> {
@@ -406,7 +420,7 @@ class LivePipeline(
     private val maskChecksWanted = 240          // 2 s of frames at the finders' rate
     val maskChecks = java.util.concurrent.atomic.AtomicInteger()
     val maskDisagreed = java.util.concurrent.atomic.AtomicLong()
-    @Volatile var maskWorst = 0; private set
+    val maskWorst = java.util.concurrent.atomic.AtomicInteger()
 
     /** set by the owner: the chip's background, from any thread (see GlTap.setBackground) */
     @Volatile var sendBackground: ((ByteArray, Int, Int) -> Unit)? = null

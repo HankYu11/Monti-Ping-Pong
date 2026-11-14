@@ -480,7 +480,7 @@ class MainActivity : Activity() {
             // follows a clean count; one differing pixel reads "processor (chip differed...)"
             .put("maskBy", when (p.maskTrust) {
                 1 -> "chip"
-                -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst})"
+                -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst.get()})"
                 else -> "processor (${p.maskChecks.get()} frames checked, ${p.maskDisagreed.get()} pixels differed)"
             })
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }

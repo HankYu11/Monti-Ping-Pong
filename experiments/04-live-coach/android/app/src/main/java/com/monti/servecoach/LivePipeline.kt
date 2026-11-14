@@ -3,6 +3,7 @@ package com.monti.servecoach
 import android.os.SystemClock
 import com.monti.servecoach.core.Capture
 import com.monti.servecoach.core.ColourFit
+import com.monti.servecoach.core.Background
 import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Quarter
@@ -321,7 +322,7 @@ class LivePipeline(
      * finders, as decoded frames went before (a Pixel 8 couldn't decode 240 frames a second for
      * watching and keep up).
      */
-    fun offerTapPicture(tsNs: Long, frameNo: Long, rgba: ByteArray, w: Int, h: Int) {
+    fun offerTapPicture(tsNs: Long, frameNo: Long, rgba: ByteArray, w: Int, h: Int, maskGen: Int = -1) {
         frameW = w * 4; frameH = h * 4
         if (!calibrated) {                     // until the picture's way round is known: kept for that
             synchronized(recentTaps) { recentTaps.addLast(Tapped(tsNs / 1000, rgba, w, h)); while (recentTaps.size > 48) recentTaps.removeFirst() }
@@ -338,19 +339,118 @@ class LivePipeline(
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()
+        if (bg != null) offerBackground(tr, bg, w, h, f)
+        // the background this frame's mask was cut against, when the chip cut one: kept so the
+        // comparison is against the same background a finder would have used, not a newer one
+        val cutAgainst = if (maskGen >= 0) sentBackgrounds[maskGen] else null
         val found = if (bg == null) null else finders.submit(Callable<List<FloatArray>> {
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
             // its own scratch, so the common frame allocates nothing. q0 is NOT reused: it is
             // made on the calling thread and read on this one, so a shared buffer would be
             // overwritten under the finder by the next frame.
-            val q = q0 ?: Downsample.fromRgba(rgba, w, h, f, scratch.get()).also { scratch.set(it) }
-            if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
-            val c = d.find(q, bg)
+            fun quarter() = q0 ?: Downsample.fromRgba(rgba, w, h, f, scratch.get()).also { scratch.set(it) }
+            val trust = maskTrust
+            val c = when {
+                // the chip's mask, believed: no small picture is built and no mask is cut
+                trust == 1 && maskGen >= 0 -> {
+                    if (index % 16 == 0L) pose?.offer(quarter(), index * step)
+                    d.findFromAlpha(rgba, f)
+                }
+                // both, counted against each other. The processor's answer is the one used
+                trust == 0 && cutAgainst != null -> {
+                    val q = quarter()
+                    if (index % 16 == 0L) pose?.offer(q, index * step)
+                    val bad = IntArray(1)
+                    val c0 = d.findChecked(q, cutAgainst, rgba, f, bad)
+                    maskDisagreed.addAndGet(bad[0].toLong())
+                    if (bad[0] > maskWorst) maskWorst = bad[0]
+                    if (maskChecks.incrementAndGet() >= maskChecksWanted) {
+                        maskTrust = if (maskDisagreed.get() == 0L) 1 else -1
+                    }
+                    c0
+                }
+                else -> {
+                    val q = quarter()
+                    if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
+                    d.find(q, bg)
+                }
+            }
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
         })
         jobs.offer(Job(index, found))
+    }
+
+
+    // ---------------------------------------------- the mask the graphics chip cuts
+
+    /**
+     * Where the mask is cut, and who says so.
+     *
+     * [Detector.makeMask] is six float arrays over a 480x270 picture -- 3.1 MB walked every
+     * frame, 120 times a second -- and it is the largest single piece of the 45 ms a find was
+     * taking against a 25 ms budget. The chip can cut exactly the same mask while it is already
+     * holding the picture, and hand it back in the alpha byte of the read-back that was coming
+     * anyway: no extra transfer, no extra pass over memory.
+     *
+     * assets/shaders was checked against this code bit for bit, off a phone, on llvmpipe
+     * (tools/maskcheck.py: 0 of 129,600 pixels differ on six adversarial cases). But arithmetic
+     * is not a driver, and a driver is what runs it. So on the phone the two are cut side by
+     * side for [maskChecksWanted] frames and counted, and the chip's is believed only if it
+     * never once differed. One pixel is enough to fall back for the rest of the session.
+     *
+     * 0 while they are being compared, 1 once the chip's is believed, -1 once it is not.
+     */
+    @Volatile var maskTrust = 0; private set
+    private val maskChecksWanted = 240          // 2 s of frames at the finders' rate
+    val maskChecks = java.util.concurrent.atomic.AtomicInteger()
+    val maskDisagreed = java.util.concurrent.atomic.AtomicLong()
+    @Volatile var maskWorst = 0; private set
+
+    /** set by the owner: the chip's background, from any thread (see GlTap.setBackground) */
+    @Volatile var sendBackground: ((ByteArray, Int, Int) -> Unit)? = null
+
+    private var sentVersion = -1
+    private var bgBytes: ByteArray? = null
+    /** the last few backgrounds handed to the chip, by generation */
+    private val sentBackgrounds = java.util.concurrent.ConcurrentHashMap<Int, Background>()
+
+    /**
+     * The room's background to the chip, when it has changed and is whole.
+     *
+     * Only at five samples: the background is a median, and the median of five integers is an
+     * integer, which is what a byte texture can carry without rounding. At four it is a half and
+     * the chip would be comparing against a background the processor never had.
+     */
+    private fun offerBackground(tr: ServeTracker, bg: Background, w: Int, h: Int, flip: Int) {
+        val send = sendBackground ?: return
+        val gen = tr.bgVersion
+        if (gen == sentVersion || tr.bgSamples < 5) return
+        sentVersion = gen
+        val out = bgBytes?.takeIf { it.size == w * h * 4 } ?: ByteArray(w * h * 4).also { bgBytes = it }
+        val fx = flip and 1 != 0; val fy = flip and 2 != 0
+        // back into the chip's own way round: the small picture the finders see is flipped, the
+        // one the chip holds is not, and the mask is cut in the chip's
+        for (sy in 0 until h) {
+            val qy = if (fy) h - 1 - sy else sy
+            for (sx in 0 until w) {
+                val qx = if (fx) w - 1 - sx else sx
+                val q = qy * w + qx; val i = (sy * w + sx) * 4
+                out[i] = byteOf(bg.y[q])
+                out[i + 1] = byteOf(bg.u[q] + 128f)
+                out[i + 2] = byteOf(bg.v[q] + 128f)
+                out[i + 3] = -1
+            }
+        }
+        sentBackgrounds[gen] = bg
+        sentBackgrounds.keys.filter { it < gen - 3 }.forEach { sentBackgrounds.remove(it) }
+        send(out.copyOf(), gen, flip)
+    }
+
+    private fun byteOf(v: Float): Byte {
+        val i = Math.round(v).coerceIn(0, 255)
+        return (if (i > 127) i - 256 else i).toByte()
     }
 
     /**

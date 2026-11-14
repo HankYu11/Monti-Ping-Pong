@@ -326,7 +326,7 @@ class MainActivity : Activity() {
         // frame for the tracker and passes it on to the encoder (GlTap with an encoder); if that
         // can't be set up, the preview stream (0.5.4: lost frames), else the recording decoded
         val onFrame = { ts: Long, no: Long -> p.offerTapTime(ts, no) }
-        val onPicture = { ts: Long, no: Long, rgba: ByteArray -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4) }
+        val onPicture = { ts: Long, no: Long, rgba: ByteArray, gen: Int -> p.offerTapPicture(ts, no, rgba, c.size.width / 4, c.size.height / 4, gen) }
         val onTapError = { msg: String -> main.post { log("error", msg) }; Unit }
         val onWindow = { no: Long, at: IntArray, b: ByteArray -> p.offerWindow(no, at, b) }
         // the shaders that cut the ball's window on the chip; without them the window pass is
@@ -338,16 +338,25 @@ class MainActivity : Activity() {
                 assets.open("shaders/crop_c.frag").bufferedReader().readText(),
                 assets.open("shaders/crop_rows.frag").bufferedReader().readText())
         } catch (e: Exception) { log("error", "window shaders: ${e.message}"); null }
+        // the mask's own passes. Without them the chip hands back the picture alone and the
+        // finders cut the mask themselves, exactly as they always did
+        val mks = try {
+            GlTap.MaskShaders(
+                assets.open("shaders/quad.vert").bufferedReader().readText(),
+                assets.open("shaders/mask_body.glsl").bufferedReader().readText(),
+                assets.open("shaders/rows.frag").bufferedReader().readText(),
+                assets.open("shaders/mask.frag").bufferedReader().readText())
+        } catch (e: Exception) { log("error", "mask shaders: ${e.message}"); null }
         var t: GlTap? = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError, encoder = rec.inputSurface,
-                queueMode = queueMode, onBindFailed = { main.post { nextQueueMode() } }, windowShaders = ws, onWindow = onWindow).also { it.start() }
+                queueMode = queueMode, onBindFailed = { main.post { nextQueueMode() } }, windowShaders = ws, maskShaders = mks, onWindow = onWindow).also { it.start() }
         } catch (e: Exception) { log("error", "recording stream through the graphics chip: ${e.message}; trying the preview stream"); null }
         if (t == null) t = try {
             GlTap(c.size.width, c.size.height, fps = c.fps, onFrame = onFrame, onPicture = onPicture, onError = onTapError,
-                windowShaders = ws, onWindow = onWindow).also { it.start() }
+                windowShaders = ws, maskShaders = mks, onWindow = onWindow).also { it.start() }
         } catch (e: Exception) { log("error", "graphics tap: ${e.message}; decoding instead"); null }
         tap = t
-        t?.let { tp -> p.planWindows = { plan -> tp.windowPlan = plan } }
+        t?.let { tp -> p.planWindows = { plan -> tp.windowPlan = plan }; p.sendBackground = { b, gen, fl -> tp.setBackground(b, gen, fl) } }
         if (t == null) rec.onFrame = { p.offer(it) }
         report.put("watchingBy", when { t == null -> "decoder"; t.throughRecording -> "graphics chip, recording stream"; else -> "graphics chip, preview stream" })
         val viaRecording = t?.throughRecording == true
@@ -467,6 +476,13 @@ class MainActivity : Activity() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
             .put("skipped", p.skipped).put("thinned", p.thinned).put("thinning", p.thinning).put("ringLate", p.ringLate)
             .put("behind", "%.3f".format(p.behindShare)).put("worstBehind", "%.3f".format(p.worstBehind)).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)
+            // where the mask was cut, and what the two were counted at. "chip" only ever
+            // follows a clean count; one differing pixel reads "processor (chip differed...)"
+            .put("maskBy", when (p.maskTrust) {
+                1 -> "chip"
+                -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst})"
+                else -> "processor (${p.maskChecks.get()} frames checked, ${p.maskDisagreed.get()} pixels differed)"
+            })
             .put("rejected", JSONObject((p.tracker?.rejected ?: emptyMap<String, Int>()) as Map<*, *>))) }
         camera.stop()
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
@@ -531,13 +547,21 @@ class MainActivity : Activity() {
                 assets.open("shaders/crop_c.frag").bufferedReader().readText(),
                 assets.open("shaders/crop_rows.frag").bufferedReader().readText())
         } catch (e: Exception) { null } ?: return false
+        val mks = try {
+            GlTap.MaskShaders(
+                assets.open("shaders/quad.vert").bufferedReader().readText(),
+                assets.open("shaders/mask_body.glsl").bufferedReader().readText(),
+                assets.open("shaders/rows.frag").bufferedReader().readText(),
+                assets.open("shaders/mask.frag").bufferedReader().readText())
+        } catch (e: Exception) { null }
         val paced = java.util.concurrent.Semaphore(0)
         val t = GlTap(w, h, fps = ff.captureFps,
             onFrame = { ts, no -> p.offerTapTime(ts, no); paced.release() },
-            onPicture = { ts, no, rgba -> p.offerTapPicture(ts, no, rgba, w / 4, h / 4) },
+            onPicture = { ts, no, rgba, gen -> p.offerTapPicture(ts, no, rgba, w / 4, h / 4, gen) },
             onError = { msg -> main.post { log("error", msg) } },
-            windowShaders = ws, onWindow = { no, at, b -> p.offerWindow(no, at, b) })
+            windowShaders = ws, maskShaders = mks, onWindow = { no, at, b -> p.offerWindow(no, at, b) })
         tap = t
+        p.sendBackground = { b, gen, fl -> t.setBackground(b, gen, fl) }
         p.planWindows = { plan -> t.windowPlan = plan }
         val codec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME)!!)
         var stalls = 0

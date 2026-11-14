@@ -43,6 +43,13 @@ class Detector(val w: Int, val h: Int) {
         val moved = open2()
         n = System.nanoTime(); nanos[1] += n - t; t = n
         val out = Found(moved.toFloat() / mask.size)
+        blobs(out)
+        nanos[2] += System.nanoTime() - t
+        return out
+    }
+
+    /** the mask's blobs, filtered to the ball-like ones, into [out] */
+    private fun blobs(out: Found) {
         components { area, bw, bh, cx, cy ->
             // a ball the meter can read is 20 px across or more: 12 px of area here and up
             // (the engine's search takes 3 and up, then its rules drop the small ones)
@@ -53,9 +60,67 @@ class Detector(val w: Int, val h: Int) {
             if (area.toFloat() / (bw * bh) < 0.5f) { refused[3]++; return@components }
             out.add(floatArrayOf(cx, cy, sqrt(area / Math.PI).toFloat()))
         }
+    }
+
+    /**
+     * The same candidates, from a mask the graphics chip already cut (assets/shaders/mask.frag
+     * put it in the alpha byte of every pixel). makeMask -- six float arrays over three
+     * megabytes -- does not run at all.
+     */
+    fun findFromAlpha(rgba: ByteArray, flip: Int = 0): Found {
+        var t = System.nanoTime()
+        val m = mask
+        readAlpha(rgba, flip, m)
+        var n = System.nanoTime(); nanos[0] += n - t; t = n
+        val moved = open2()
+        n = System.nanoTime(); nanos[1] += n - t; t = n
+        val out = Found(moved.toFloat() / m.size)
+        blobs(out)
         nanos[2] += System.nanoTime() - t
         return out
     }
+
+    /**
+     * How many pixels the chip's mask and this one disagree on, for the same frame.
+     *
+     * The chip's arithmetic is checked without a phone (tools/maskcheck.py, bit-exact), but a
+     * driver is not arithmetic and a texture upload is not either. So on a real device the two
+     * are run side by side for a while and counted, and the chip's mask is believed only once it
+     * has earned it. Costs a whole makeMask while it runs, which is the point: it is the thing
+     * being replaced, so the comparison is exactly as expensive as not having bothered.
+     */
+    fun findChecked(q: Quarter, bg: Background, rgba: ByteArray, flip: Int, out: IntArray): Found {
+        var t = System.nanoTime()
+        makeMask(q, bg)
+        readAlpha(rgba, flip, chip)
+        var bad = 0
+        for (p in mask.indices) if (mask[p] != chip[p]) bad++
+        out[0] = bad
+        var n = System.nanoTime(); nanos[0] += n - t; t = n
+        val moved = open2()
+        n = System.nanoTime(); nanos[1] += n - t; t = n
+        val found = Found(moved.toFloat() / mask.size)
+        blobs(found)
+        nanos[2] += System.nanoTime() - t
+        return found
+    }
+
+    /** the chip's answer out of the alpha bytes, turned the way the small picture is turned */
+    private fun readAlpha(rgba: ByteArray, flip: Int, into: ByteArray) {
+        val fx = flip and 1 != 0; val fy = flip and 2 != 0
+        var p = 0
+        for (qy in 0 until h) {
+            val sy = if (fy) h - 1 - qy else qy
+            val row = sy * w
+            for (qx in 0 until w) {
+                val sx = if (fx) w - 1 - qx else qx
+                into[p++] = if (rgba[(row + sx) * 4 + 3].toInt() != 0) 1 else 0
+            }
+        }
+    }
+
+    /** scratch for the chip's mask while the two are being compared */
+    private val chip by lazy { ByteArray(w * h) }
 
     private fun makeMask(q: Quarter, bg: Background) {
         rowRatios(q.y, bg.y)

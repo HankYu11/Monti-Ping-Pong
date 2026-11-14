@@ -30,11 +30,11 @@ W, H = 480, 270
 HEAD = "#version 330 core\n"
 
 
-def reference(fy, fu, fv, by, bu, bv):
+def reference(fy, fu, fv, by, bu, bv, col0=0):
     """Detector.rowRatios + makeMask, on bytes, in float32 as Kotlin does it."""
     f = np.float32
     sg = np.zeros(H, f); sb = np.zeros(H, f)
-    cols = np.arange(0, W, 4)
+    cols = np.arange(col0, W, 4)
     m = by[:, cols] > 20.0
     sg = np.where(m, fy[:, cols], 0).sum(axis=1, dtype=np.float64).astype(f)
     sb = np.where(m, by[:, cols], 0).sum(axis=1, dtype=np.float64).astype(f)
@@ -94,6 +94,7 @@ def main():
         tS.use(0); tB.use(1)
         rows_prog["smallTex"].value = 0; rows_prog["bgTex"].value = 1
         rows_prog["smallSize"].value = (float(W), float(H))
+        rows_prog["col0"].value = 0.0
         ctx.vertex_array(rows_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
         rowPix = np.frombuffer(fRows.read(components=4), np.uint8).reshape(H, 1, 4)
         tR = ctx.texture((1, H), 4, rowPix.tobytes())
@@ -115,9 +116,37 @@ def main():
         sgRef = np.where(m, fy[:, cols], 0).sum(axis=1)
         sumBad = int((sgGot != sgRef).sum())
         bad = int((got != want).sum())
+
+        # The handover, which is the other half of being right. The chip works in the picture's
+        # own way round; the finders work in the flipped one, and cut their mask from the
+        # FLIPPED picture -- so the row gains are averaged over rows in a different order, and
+        # the five-row window clamps at the opposite edge. Turning the chip's mask afterwards is
+        # only the same answer if that makes no difference. Checked here rather than reasoned
+        # about: an upside-down mask is not a loud failure, it is a session that finds nothing.
+        turned = 0; per = {}
+        for flip in (1, 2, 3):
+            def t(a):
+                b = a[::-1, :] if flip & 2 else a
+                return b[:, ::-1] if flip & 1 else b
+            # with a left-right turn the chip must start where the turned picture's column 0
+            # lands, which for 480 columns is column 3 -- told to it as col0
+            cs = (W - 1) % 4 if flip & 1 else 0
+            rows_prog["col0"].value = float(cs)
+            fRows.use(); tS.use(0); tB.use(1)
+            ctx.vertex_array(rows_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
+            rp = np.frombuffer(fRows.read(components=4), np.uint8).reshape(H, 1, 4)
+            tRf = ctx.texture((1, H), 4, rp.tobytes())
+            tRf.filter = (moderngl.NEAREST, moderngl.NEAREST); tRf.repeat_x = False; tRf.repeat_y = False
+            fOut.use(); tS.use(0); tB.use(1); tRf.use(2)
+            ctx.vertex_array(mask_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
+            gotF = (np.frombuffer(fOut.read(components=4), np.uint8).reshape(H, W, 4)[:, :, 3] > 127).astype(np.uint8)
+            tRf.release()
+            wantF, _, _ = reference(t(fy), t(fu), t(fv), t(by).astype(np.int32), t(bu), t(bv))
+            per[flip] = int((t(gotF) != wantF).sum()); turned = max(turned, per[flip])
+        bad = max(bad, turned)
         worst = max(worst, bad)
         print(f"  {name:<52} {bad:>6} of {W*H} differ   row sums wrong on {sumBad} of {H} rows"
-              + ("" if bad == 0 else "   MISMATCH"))
+              + f"   turned: {per}" + ("" if bad == 0 else "   MISMATCH"))
         for t in (tS, tB, tR): t.release()
         fRows.release(); fOut.release()
 

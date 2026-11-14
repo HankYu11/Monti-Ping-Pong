@@ -49,7 +49,11 @@ class GlTap(
     private val fps: Int = 240,
     private val previewEvery: Int = 8,
     private val onFrame: (tsNs: Long, frameNo: Long) -> Unit,
-    private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray) -> Unit,
+    /**
+     * The small picture. [maskGen] is the background generation the chip cut the mask
+     * against, in the alpha byte of every pixel -- or -1 when there is no mask in it.
+     */
+    private val onPicture: (tsNs: Long, frameNo: Long, rgba: ByteArray, maskGen: Int) -> Unit,
     private val onError: (String) -> Unit,
     private val encoder: Surface? = null,
     /**
@@ -61,6 +65,7 @@ class GlTap(
     private val onBindFailed: () -> Unit = {},
     /** the shaders that cut a window (assets/shaders), when the window pass is wanted */
     private val windowShaders: WindowShaders? = null,
+    private val maskShaders: MaskShaders? = null,
     /**
      * Every frame's window off the chip, two frames later: where it was cut and its bytes
      * (the window's brightness and colour planes, then the crop's row sample). The bytes
@@ -85,6 +90,31 @@ class GlTap(
     private var fbo = 0
     private var fboTex = 0
     private var tapProgram = 0
+
+    // ---- the moving-pixel mask, cut on the chip (see assets/shaders/mask_body.glsl) ----
+    // Three passes: the small picture as before, then each row's two sums into a 1 x qh texture,
+    // then the test itself with the answer in the ALPHA channel of the same read-back the
+    // picture already does. The processor then skips Detector.makeMask entirely -- six float
+    // arrays over three megabytes a frame -- and goes straight to the opening and the blobs.
+    //
+    // Everything here is off unless the shaders were handed in, the chip is ES 3, and a
+    // background has been given. There is no half-working state: either the alpha byte is a
+    // mask, or [maskReady] is false and nothing downstream looks at it.
+    class MaskShaders(val vert: String, val body: String, val rows: String, val mask: String)
+    private var rowsProgram = 0
+    private var maskProgram = 0
+    private var bgTex = 0
+    private var rowTex = 0; private var rowFbo = 0
+    private var maskTex = 0; private var maskFbo = 0
+    private val bgPending = java.util.concurrent.atomic.AtomicReference<Triple<ByteArray, Int, Int>?>(null)
+    /** which background the chip is cutting against now; -1 until one has been uploaded */
+    @Volatile var maskGen = -1; private set
+    private var maskCol0 = 0
+    /** per read-back slot, the generation that slot's picture was cut against */
+    private var maskSlotGen = IntArray(4) { -1 }
+    /** the chip is cutting the mask and the alpha byte can be believed */
+    @Volatile var maskReady = false; private set
+    @Volatile var maskFrames = 0L; private set
     private var showProgram = 0
     private var texture: SurfaceTexture? = null
     private var textureSurface: Surface? = null
@@ -219,6 +249,28 @@ class GlTap(
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTex, 0)
         check(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE) { "framebuffer" }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+
+        // the mask's own passes: only on ES 3, only if the shaders came
+        val ms = maskShaders
+        if (gl3 && ms != null) try {
+            rowsProgram = program(ms.vert, "#version 300 es\nprecision highp float;\n" + ms.rows)
+            maskProgram = program(ms.vert, "#version 300 es\nprecision highp float;\n" + ms.body + ms.mask)
+            GLES20.glGenTextures(1, t, 0); bgTex = t[0]
+            plain2D(bgTex, qw, qh)
+            GLES20.glGenTextures(1, t, 0); rowTex = t[0]
+            plain2D(rowTex, 1, qh)
+            GLES20.glGenFramebuffers(1, t, 0); rowFbo = t[0]
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, rowFbo)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, rowTex, 0)
+            check(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE) { "row framebuffer" }
+            GLES20.glGenTextures(1, t, 0); maskTex = t[0]
+            plain2D(maskTex, qw, qh)
+            GLES20.glGenFramebuffers(1, t, 0); maskFbo = t[0]
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo)
+            GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, maskTex, 0)
+            check(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE) { "mask framebuffer" }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        } catch (e: Exception) { rowsProgram = 0; maskProgram = 0; onError("mask on the chip: ${e.message}") }
 
         if (gl3) {
             GLES30.glGenBuffers(pbo.size, pbo, 0)
@@ -437,6 +489,28 @@ class GlTap(
     private var busy = java.util.concurrent.atomic.AtomicIntegerArray(8)
     private var slot = 0
 
+    /**
+     * A plain RGBA8 target of [w] x [h]. Non-power-of-two, so GLES wants CLAMP_TO_EDGE and a
+     * non-mipmap filter or the texture is incomplete and samples black. NEAREST throughout:
+     * the row texture's texels are packed byte pairs and linear filtering would interpolate the
+     * low and high bytes separately, which is not a blur, it is nonsense.
+     */
+    private fun plain2D(id: Int, w: Int, h: Int) {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+    }
+
+    /**
+     * The background the chip compares against, in the small picture's own layout
+     * (r = brightness, g = u + 128, b = v + 128). Handed over from any thread; uploaded on the
+     * chip's thread before the next frame. Until one arrives the mask is not cut at all.
+     */
+    fun setBackground(rgba: ByteArray, gen: Int, flip: Int) { bgPending.set(Triple(rgba, gen, flip)) }
+
     /** the small picture: drawn into the framebuffer, read back (see [onPicture]) */
     private fun tap(ts: Long, no: Long) {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
@@ -451,17 +525,24 @@ class GlTap(
         GLES20.glEnableVertexAttribArray(pos)
         GLES20.glVertexAttribPointer(pos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        // passes 2 and 3: the row sums, then the test, with the answer in alpha. From here the
+        // read-back comes out of maskFbo instead of fbo -- same size, same format, same bytes in
+        // r, g and b, with the mask where 1.0 used to be.
+        val cut = maskPasses()
+        val gen = if (cut) maskGen else -1
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, if (cut) maskFbo else fbo)
         if (!gl3) {
             pixels.position(0)
             GLES20.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pixels)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             val out = ByteArray(qw * qh * 4)
             pixels.position(0); pixels.get(out)
-            onPicture(ts, no, out)
+            onPicture(ts, no, out, gen)
             return
         }
         val k = slot
         if (busy.get(k) != 0) { busySkips++; GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0); return }
+        maskSlotGen[k] = gen
         GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, pbo[k])
         GLES30.glReadPixels(0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, 0)
         GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
@@ -471,6 +552,59 @@ class GlTap(
         busy.set(k, 1)
         slot = (k + 1) % pbo.size
         readerHandler.post { takeOut(k, fence, ts, no) }
+    }
+
+    /**
+     * The mask's two passes, on the chip's thread, right after the small picture is drawn.
+     * Returns true when [maskFbo] holds the picture WITH the mask in its alpha channel; false
+     * when anything is missing, in which case the caller reads the picture back as it always has.
+     */
+    private fun maskPasses(): Boolean {
+        if (maskProgram == 0 || rowsProgram == 0) return false
+        bgPending.getAndSet(null)?.let { (b, gen, flip) ->
+            if (b.size == qw * qh * 4) {
+                val buf = ByteBuffer.allocateDirect(b.size).order(ByteOrder.nativeOrder()).put(b).also { it.position(0) }
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, bgTex)
+                GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, qw, qh, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
+                maskReady = true; maskGen = gen
+                // the row sample must start where the finders' first column lands here, or
+                // the two sum different columns (assets/shaders/rows.frag)
+                maskCol0 = if (flip and 1 != 0) (qw - 1) % 4 else 0
+            }
+        }
+        if (!maskReady) return false
+        // blending would mix pass 3's output with whatever the target held; the mask is not a
+        // colour and must not be blended with anything
+        GLES20.glDisable(GLES20.GL_BLEND)
+        val pos2 = GLES20.glGetAttribLocation(rowsProgram, "pos")
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, rowFbo)
+        GLES20.glViewport(0, 0, 1, qh)
+        GLES20.glUseProgram(rowsProgram)
+        bind2D(0, fboTex, rowsProgram, "smallTex"); bind2D(1, bgTex, rowsProgram, "bgTex")
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(rowsProgram, "smallSize"), qw.toFloat(), qh.toFloat())
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(rowsProgram, "col0"), maskCol0.toFloat())
+        GLES20.glEnableVertexAttribArray(pos2)
+        GLES20.glVertexAttribPointer(pos2, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+
+        val pos3 = GLES20.glGetAttribLocation(maskProgram, "pos")
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo)
+        GLES20.glViewport(0, 0, qw, qh)
+        GLES20.glUseProgram(maskProgram)
+        bind2D(0, fboTex, maskProgram, "smallTex"); bind2D(1, bgTex, maskProgram, "bgTex")
+        bind2D(2, rowTex, maskProgram, "rowTex")
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(maskProgram, "rows"), qh.toFloat())
+        GLES20.glEnableVertexAttribArray(pos3)
+        GLES20.glVertexAttribPointer(pos3, 2, GLES20.GL_FLOAT, false, 0, quad)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        maskFrames++
+        return true
+    }
+
+    private fun bind2D(unit: Int, id: Int, prog: Int, name: String) {
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0 + unit)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(prog, name), unit)
     }
 
     /** on the reader's thread: once the chip is done, the picture copied out and the buffer freed */
@@ -488,7 +622,7 @@ class GlTap(
         } catch (e: Exception) { onError("read-back: ${e.message}") }
         busy.set(k, 0)
         readMsAvg += ((SystemClock.elapsedRealtimeNanos() - t0) / 1e6 - readMsAvg) / minOf(++readN, 240L)
-        out?.let { onPicture(ts, no, it) }
+        out?.let { onPicture(ts, no, it, maskSlotGen[k]) }
     }
 
     // ---- the ball's window, cut as the frame goes past (see LiveWindows) ----

@@ -127,8 +127,20 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         while (samples.size > samplesKept) samples.removeFirst()
         val ys = samples.map { it.y }; val us = samples.map { it.u }; val vs = samples.map { it.v }
         bgY = medianOf(ys); bgU = medianOf(us); bgV = medianOf(vs)
-        if (samples.size >= 3) bgNow = Background(bgY!!, bgU!!, bgV!!)
+        if (samples.size >= 3) { bgNow = Background(bgY!!, bgU!!, bgV!!); bgSamples = samples.size; bgVersion++ }
     }
+
+    /**
+     * Which background [background] is on, and how many frames it is the median of.
+     *
+     * The graphics chip can cut the mask itself, but only against a background it has been
+     * handed, and only one that is whole: the median of five integral samples is itself an
+     * integer and survives the trip through a byte texture, the median of four is a half and
+     * does not. The version is what says whether a mask the chip cut was cut against the same
+     * background a finder would have used -- which is the only fair way to compare the two.
+     */
+    @Volatile var bgVersion = 0; private set
+    @Volatile var bgSamples = 0; private set
 
     private fun medianOf(frames: List<FloatArray>): FloatArray {
         val n = frames.size

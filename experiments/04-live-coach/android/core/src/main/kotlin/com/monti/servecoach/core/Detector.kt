@@ -26,13 +26,21 @@ class Detector(val w: Int, val h: Int) {
     private val rows = FloatArray(h)
     /** time (ns) in: mask, opening, blobs */
     val nanos = LongArray(3)
+    /** blobs turned away, by which rule: [0] too small, [1] too big, [2] too long, [3] too hollow */
+    val refused = LongArray(4)
+    /** the longest/shortest ratio of the blobs turned away for being too long */
+    var worstAspect = 0f; private set
+    /** moving pixels [0] before the 2x2 opening and [1] after it: the opening can erase a thin streak */
+    val maskPixels = LongArray(2)
 
     /** [x, y, r] of each candidate */
     fun find(q: Quarter, bg: Background): Found {
         var t = System.nanoTime()
         makeMask(q, bg)
         var n = System.nanoTime(); nanos[0] += n - t; t = n
+        for (b in mask) if (b.toInt() != 0) maskPixels[0]++
         open2()
+        for (b in mask) if (b.toInt() != 0) maskPixels[1]++
         n = System.nanoTime(); nanos[1] += n - t; t = n
         var moved = 0
         for (b in mask) if (b.toInt() != 0) moved++
@@ -40,8 +48,11 @@ class Detector(val w: Int, val h: Int) {
         components { area, bw, bh, cx, cy ->
             // a ball the meter can read is 20 px across or more: 12 px of area here and up
             // (the engine's search takes 3 and up, then its rules drop the small ones)
-            if (area < 12 || area > 625) return@components
-            if (max(bw, bh).toFloat() / max(1, min(bw, bh)) > 1.8f || area.toFloat() / (bw * bh) < 0.5f) return@components
+            if (area < 12) { refused[0]++; return@components }
+            if (area > 625) { refused[1]++; return@components }
+            val aspect = max(bw, bh).toFloat() / max(1, min(bw, bh))
+            if (aspect > 1.8f) { refused[2]++; if (aspect > worstAspect) worstAspect = aspect; return@components }
+            if (area.toFloat() / (bw * bh) < 0.5f) { refused[3]++; return@components }
             out.add(floatArrayOf(cx, cy, sqrt(area / Math.PI).toFloat()))
         }
         nanos[2] += System.nanoTime() - t

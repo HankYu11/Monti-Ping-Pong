@@ -150,6 +150,12 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
 
     // ------------------------------------------------------------ candidates in one frame
     private val detector = Detector(w, h)
+    /** blobs the finder turned away, by rule: too small, too big, too long, too hollow */
+    val refusedBlobs: LongArray get() = detector.refused
+    /** the longest/shortest ratio of the worst blob turned away for being too long */
+    val worstAspect: Float get() = detector.worstAspect
+    /** moving pixels before and after the opening, over the clip */
+    val maskPixels: LongArray get() = detector.maskPixels
     private val movingAt = FloatArray(1024)            // the share of the picture moving, by frame
 
     /** The background as it is now, for finding candidates on other threads ([Detector.find]). */

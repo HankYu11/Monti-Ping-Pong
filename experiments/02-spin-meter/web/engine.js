@@ -1460,12 +1460,15 @@
     //   40 rev/s, pole 6 deg off   0.1309
     //   2, 25, 10, 40 rev/s        0.2270 0.2378 0.4249 0.5415
     //
-    // A gap of about 5x, and 0.02 sits inside it: 1.8x above the worst float, 2.8x below the
-    // nearest real spin, leaning toward refusing rather than claiming no spin, because a wrong
-    // "no spin" on a real serve is the worse of the two mistakes. It was 0.005 before, which
-    // caught two floats of seven and left the rest to be refused -- or, twice, to be announced
-    // as 2.5 and 2.7 rev/s of spin that was not there.
-    if (V / sumW < 0.02) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
+    // ...and that gap was an artefact of the sample. Every spinning ball above is side-on or
+    // near it. Filmed HEAD-ON, from the end of the table, a real 40 rev/s serve reads 0.0141
+    // and 0.0168 -- inside the float band, which tops out at 0.0114. Raising the bar to 0.02
+    // on the strength of the side-on cases announced both head-on serves as "no spin", caught
+    // by servecheck's head-on cases. A 1.2x gap is not a threshold, so the bar stays at 0.005:
+    // it catches the cleanest floats and leaves the rest to be refused, which is the safe
+    // failure. Telling a float from a ball whose marking cannot be read still wants a signal
+    // nobody here has found, and the head-on case is where any candidate has to be tested.
+    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
     // starting points: the black half's best rates, each dot's own circle, then for every
     // starting axis the best few rates along it
     const axes = [];

@@ -197,7 +197,24 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
                 val df = max(1f, l[0] - p0[0])
                 px = l[1] + (l[1] - p0[1]) / df * (i - l[0]); py = l[2] + (l[2] - p0[2]) / df * (i - l[0])
             }
-            val gate = max(12.5f, 3 * l[3])
+            // How far the ball may have gone. After the first link there is a velocity to
+            // predict from, so the gate only has to cover the ERROR in that prediction -- one
+            // step of gravity is 0.1 of these pixels, and the rest is the finder's own wobble,
+            // so three radii is already generous.
+            //
+            // On the FIRST link there is no velocity, [px] is simply where the ball was, and
+            // the gate has to cover its whole displacement. Three radii then means a ceiling on
+            // how fast a serve may be and still be seen at all: a ball crosses 0.417 x v of its
+            // own radii between tracker frames (v in m/s), at ANY camera distance -- the ball
+            // shrinks and the displacement shrinks together -- so the old floor of 12.5, which
+            // is 4.2 radii at 2.5 m, stopped tracking anything past 10.1 m/s. Rendered serves
+            // agreed exactly: 10 m/s tracked, 12 m/s produced no track at all.
+            //
+            // Eight radii is 19 m/s, past the point where the flight is too short to measure
+            // anyway (about 17 m/s at 2.5 m, needing 40 frames). Widening only the blind link
+            // leaves the steady-state gate where it was, and a wrong first link does not
+            // survive: the next prediction misses, and the track dies short.
+            val gate = if (tr.pts.size > 1) max(12.5f, 3 * l[3]) else max(12.5f, 8 * l[3])
             for ((j, c) in cs.withIndex()) {
                 val d = hypot(c[0] - px, c[1] - py)
                 if (d < gate) pairs.add(Triple(d + 8 * abs(ln(c[2] / l[3])), ti, j))

@@ -354,55 +354,83 @@ Magnus coefficient saturating at 0.35, the ITTF 40 mm / 2.7 g ball), not the app
 a simulator cannot catch is an error shared by renderer and meter — both assume a sphere, lit
 from one side, through a pinhole. That is what the real footage is for.
 
-### Results (2026-11-14, 32 captures over 18 serves)
+### Results (2026-11-14, 40 captures over 21 serves)
 
 **Rate, end to end, through tracker and capture writer and engine:**
 
 | true rps | 10 | 25 | 40 | 60 | 70 | 90 | 0 (float) |
 |---|---|---|---|---|---|---|---|
-| measured | 10.00 | 25.00 | 40.01 | 60.01 | 70.00 | 90.00 | **0.41** |
+| measured | 9.99 | 25.01 | 39.98 | 60.01 | 70.05 | 90.01 | **0.29** |
 
-Worst error on a spinning ball is 0.08 rev/s. The float is the useful row for a sceptic: a ball
-with no spin at all reads 0.4 rev/s, which is the noise floor measured rather than asserted.
+Worst error on a spinning ball is 0.12 rev/s. The float is the useful row for a sceptic: a ball
+with no spin at all reads 0.3 rev/s, which is the noise floor measured rather than asserted.
 
-**Axis — median 5.0 degrees, and it depends on the kind of spin:**
+**Axis — median 7.5 degrees, and it depends on the kind of spin:**
 
 | case | true lift / curve / gyro | measured | axis error |
 |---|---|---|---|
-| backspin 40 | 40.0 / 0 / 0 | 39.9 / 1.7 / -3.1 | 5.0° |
-| topspin 40 | -40.0 / 0 / 0 | -40.0 / -0.3 / 1.8 | 2.6° |
-| **pure sidespin 40** | 0 / 40.0 / 0 | -4.1 / 39.4 / 5.6 | **10.0°** |
-| **pure sidespin, other way** | 0 / -40.0 / 0 | 7.7 / -39.0 / -4.9 | **13.9°** |
-| side-backspin 40 | 28.3 / 28.3 / 0 | 26.8 / 29.4 / 3.7 | 6.0° |
-| head-on backspin 40 | 40.0 / 0 / 0 | 39.5 / -1.9 / -5.3 | 8.1° |
-| head-on sidespin 40 | 0 / 40.0 / 0 | -5.6 / 39.2 / 5.5 | 11.4° |
+| backspin 25 | 25.0 / 0 / 0 | 25.0 / 0.5 / -0.5 | 1.6° |
+| backspin 40 | 40.0 / 0 / 0 | 39.9 / 1.7 / -2.4 | 4.2° |
+| topspin 40 | -40.0 / 0 / 0 | -39.9 / -0.5 / 2.8 | 4.1° |
+| **pure sidespin 40** | 0 / 40.0 / 0 | 5.4 / 39.0 / 6.9 | **12.6°** |
+| **pure sidespin, other way** | 0 / -40.0 / 0 | -7.6 / -38.8 / -6.5 | **14.5°** |
+| pure gyro 40 | 0 / 0 / 40.0 | -4.7 / -2.7 / 39.6 | 7.8° |
+| pure gyro 40, turned | 0 / 0 / 40.0 | 12.4 / -7.4 / 37.2 | **21.0°** |
+| pure gyro 40, turned again | 0 / 0 / 40.0 | -5.7 / -3.3 / 39.4 | 9.6° |
+| side-backspin 40 | 28.3 / 28.3 / 0 | 31.4 / 24.6 / 2.8 | 8.0° |
+| head-on backspin 40 | 40.0 / 0 / 0 | 40.0 / 1.2 / -0.4 | 1.8° |
+| head-on sidespin 40 | 0 / 40.0 / 0 | 0.9 / 39.8 / 5.0 | 7.2° |
 
-So the split is real — a pure sidespin comes back as 39.4 of 40 sidespin — but **sidespin
-carries about twice the axis error of back/topspin**. This is the first hard number for what
-the sections above could only call "not validated yet". The honest statement to make about the
-app is that the rate is a measurement and the axis is a measurement with a ±10° cloud on it.
+So the split is real — a pure sidespin comes back as 39.0 of 40 sidespin, a pure gyro as 39.6
+of 40 gyro — but back and topspin sit at 1.6 to 4.2 degrees while sidespin and gyro run to 21.
+This is the first hard number for what the sections above could only call "not validated yet".
+The honest statement to make about the app is that the rate is a measurement and the axis is a
+measurement with a ten to twenty degree cloud on it, widest when little of the spin lifts or
+drops the ball.
 
 **The window ring loses nothing.** Every case was rebuilt through the 0.13.0 chip-side ring as
-well: 14 pairs, largest disagreement anywhere 0.05 rev/s and 0.7°.
+well: 19 pairs, largest disagreement 0.11 rev/s and 3.9° (that one on a head-on sidespin;
+every other pair is inside 0.03 rev/s and 1.5°).
 
-**Four serves the app never found at all**, which is what the simulator buys that a recording
+### The blind spot, which is not about the kind of spin
+
+The meter reads the path of the inked pole. A ball whose **pole lies along its own spin axis**
+has a marking that does not move however fast it turns, so the rate is not in the footage at
+all — by this method or any other. The sweep carries that case on purpose, with the pole 8
+degrees off the axis:
+
+| case | pole to axis | true rps | measured |
+|---|---|---|---|
+| pole on the axis | 8° | 40.0 | **0.21** |
+| every other case | 33-84° | | within 0.12 |
+
+**The app does not refuse it — it answers 0.2 rev/s.** A confident wrong number is worse than
+"couldn't read that one", and that is the clearest thing this sweep has turned up to fix. It
+has nothing to do with gyro: it is where the marking happened to be pointing. (It was found by
+accident, when `servesim.py` drew one starting orientation for every case and the gyro case
+landed 8.7 degrees from it, which looked exactly like a gyro bug until the angle was measured.
+`--orient` gives the orientation its own seed now, the truth file reports `pole_axis_deg`, and
+gyro is run from three orientations, because one orientation tests one orientation.)
+
+**Two serves the app never found at all**, which is what the simulator buys that a recording
 session does not:
 
 | case | what the tracker said |
 |---|---|
-| pure gyro 40 | the flight breaks into two tracks, both rejected as "tiny" |
 | far camera (16 px ball) | 0.04 candidates a frame — barely detected |
 | dim room (gain 0.55, noise 6) | 0.03 candidates a frame — barely detected |
-| full blur (1/240 s) | "tiny", "short" |
 
-The gyro failure is the interesting one. With the axis along the flight the dark hemisphere
-rotates in the image plane, the blob detector measures a half-ball, the radius falls from 9.3
-to 7.8 px and the track snaps; backspin on identical geometry holds one clean 69-frame track.
-Two things keep it from being a bug to fix today: a *pure* gyro serve is as unplayable as a
-pure sidespin, and the six gyro-heavy serves in `web/test/labels.mjs` (up to 45% gyro) all
-tracked fine. It marks the edge of the envelope. The rendered ink is also blacker than real
-ink, so the real effect is milder. The other three set working limits: the ball wants to be
-above roughly 20 px, in a reasonably lit room.
+These set the working limits: the ball wants to be above roughly 20 px across, in a reasonably
+lit room. Both fail in the detector, before any track exists, which is a different problem from
+anything above.
+
+A third and a fourth — a gyro serve and a serve shot at 1/240 s — used to fail here too, and
+were a real fault that this sweep found and fixed: see `ServeTracker.ballSize`. The ball's
+radius comes from the area of the moving mask, which only ever loses pixels to a background the
+ball happens to match, so the median of a track's radii underestimated a real 20 px ball by 13
+to 17% and the "tiny" rule was throwing away serves it was never meant to. Measured at
+percentile 85 instead — the same reading `engine.js` had already arrived at for its millimetres
+per pixel — all three tracks land within 8% of the truth.
 
 ### What this does and does not prove
 

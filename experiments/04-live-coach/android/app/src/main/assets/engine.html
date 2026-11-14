@@ -12,7 +12,13 @@
     // or left (-), gyro is signed and points away down the table when positive. marking says
     // whether the colour dots were read, which is what makes gyro's direction worth drawing.
     lift: r.lift, curve: r.curve, gyro: r.gyro, marking: r.marking, gyroDirKnown: !!r.gyroDirKnown,
-    fit: r.fit, speed: r.flight && r.flight.launchSpeed, toward: r.flight && r.flight.towardCameraDeg,
+    // speed is the ball's own speed over the stretch the engine read, in m/s. Measured against
+    // rendered serves whose speed is known it lands inside the flight's true range every time;
+    // launchSpeed, which claims the speed at the HIT, reads 8% low at 5 m/s and 17% low at 10
+    // because a table tennis ball sheds speed hard to drag and the extrapolation does not model
+    // it. The app shows `speed`; launchSpeed rides along for the report, flagged for what it is.
+    fit: r.fit, speed: r.flight && r.flight.speed, launchSpeed: r.flight && r.flight.launchSpeed,
+    toward: r.flight && r.flight.towardCameraDeg,
     frames: r.nFrames, issues: (r.issues || []).map((i) => i.text), ballPx: r.ballRadiusPx ? 2 * r.ballRadiusPx : undefined,
   };
   // For the training data (0.8.3): each measured stretch in full, without the ball images. The

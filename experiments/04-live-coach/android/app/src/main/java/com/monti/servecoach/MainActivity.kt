@@ -950,7 +950,10 @@ class MainActivity : Activity() {
         val spin = if (sv.has("lift")) Spin(sv.optDouble("lift", 0.0), sv.optDouble("curve", 0.0),
             sv.optDouble("gyro", 0.0), sv.optBoolean("gyroDirKnown"),
             afterBounce = sv.optString("phase") == "bounce") else null
-        screen.reading(r.optInt("capture"), rpm, type, closer, spin)
+        // m/s over the stretch the engine read -> km/h, which is how a player thinks about it.
+        // Shown only when there is one: a reading from a handed-in track may carry no flight.
+        val kmh = sv.optDouble("speed", 0.0).takeIf { it > 0.1 }?.let { (it * 3.6).roundToInt() }
+        screen.reading(r.optInt("capture"), rpm, type, closer, spin, kmh)
         turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
     }
 

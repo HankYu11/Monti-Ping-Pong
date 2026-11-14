@@ -142,8 +142,11 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
 
     /** a serve read: its number, RPM (to 10), what the spin is, any warning, and the spin to draw */
-    fun reading(serve: Int, rpm: Int, type: String, coach: String, spin: Spin? = null) {
-        serveLabel.text = "$source %02d".format(serve)
+    fun reading(serve: Int, rpm: Int, type: String, coach: String, spin: Spin? = null, kmh: Int? = null) {
+        // The speed goes beside the serve's name rather than under the spin: 0.7.9 showed two
+        // numbers the same size and the player called it "kinda confusing", and the one big
+        // number is still the spin.
+        serveLabel.text = "$source %02d".format(serve) + (kmh?.let { " · $it km/h" } ?: "")
         bigText.text = SpannableString("$rpm RPM").apply { setSpan(RelativeSizeSpan(0.3f), "$rpm".length, length, 0) }
         val t = type.lowercase(Locale.US)
         // the strength word lived here and on the scale; the scale keeps it. What is left is the

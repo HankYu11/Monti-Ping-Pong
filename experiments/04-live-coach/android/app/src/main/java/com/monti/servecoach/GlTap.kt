@@ -286,8 +286,13 @@ class GlTap(
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
         GLES20.glGenTextures(1, t, 0); fboTex = t[0]
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex)
-        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, qw, qh, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+        // The small picture's target. The mask passes SAMPLE it (0.13.10 on), so it must be a
+        // complete texture: GL's default minifying filter is NEAREST_MIPMAP_LINEAR, and with no
+        // mipmaps a texture left on it is incomplete -- a conformant driver (the Pixel 8's Mali)
+        // then samples black, the mask passes copy that black into the picture they hand back,
+        // and every finder is watching a black, frozen frame. Rendering INTO it never cared, which
+        // is why nothing went wrong before 0.13.10. Mesa's maskcheck set NEAREST itself and passed.
+        plain2D(fboTex, qw, qh)
         GLES20.glGenFramebuffers(1, t, 0); fbo = t[0]
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTex, 0)

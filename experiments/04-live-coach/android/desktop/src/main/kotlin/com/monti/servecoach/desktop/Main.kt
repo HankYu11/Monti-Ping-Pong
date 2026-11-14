@@ -165,7 +165,7 @@ fun main(args: Array<String>) {
         }
         println("""{"clip":"${clip.name}","serve":${k + 1},"frames":"${s.first}-${s.last}","rect":[${c.rect.joinToString(",")}],"ballR":${"%.1f".format(s.ballRadius * 4)},"tracks":${s.tracks},"why":"${s.why}","file":"${file.path}"}""")
     }
-    println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}","blobsRefused":"small=${tracker.refusedBlobs[0]} big=${tracker.refusedBlobs[1]} long=${tracker.refusedBlobs[2]} hollow=${tracker.refusedBlobs[3]}","worstAspect":${"%.2f".format(tracker.worstAspect)},"maskKept":"${tracker.maskPixels[1]} of ${tracker.maskPixels[0]}"}""")
+    println("""{"clip":"${clip.name}","framesSeen":$n,"serves":${serves.size},"msPerFrame":${"%.2f".format(ms / n)},"downsampleMs":${"%.2f".format(dsNs / 1e6 / pushed)},"trackMs":${"%.2f".format(pushNs / 1e6 / pushed)},"sections":"${tracker.nanos.joinToString(",") { "%.2f".format(it / 1e6 / pushed) }}","candidatesPerFrame":${"%.2f".format(tracker.candidatesSeen.toDouble() / n)},"rejected":"${tracker.rejected}","blobsRefused":"small=${tracker.refusedBlobs[0]} big=${tracker.refusedBlobs[1]} long=${tracker.refusedBlobs[2]} hollow=${tracker.refusedBlobs[3]}","worstAspect":${"%.2f".format(tracker.worstAspect)}}""")
 }
 
 fun probe(clip: File): Pair<Int, Int> {

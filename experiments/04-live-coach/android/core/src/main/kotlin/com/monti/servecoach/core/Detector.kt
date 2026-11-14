@@ -30,20 +30,18 @@ class Detector(val w: Int, val h: Int) {
     val refused = LongArray(4)
     /** the longest/shortest ratio of the blobs turned away for being too long */
     var worstAspect = 0f; private set
-    /** moving pixels [0] before the 2x2 opening and [1] after it: the opening can erase a thin streak */
-    val maskPixels = LongArray(2)
 
     /** [x, y, r] of each candidate */
     fun find(q: Quarter, bg: Background): Found {
         var t = System.nanoTime()
         makeMask(q, bg)
         var n = System.nanoTime(); nanos[0] += n - t; t = n
-        for (b in mask) if (b.toInt() != 0) maskPixels[0]++
-        open2()
-        for (b in mask) if (b.toInt() != 0) maskPixels[1]++
+        // open2 counts what survives as it dilates, so the mask is not walked again for it.
+        // There were THREE whole-frame sweeps here -- 129,600 bytes each, 120 times a second --
+        // and two of them existed only to answer a question (is the opening eating the ball?
+        // it is not) that was answered days ago.
+        val moved = open2()
         n = System.nanoTime(); nanos[1] += n - t; t = n
-        var moved = 0
-        for (b in mask) if (b.toInt() != 0) moved++
         val out = Found(moved.toFloat() / mask.size)
         components { area, bw, bh, cx, cy ->
             // a ball the meter can read is 20 px across or more: 12 px of area here and up
@@ -97,8 +95,9 @@ class Detector(val w: Int, val h: Int) {
      * Opening with a 2x2 square, as the engine does at half size: single pixels and one-pixel lines
      * (compression noise, edges shimmering) go, the ball stays.
      */
-    private fun open2() {
+    private fun open2(): Int {
         val m = mask; val e = eroded
+        var kept = 0
         // erode: a pixel stays when its 2x2 block (it and right, down, down-right) is all set
         for (y in 0 until h - 1) {
             var p = y * w
@@ -108,14 +107,18 @@ class Detector(val w: Int, val h: Int) {
         }
         java.util.Arrays.fill(e, (h - 1) * w, h * w, 0)
         // dilate back: set where any of it, left, up, up-left was kept
-        for (x in 0 until w) m[x] = (e[x].toInt() or (if (x > 0) e[x - 1].toInt() else 0)).toByte()
+        for (x in 0 until w) { val b = e[x].toInt() or (if (x > 0) e[x - 1].toInt() else 0); m[x] = b.toByte(); kept += b }
         for (y in 1 until h) {
             var p = y * w
-            m[p] = (e[p].toInt() or e[p - w].toInt()).toByte()
+            var b = e[p].toInt() or e[p - w].toInt(); m[p] = b.toByte(); kept += b
             p++
             val end = y * w + w
-            while (p < end) { m[p] = (e[p].toInt() or e[p - 1].toInt() or e[p - w].toInt() or e[p - w - 1].toInt()).toByte(); p++ }
+            while (p < end) {
+                b = e[p].toInt() or e[p - 1].toInt() or e[p - w].toInt() or e[p - w - 1].toInt()
+                m[p] = b.toByte(); kept += b; p++
+            }
         }
+        return kept
     }
 
     /** 8-connected blobs of the mask (visited pixels are marked 2): area, box size, centre */
@@ -124,28 +127,29 @@ class Detector(val w: Int, val h: Int) {
         for (start in 0 until w * h) {
             if (m[start].toInt() != 1) continue
             var sp = 0
-            st[sp++] = start; m[start] = 2
+            st[sp++] = ((start / w) shl 16) or (start % w); m[start] = 2
             var area = 0; var sx = 0L; var sy = 0L
             var x0 = w; var y0 = h; var x1 = -1; var y1 = -1
             while (sp > 0) {
-                val p = st[--sp]
-                val y = p / w; val x = p - y * w
+                val packed = st[--sp]
+                val y = packed ushr 16; val x = packed and 0xffff
+                val p = y * w + x
                 area++; sx += x; sy += y
                 if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y
                 val l = x > 0; val r = x < w - 1
                 if (y > 0) {
                     val u = p - w
-                    if (l && m[u - 1].toInt() == 1) { m[u - 1] = 2; st[sp++] = u - 1 }
-                    if (m[u].toInt() == 1) { m[u] = 2; st[sp++] = u }
-                    if (r && m[u + 1].toInt() == 1) { m[u + 1] = 2; st[sp++] = u + 1 }
+                    if (l && m[u - 1].toInt() == 1) { m[u - 1] = 2; st[sp++] = ((y - 1) shl 16) or (x - 1) }
+                    if (m[u].toInt() == 1) { m[u] = 2; st[sp++] = ((y - 1) shl 16) or x }
+                    if (r && m[u + 1].toInt() == 1) { m[u + 1] = 2; st[sp++] = ((y - 1) shl 16) or (x + 1) }
                 }
-                if (l && m[p - 1].toInt() == 1) { m[p - 1] = 2; st[sp++] = p - 1 }
-                if (r && m[p + 1].toInt() == 1) { m[p + 1] = 2; st[sp++] = p + 1 }
+                if (l && m[p - 1].toInt() == 1) { m[p - 1] = 2; st[sp++] = (y shl 16) or (x - 1) }
+                if (r && m[p + 1].toInt() == 1) { m[p + 1] = 2; st[sp++] = (y shl 16) or (x + 1) }
                 if (y < h - 1) {
                     val d = p + w
-                    if (l && m[d - 1].toInt() == 1) { m[d - 1] = 2; st[sp++] = d - 1 }
-                    if (m[d].toInt() == 1) { m[d] = 2; st[sp++] = d }
-                    if (r && m[d + 1].toInt() == 1) { m[d + 1] = 2; st[sp++] = d + 1 }
+                    if (l && m[d - 1].toInt() == 1) { m[d - 1] = 2; st[sp++] = ((y + 1) shl 16) or (x - 1) }
+                    if (m[d].toInt() == 1) { m[d] = 2; st[sp++] = ((y + 1) shl 16) or x }
+                    if (r && m[d + 1].toInt() == 1) { m[d + 1] = 2; st[sp++] = ((y + 1) shl 16) or (x + 1) }
                 }
                 if (area > 4000) break                       // a person or the paddle: not a ball, stop counting
             }

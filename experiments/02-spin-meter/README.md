@@ -455,6 +455,38 @@ to 17% and the "tiny" rule was throwing away serves it was never meant to. Measu
 percentile 85 instead — the same reading `engine.js` had already arrived at for its millimetres
 per pixel — all three tracks land within 8% of the truth.
 
+### What the setup can measure at all
+
+Two different kinds of ceiling, and it is worth knowing which is which: one is physics and
+cannot be moved without changing the camera, the other was a constant in the code.
+
+**Spin: 120 rev/s (7,200 RPM), and that is physics.** Half the frame rate, by Nyquist. The
+sweep shows it directly -- 130 rev/s came back as 110 with a 177 degree axis error -- and the
+engine already measures exactly to 90 and 100, so there is nothing left to reclaim here. The
+fastest serve in the literature is 63 rev/s, so there is about 2x of headroom. Rotational blur
+is the softer limit below it: the marking smears `0.131 x rev/s` mm at the rim during the
+1/960 s exposure, which is 10% of the ball at 30 rev/s and 39% at 120, and is the same fraction
+at any camera distance.
+
+**Speed: about 18 m/s (65 km/h) at 2.5 m, and it used to be 10.** The useful unit is the ball's
+own radius, not the pixel: a ball crosses `0.417 x v` of its own radii between tracker frames
+(v in m/s) at ANY distance, because moving the camera back shrinks the ball and the
+displacement by the same factor. The first link in `ServeTracker` has no velocity to predict
+from, so its gate has to cover that whole displacement; it was 12.5 quarter-pixels, which is
+4.2 radii at 2.5 m, which is 10.1 m/s. Rendered serves agreed exactly -- 10 m/s tracked, 12 m/s
+gave no track at all, not a bad reading. At eight radii the same serves read 29.99 and 29.97
+rev/s against a true 30.
+
+What stops it now is the frame running out, which is the right thing to be stopped by: the
+engine wants about 40 frames of flight, and at 20 m/s there are 37. That also removes the
+reason to move the camera back for fast serves, so the ball can stay 24 px across where the
+spin reads best.
+
+**Distance: about 3 m.** The ball is `40 x F / d` pixels across -- 24 px at 2.5 m, 20 px at
+2.96 m, which is the tracker's "tiny" bar. At 3.6 m (16 px) the detector finds the ball in 4%
+of frames and no serve is found. The engine itself still measures a 14 px ball to within
+0.5 rev/s, so this ceiling is the finder's, not the meter's.
+
 ### What this does and does not prove
 
 Proves: the measurement and the plumbing, against an answer, on serves nobody can play --

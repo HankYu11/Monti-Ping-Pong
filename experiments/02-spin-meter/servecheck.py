@@ -75,6 +75,13 @@ CASES = [
     ("15 rps, pole 5 deg off",  dict(spin="gyro", rps=15, pole_at=5)),
     ("head-on, backspin 40", dict(spin="backspin", rps=40, toward=45)),
     ("head-on, sidespin 40", dict(spin="sidespin", rps=40, toward=45)),
+    # Speed. A serve faster than about 10 m/s used to produce no track at all -- see the first
+    # link's gate in ServeTracker -- and these are what keep that from coming back. 18 m/s is
+    # the most this framing can hold: at 20 the flight is 37 frames and the engine wants 40.
+    ("slow, 3 m/s",          dict(spin="backspin", rps=30, speed=3)),
+    ("fast, 12 m/s",         dict(spin="backspin", rps=30, speed=12)),
+    ("fast, 16 m/s",         dict(spin="backspin", rps=30, speed=16)),
+    ("fast, 18 m/s",         dict(spin="backspin", rps=30, speed=18)),
     ("far camera, 3.6 m",    dict(spin="backspin", rps=40, distance=3.6)),
     ("dim room",             dict(spin="backspin", rps=40, gain=0.55, noise=6)),
     ("full blur, 1/240 s",   dict(spin="backspin", rps=40, exposure=1.0)),

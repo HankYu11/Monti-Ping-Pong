@@ -474,7 +474,7 @@ class MainActivity : Activity() {
     private fun stopAll() {
         val wasLive = mode == Mode.LIVE
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("thinned", p.thinned).put("thinning", p.thinning).put("ringLate", p.ringLate)
+            .put("skipped", p.skipped).put("fallingBehind", p.behindNow).put("ringLate", p.ringLate)
             .put("behind", "%.3f".format(p.behindShare)).put("worstBehind", "%.3f".format(p.worstBehind)).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)
             // where the mask was cut, and what the two were counted at. "chip" only ever
             // follows a clean count; one differing pixel reads "processor (chip differed...)"
@@ -1002,7 +1002,7 @@ class MainActivity : Activity() {
     /** the counters as they stand, into [report]: shared by the file and the clipboard */
     private fun fillReport() {
         pipeline?.let { p -> report.put("watching", JSONObject().put("encoded", recorder?.framesTotal ?: 0L).put("decoded", p.decoded).put("dropped", p.dropped)
-            .put("skipped", p.skipped).put("thinned", p.thinned).put("thinning", p.thinning).put("ringLate", p.ringLate)
+            .put("skipped", p.skipped).put("fallingBehind", p.behindNow).put("ringLate", p.ringLate)
             .put("behind", "%.3f".format(p.behindShare)).put("worstBehind", "%.3f".format(p.worstBehind)).put("pictureCheck", p.flipCheck).put("waitingForKey", p.waitingForKey).put("decoderFull", p.decoderFull).put("msPerFrame", p.trackMsAvg).put("shrinkMs", p.shrinkMsAvg).put("findMs", p.findMsAvg).put("linkMs", p.linkMsAvg).put("lagMs", p.lagMs).put("serves", p.servesFound).put("trimmed", p.trimmed).put("ignoredWhileMeasuring", p.ignoredWhileMeasuring).put("captureBy", p.lastCaptureBy).put("chipCheck", p.chipCheck).put("chipCaptureFailures", p.gpuFailures)) }
         tap?.let { t -> report.put("tap", JSONObject().put("frames", t.frames).put("tapped", t.tapped).put("missed", t.missed).put("tapMs", t.tapMsAvg).put("latchMs", t.latchMsAvg).put("showMs", t.showMsAvg)
             .put("readMs", t.readMsAvg).put("readWaits", t.readWaits).put("maskFrames", t.maskFrames).put("busySkips", t.busySkips).put("readBack", t.readBack).put("queue", t.queueKind)

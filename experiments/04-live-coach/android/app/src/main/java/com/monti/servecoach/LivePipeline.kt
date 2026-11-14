@@ -105,9 +105,7 @@ class LivePipeline(
      * move the phone back -- is the fix; there is no clever way to watch a 240 fps ball with
      * half the CPU it needs.
      */
-    @Volatile var thinning = false; private set
-    /** frames dropped on purpose by the guard (as against [skipped], dropped by the queue) */
-    @Volatile var thinned = 0L; private set
+    @Volatile var behindNow = false; private set
     /** the share of frames the queue lost over the last window, and the worst any window saw */
     @Volatile var behindShare = 0.0; private set
     @Volatile var worstBehind = 0.0; private set
@@ -264,25 +262,28 @@ class LivePipeline(
         val share = if (guardSeen == 0) 0.0 else guardLost.toDouble() / guardSeen
         behindShare = share
         if (share > worstBehind) worstBehind = share
-        val was = thinning
+        val was = behindNow
         // Thin on a tenth lost. Coming back off it is the part that needs care: thinning works,
         // so the share drops at once, and a plain two-sided bar then un-thins, the load returns,
         // and it thins again -- the first session with a working guard went in and out five
         // times and said so each time. So a calm window only counts toward coming back, and it
         // takes eight of them in a row, about sixteen seconds.
-        if (!thinning && share > 0.10) { thinning = true; guardCalm = 0 }
-        else if (thinning) {
+        if (!behindNow && share > 0.10) { behindNow = true; guardCalm = 0 }
+        else if (behindNow) {
             if (share < 0.02) guardCalm++ else guardCalm = 0
-            if (guardCalm >= 8) { thinning = false; guardCalm = 0 }
+            if (guardCalm >= 8) { behindNow = false; guardCalm = 0 }
         }
-        if (thinning != was) {
+        if (behindNow != was) {
             // said once a session: it is the same advice every time, and the player is mid-serve
-            val first = thinning && !guardSaid
-            if (thinning) guardSaid = true
-            onNote(if (thinning)
-                (if (first) "too slow to watch every frame (${Math.round(100 * share)}% lost): watching every other one. Move the phone back."
-                 else "thinning again (${Math.round(100 * share)}% lost)")
-            else "keeping up again: watching every frame")
+            val first = behindNow && !guardSaid
+            if (behindNow) guardSaid = true
+            // It used to say "watching every other one", because it used to do that. Thinning
+            // was taken out -- it halved every flight's points and cost serves -- and the
+            // message stayed behind, telling a session it had done something it had not.
+            onNote(if (behindNow)
+                (if (first) "too slow to watch every frame (${Math.round(100 * share)}% lost). Move the phone back."
+                 else "falling behind again (${Math.round(100 * share)}% lost)")
+            else "keeping up again")
         }
         guardSeen = 0; guardLost = 0
     }
@@ -791,7 +792,7 @@ class LivePipeline(
     private fun refreshScene() {
         if (!windowRing || frameW == 0 || frameH == 0) return
         if (ringHeld.get() > 0 || planning) return               // a serve is in the air or still owed
-        if (thinning) return                                     // behind: the serve matters, this does not
+        if (behindNow) return                                     // behind: the serve matters, this does not
         val now = SystemClock.elapsedRealtime()
         if (now - sceneAt < (if (scene?.complete == true) sceneRefreshMs else sceneEveryMs)) return
         if (!sceneBusy.compareAndSet(false, true)) return

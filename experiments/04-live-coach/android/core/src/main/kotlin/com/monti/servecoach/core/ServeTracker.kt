@@ -50,7 +50,17 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     // the engine's numbers, at quarter size (it searches at half size)
     private val sampleEvery = 24                       // a background sample every 24 frames (0.1 s)
     private val samplesKept = 5                        // the background: the median of the last 5 (0.5 s)
-    private val minLen = 12
+    /**
+     * Points a track needs before it is judged at all.
+     *
+     * A COUNT, not a duration -- which is fine while every tracker frame is looked at, and wrong
+     * the moment they are not. Under the load guard only every other one is, so the same flight
+     * gives half the points and this bar quietly asks for twice the flight: 100 ms of ball in
+     * the air becomes 200 ms, and a fast serve crosses the picture in about 200. The first
+     * session with thinning working caught one serve and threw away 1,102 tracks as "short".
+     * The caller halves it while it is thinning, which keeps the bar where it was in milliseconds.
+     */
+    @Volatile var minPoints = 12
     private val chromaGain = 1.5f
 
     private class Sample(val y: FloatArray, val u: FloatArray, val v: FloatArray)
@@ -283,7 +293,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
     /** The engine's flight tests (scaled to quarter size); null when it flies like a serve. */
     private fun judge(tr: Track): String? {
         val p = tr.pts
-        if (p.size < minLen) return "short"
+        if (p.size < minPoints) return "short"
         val a = p[0]; val b = p[p.size - 1]
         val dx = b[1] - a[1]; val dy = b[2] - a[2]
         val disp = hypot(dx, dy)
@@ -386,7 +396,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (done.isEmpty() || i < groupDeadline) return null
         // a flight still going on (V1: the toss ended and its wait ran out while the serve itself
         // was in the air, so the toss came out as a serve of its own): wait for it, up to 1.5 s
-        if (i - done.minOf { it.first()[0] } < 1.5 * fps && active.any { it.pts.size >= minLen && judge(it) == null }) return null
+        if (i - done.minOf { it.first()[0] } < 1.5 * fps && active.any { it.pts.size >= minPoints && judge(it) == null }) return null
         // the best track is the serve; with it the tracks of nearly its quality close in time (the
         // flight after the bounce), and a toss track that ended just before it, near its start
         // the best track, unless it doesn't fly like a ball (0.8.0, K2: the ball rolling back along

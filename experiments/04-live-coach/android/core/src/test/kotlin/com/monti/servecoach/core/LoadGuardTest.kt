@@ -57,6 +57,36 @@ class LoadGuardTest {
         assertNotNull("evenly spaced losses leave a track to judge", serveWith(thinned))
     }
 
+    @Test fun `a short flight survives thinning only if the point bar comes down with it`() {
+        // 22 tracker frames: 0.18 s of ball in the air at 120 Hz, a fast serve crossing the
+        // picture. Whole, that is 22 points and clears 12. Thinned it is 11, and 11 is under 12
+        // -- which is the whole of it: the flight did not get shorter, the sampling did, and a
+        // bar counted in points moved with it. (24 frames thinned is exactly 12 and squeaks
+        // through, which is how near the edge every fast serve was sitting.)
+        val first = 20L; val last = 41L
+        fun run(lost: (Long) -> Boolean, minPoints: Int): ServeTracker.Serve? {
+            val tr = ServeTracker(480, 270, 120)
+            tr.minPoints = minPoints
+            tr.maxGap = if (minPoints < 12) 4 else 2
+            var got: ServeTracker.Serve? = null
+            for (i in 0L until 400L) {
+                val c = ArrayList<FloatArray>()
+                if (i in first..last && !lost(i)) {
+                    c.add(floatArrayOf(100f + (i - first) * 12f, 150f + (i - first) * 0.6f, 3.2f))
+                }
+                tr.pushFound(i, c)?.let { got = it }
+            }
+            return got
+        }
+        val whole = { _: Long -> false }
+        val thinned = { i: Long -> ((i - first) and 1L) == 1L }
+        assertNotNull("the short flight, every frame seen", run(whole, 12))
+        assertNull("thinned, against a bar that did not move, it is thrown away as short",
+            run(thinned, 12))
+        assertNotNull("thinned, against a bar that halved with the sampling, it is kept",
+            run(thinned, 6))
+    }
+
     @Test fun `thinned, one further miss is what maxGap is raised for`() {
         // thinning leaves points exactly two apart, which is the default limit with nothing to
         // spare: one more miss and the gap is four.

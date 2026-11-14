@@ -95,6 +95,8 @@ class LivePipeline(
     /** the share of frames the queue lost over the last window, and the worst any window saw */
     @Volatile var behindShare = 0.0; private set
     @Volatile var worstBehind = 0.0; private set
+    private var guardCalm = 0                            // windows in a row calm enough to stop thinning
+    @Volatile private var guardSaid = false              // the advice has been given once this session
     @Volatile var decoderFull = 0L; private set          // times the decoder had no room for the next frame (5 ms waits)
     @Volatile var waitingForKey = 0L; private set        // frames passed over after a drop, until the next keyframe              // frames the tracker skipped (finding blobs fell behind)
     @Volatile var trackMsAvg = 0.0; private set         // per tracker frame: shrinking + finding + linking (on several threads)
@@ -224,7 +226,7 @@ class LivePipeline(
         val t0 = System.nanoTime()
         val rows = Downsample.rows(yuv)
         shrinkMsAvg = avg(shrinkMsAvg, (System.nanoTime() - t0) / 1e6, ++shrinkN)
-        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; tracker = it }
+        val tr = tracker ?: ServeTracker(rows.w, rows.h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; it.minPoints = if (thinning) 6 else 12; tracker = it }
         // the background learns from every 24th frame, before that frame's blobs are found
         val q0 = if (tr.needsFrame(index)) Downsample.quarter(rows).also { tr.sample(it, index) } else null
         val bg = tr.background()
@@ -248,13 +250,26 @@ class LivePipeline(
         behindShare = share
         if (share > worstBehind) worstBehind = share
         val was = thinning
-        // thin on a tenth lost, stop at a fiftieth: the gap between them is what keeps it from
-        // flapping in and out every window
-        if (!thinning && share > 0.10) thinning = true else if (thinning && share < 0.02) thinning = false
+        // Thin on a tenth lost. Coming back off it is the part that needs care: thinning works,
+        // so the share drops at once, and a plain two-sided bar then un-thins, the load returns,
+        // and it thins again -- the first session with a working guard went in and out five
+        // times and said so each time. So a calm window only counts toward coming back, and it
+        // takes eight of them in a row, about sixteen seconds.
+        if (!thinning && share > 0.10) { thinning = true; guardCalm = 0 }
+        else if (thinning) {
+            if (share < 0.02) guardCalm++ else guardCalm = 0
+            if (guardCalm >= 8) { thinning = false; guardCalm = 0 }
+        }
         if (thinning != was) {
+            // both of these are counts of frames looked at, so both halve when half of them are
             tracker?.maxGap = if (thinning) 4 else 2
+            tracker?.minPoints = if (thinning) 6 else 12
+            // said once a session: it is the same advice every time, and the player is mid-serve
+            val first = thinning && !guardSaid
+            if (thinning) guardSaid = true
             onNote(if (thinning)
-                "too slow to watch every frame (${Math.round(100 * share)}% lost): watching every other one. If this stays on, move the phone back."
+                (if (first) "too slow to watch every frame (${Math.round(100 * share)}% lost): watching every other one. Move the phone back."
+                 else "thinning again (${Math.round(100 * share)}% lost)")
             else "keeping up again: watching every frame")
         }
         guardSeen = 0; guardLost = 0
@@ -309,7 +324,7 @@ class LivePipeline(
         if (thinning && (index and 1L) == 1L) { thinned++; return }
         guardSeen++
         if (jobs.remainingCapacity() == 0) { skipped++; guardLost++; return }
-        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; tracker = it }
+        val tr = tracker ?: ServeTracker(w, h, captureFps / step).also { watchSkips(it); it.maxGap = if (thinning) 4 else 2; it.minPoints = if (thinning) 6 else 12; tracker = it }
         val f = flip
         val q0 = if (tr.needsFrame(index)) Downsample.fromRgba(rgba, w, h, f).also { tr.sample(it, index) } else null
         val bg = tr.background()

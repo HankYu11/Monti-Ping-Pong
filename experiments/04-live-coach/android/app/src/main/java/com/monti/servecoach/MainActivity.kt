@@ -425,7 +425,10 @@ class MainActivity : Activity() {
             // are for the report -- so it is said out loud as well as written down
             onNote = { msg -> main.post {
                 log(if (msg.startsWith("too slow") || msg.startsWith("keeping up")) "load" else "skipped", msg)
-                if (msg.startsWith("too slow")) Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                // not over a serve: the player is watching the ball, not the screen, and a
+                // toast that lands mid-serve is the one thing they said they did not want
+                if (msg.startsWith("too slow") && measuring == null && waiting.isEmpty())
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
             } },
             onSpotted = if (blocking) null else { id -> main.post { onSpotted(id) } },
             assets = assets,

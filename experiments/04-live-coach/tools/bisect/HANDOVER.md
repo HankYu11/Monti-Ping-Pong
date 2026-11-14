@@ -1,5 +1,45 @@
 # Handover: why ServeCoach stopped finding serves
 
+## RESULT (2026-11-15, on the Pixel 8) -- cause found and fixed in 0.13.19
+
+**Cause:** `GlTap.kt` created `fboTex` (the small picture's texture) without setting a minifying
+filter. GL's default is `NEAREST_MIPMAP_LINEAR`; with no mipmaps that texture is *incomplete*, and the
+Pixel 8's Mali samples an incomplete texture as black. Nothing sampled `fboTex` before 0.13.10; the
+mask passes (0.13.10, `fe3f1cd`) do, and they write their RGB into the picture the finders read back.
+So from 0.13.10 on every finder saw the same black frame -> the "empty or 100 % moving" mask, the
+blob measured identically for 11 frames, and 0 serves. `maskcheck.py` passed because moderngl sets
+NEAREST on its own texture. Hypothesis 1 was right about *where*, wrong about *why* (not a feedback
+loop -- an incomplete texture); 0.13.18's unbind/invalidate did not help, which the phone confirmed.
+
+**Fix:** `39e0bcd` -- `plain2D(fboTex, qw, qh)` like every other texture (NEAREST, CLAMP_TO_EDGE).
+
+**Evidence -- release builds (as shipped), phone replay of `clips/s1.mp4` + `clips/s2.mp4`:**
+
+| build | serves found | exact repeats among masked pictures |
+|---|---|---|
+| 0.12.8 (`b3b0a71`) | 6 / 6 | (no mask passes) |
+| 0.13.9 (`92b2f87`) | 4 / 4 (+1 later run that completed) | (no mask passes) |
+| tip without the fix (`f82dc43^` + reports) | **0 / 6** | 213-236 of 214-237 (all but the first) |
+| tip with the fix | **12 / 12 completed runs** | **0** in every run |
+
+Finder time in the clean window: 4.2-5.2 ms with 0 pictures skipped, for every build.
+
+**Things that looked like regressions but are not:**
+- *Debug* (debuggable) builds run the finders 8-10x slower (30-60 ms), so pictures get dropped and
+  `s2` misses its serve now and then -- **0.12.8 debug does this too**. Judge by release builds.
+- After ~03:15 the phone got busy (swap ~3 GB, other apps); find time went to 40-2700 ms and some runs
+  died without a crash on every build alike (0.12.8, 0.13.9 and the fix). Not the app.
+- The full stock clips could not be replayed on the phone in this setup (0.12.8 never started; the
+  fixed build ran but the chip "missed" most ticks). Inconclusive, not counted.
+
+**Still open:**
+- **Not verified in a live session.** Replay does not run the camera, exposure locks or the encoder.
+- The chip's own alpha mask is never trusted (`maskTrust` -1 in every run: a few pixels disagree), so
+  the finders use the CPU mask and the GPU mask passes are wasted work. Safe, but worth a look.
+- Release testing needs the clip in `/data/local/tmp` (no `run-as` on a non-debuggable app); `run.sh`
+  only does debug builds.
+
+
 Branch `claude/zealous-goldberg-qwboov`. Everything referred to here is committed and pushed.
 
 ## The problem in one paragraph

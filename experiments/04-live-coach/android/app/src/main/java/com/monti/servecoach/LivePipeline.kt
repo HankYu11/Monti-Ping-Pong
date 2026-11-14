@@ -570,6 +570,13 @@ class LivePipeline(
             val a0 = t[maxOf(0, k - 4)]; val b0 = t[k - 1]
             val v = kotlin.math.hypot(b0[1] - a0[1], b0[2] - a0[2]) / maxOf(1f, b0[0] - a0[0])
             if (v < 2f) continue
+            // and ball-SIZED, which this never asked. The window's side comes from the track's
+            // radius, so a body got a 352 px window cut and read back off the chip every frame
+            // -- seven times the pixels of a real ball's, for a track ServeTracker.notABall
+            // would throw out the moment it finished. Same bar as that one, so the ring cannot
+            // spend the chip's time on something the tracker has already decided against.
+            val rr = t.map { it[3] }.sorted()[(t.size - 1) / 2]
+            if (rr > 7f * tr.w / 480f) continue
             val a = t[0]; val b = t[k - 1]
             val s = k * kotlin.math.hypot(b[1] - a[1], b[2] - a[2])
             if (s > bestScore) { bestScore = s; best = t }
@@ -644,15 +651,31 @@ class LivePipeline(
     private val sceneBusy = java.util.concurrent.atomic.AtomicBoolean(false)
     /** the decoder's colour range, from the last serve that decoded one: a capture has to say */
     @Volatile private var lastFullRange: Boolean? = null
+    /**
+     * How often the room's background is rebuilt -- and how often it is NOT.
+     *
+     * It was 4 s flat. Building it decodes fifteen keyframes and medians nine strips, and a
+     * real session reported "15 of 15 keyframes in 3710 ms": 3.7 s of work started every 4,
+     * which is a decoder and a median running essentially without pause, for the whole session,
+     * long after it had what it needed. 0.12 did none of this and kept up at a distance 0.13
+     * could not, and this is the largest thing 0.13 added that runs between serves.
+     *
+     * So: once the picture is covered it is a refresh and not a build, and a room does not
+     * change every four seconds. And it does not run at all while the tracker is behind -- it
+     * exists to save a decode later, which is worth nothing if the serve is missed now. That is
+     * what the load guard's measurement is actually for: shed the OPTIONAL work, not the frames.
+     */
     private val sceneEveryMs = 4_000L
+    private val sceneRefreshMs = 30_000L
     private val sceneSpanUs = 6_000_000L
 
     /** the tracker's thread, between serves: keep the room's background fresh */
     private fun refreshScene() {
         if (!windowRing || frameW == 0 || frameH == 0) return
         if (ringHeld.get() > 0 || planning) return               // a serve is in the air or still owed
+        if (thinning) return                                     // behind: the serve matters, this does not
         val now = SystemClock.elapsedRealtime()
-        if (now - sceneAt < sceneEveryMs) return
+        if (now - sceneAt < (if (scene?.complete == true) sceneRefreshMs else sceneEveryMs)) return
         if (!sceneBusy.compareAndSet(false, true)) return
         sceneAt = now
         Thread({

@@ -257,8 +257,9 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val disp = hypot(dx, dy)
         if (disp < 15f) return "barely moves"
         // live, stricter than the engine's search (which then picks the best of a whole clip): a
-        // ball the meter can read (20 px across or more) that crosses a tenth of the picture
-        if (median(p.map { it[3] }) < 2.5f) return "tiny"
+        // ball the meter can read (20 px across or more) that crosses a tenth of the picture.
+        // Measured at the TOP of what was seen, not the middle of it -- see [ballSize].
+        if (ballSize(p) < 2.5f) return "tiny"
         if (disp < 0.1f * w) return "short flight"
         if (disp / max(1f, b[0] - a[0]) < 0.5f) return "too slow"
         var path = 0f
@@ -311,6 +312,36 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         if (v.isEmpty()) return 0f
         val s = v.sorted(); val n = s.size
         return if (n % 2 == 1) s[n / 2] else 0.5f * (s[n / 2 - 1] + s[n / 2])
+    }
+
+    /**
+     * How big the ball is, from a track's radii: the upper end of what was seen, not the middle.
+     *
+     * A candidate's radius comes from the AREA of the moving mask (Detector: sqrt(area/PI)), and
+     * that area is a lower bound on the ball. Any part of the ball that happens to match the
+     * background drops out of the mask -- the shaded side of the white half against a pale wall,
+     * the inked half against a dark one -- so a frame can measure the ball small, and no frame
+     * can ever measure it large. Taking the middle of that therefore measures the ball small
+     * every time, and by an amount that depends on what is behind it.
+     *
+     * How much: on rendered serves whose ball is 2.96 of these pixels across the radius, the
+     * median of a track's radii came out 2.46 to 2.59 -- 13 to 17% under -- while percentile 85
+     * came out 2.71 to 3.09, within 8% either way. The bar below is 2.5, so the median had a
+     * real 20 px ball failing or passing on which way its marking happened to be facing: one
+     * rendered serve passed by 0.08 and two identical ones failed by 0.04.
+     *
+     * Which is the same reading engine.js arrived at from real clips for its millimetres per
+     * pixel: "Not the median: where the white half's shaded side matches the wall it drops out
+     * and the ball looks smaller... the ball turns, so some frames show all of it" -- and it
+     * uses percentile 85 of the narrow width. This is that, for the live tracker.
+     *
+     * Only for "how big is the ball". The comparisons elsewhere -- does it grow, is this track
+     * the same ball as that one -- put a median against a median and are not affected.
+     */
+    private fun ballSize(p: List<FloatArray>): Float {
+        if (p.isEmpty()) return 0f
+        val s = p.map { it[3] }.sorted()
+        return s[((s.size - 1) * 0.85f).toInt().coerceIn(0, s.size - 1)]
     }
 
     // ------------------------------------------------------------ the serve

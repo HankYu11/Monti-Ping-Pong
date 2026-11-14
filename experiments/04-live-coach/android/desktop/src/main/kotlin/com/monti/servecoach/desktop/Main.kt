@@ -59,7 +59,15 @@ fun main(args: Array<String>) {
     tracker.prime(spread)
     if (System.getenv("DEBUG") != null) tracker.onTrack = { pts, why ->
         val a = pts.first(); val b = pts.last()
-        println("  track ${a[0].toInt()}-${b[0].toInt()} (${pts.size}) ${a[1].toInt() * 4},${a[2].toInt() * 4} -> ${b[1].toInt() * 4},${b[2].toInt() * 4} r ${"%.1f".format(a[3] * 4)}-${"%.1f".format(b[3] * 4)}: ${why ?: "SERVE"}")
+        // the radii, not just the ends: a blob's area is a LOWER bound on the ball (anything
+        // that matches the background drops out of the mask), so the spread is what says
+        // whether the ball was seen whole, and the median is what judge() rejects on.
+        val rs = pts.map { it[3] * 4 }.sorted()
+        fun pc(f: Double) = rs[((rs.size - 1) * f).toInt()]
+        println("  track ${a[0].toInt()}-${b[0].toInt()} (${pts.size}) ${a[1].toInt() * 4},${a[2].toInt() * 4} -> ${b[1].toInt() * 4},${b[2].toInt() * 4}" +
+            " r ${"%.1f".format(a[3] * 4)}-${"%.1f".format(b[3] * 4)}" +
+            " (min ${"%.1f".format(rs.first())} p25 ${"%.1f".format(pc(0.25))} med ${"%.1f".format(pc(0.5))} p85 ${"%.1f".format(pc(0.85))} max ${"%.1f".format(rs.last())})" +
+            ": ${why ?: "SERVE"}")
     }
     val serves = ArrayList<ServeTracker.Serve>()
     // RING=1: the live window ring reproduced here (RingSim), so the capture it would build can

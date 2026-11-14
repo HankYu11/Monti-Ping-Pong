@@ -1,96 +1,133 @@
 #!/usr/bin/env python3
-"""Does the graphics chip's moving-pixel test agree with the processor's, to the pixel?
+"""Does the graphics chip's moving-pixel mask agree with the processor's, to the pixel?
 
-The chip can do Detector.makeMask far cheaper than the processor can -- it already has every
-pixel in a shader, and the processor has to walk six float arrays over three megabytes to reach
-the same answer. The catch is that a mask which is ALMOST the same is worse than useless: the
-blobs it feeds are the whole of the tracker's evidence, and a pixel that flips on the boundary
-moves a ball's measured radius and with it the window, the rate, everything.
+The finder's dominant cost is Detector.makeMask walking six float arrays over three megabytes
+for every frame. The chip already holds every pixel in a shader and can do it for nothing. The
+catch is that a mask which is ALMOST right is worse than no change: the blobs are the whole of
+the tracker's evidence, and a pixel that flips on the boundary moves a ball's measured radius
+and with it the window, the rate, everything.
 
-So before any of it goes near a phone: compile the shader that would run there, run the Kotlin
-rule beside it on the same bytes, and count the pixels where they differ. Mesa's software
-rasteriser does the running, so this needs no device and no GPU -- what it checks is the
-ARITHMETIC, which is where the mismatches live (byte rounding, truncation, the order of the
-clamp). What it cannot check is a driver: that is what the on-device count is for.
+So the shader is checked before it is shipped, here, with no phone and no GPU. Mesa's software
+rasteriser compiles THE APP'S OWN shader files and runs them; Detector.rowRatios and makeMask
+are ported beside them; the disagreeing pixels are counted. What this proves is the ARITHMETIC
+-- byte rounding, the 16-bit packing, the order of the clamp, the five-row average -- which is
+where mask bugs live and where none of them announce themselves. What it cannot prove is a
+driver. That is what the on-device count is for.
 
     python3 tools/maskcheck.py
 
-The shader body is read from the app's own assets, so this cannot drift from what ships.
+It has already earned itself twice: once on rounding the frame's bytes but not the background's
+(13 to 66 pixels wrong, every time, hidden entirely in the colour terms), and once on the row
+sums, which do not fit in a byte and do not fit exactly in a half float either.
 """
 import os, sys
 import numpy as np
 import moderngl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BODY = os.path.join(HERE, "..", "android", "app", "src", "main", "assets", "shaders", "mask_body.glsl")
+SH = os.path.join(HERE, "..", "android", "app", "src", "main", "assets", "shaders")
 W, H = 480, 270
+HEAD = "#version 330 core\n"
 
-def reference(fy, fu, fv, by, bu, bv, inv):
-    """Detector.makeMask, on the bytes the processor actually holds, in float32 as Kotlin does."""
+
+def reference(fy, fu, fv, by, bu, bv):
+    """Detector.rowRatios + makeMask, on bytes, in float32 as Kotlin does it."""
     f = np.float32
-    gv = np.floor(np.clip((fy.astype(f) * inv[:, None].astype(f)).astype(f), 0, 255))
-    return ((np.abs(gv - by) > 30.0) | (np.abs(fu - bu) > 20.0) | (np.abs(fv - bv) > 20.0)).astype(np.uint8)
+    sg = np.zeros(H, f); sb = np.zeros(H, f)
+    cols = np.arange(0, W, 4)
+    m = by[:, cols] > 20.0
+    sg = np.where(m, fy[:, cols], 0).sum(axis=1, dtype=np.float64).astype(f)
+    sb = np.where(m, by[:, cols], 0).sum(axis=1, dtype=np.float64).astype(f)
+    raw = np.where(sb > 0, sg / np.maximum(sb, 1e-9), 1.0).astype(f)
+    rows = np.empty(H, f)
+    for y in range(H):
+        lo, hi = max(0, y - 2), min(H - 1, y + 2)
+        rows[y] = np.clip(raw[lo:hi + 1].mean(dtype=np.float64), 0.5, 2.0)
+    inv = (1.0 / rows).astype(f)
+    gv = np.floor(np.clip((fy.astype(f) * inv[:, None]).astype(f), 0, 255))
+    return (((np.abs(gv - by) > 30.0) | (np.abs(fu - bu) > 20.0) | (np.abs(fv - bv) > 20.0))
+            .astype(np.uint8)), raw, rows
+
 
 def main():
     ctx = moderngl.create_context(standalone=True, backend="egl")
-    body = open(BODY).read()
-    frag = """#version 330 core
-in vec2 uv; out vec4 col;
-uniform sampler2D tex;      // this frame: r = y, g = u + 0.5, b = v + 0.5
-uniform sampler2D bgTex;    // the background, in the processor's bytes, scaled into 0..1
-uniform sampler2D rowTex;   // 1 / the row's ratio, one texel a row
-""" + body + """
-void main() {
-    vec3 c = texture(tex, uv).rgb;
-    vec3 b = texture(bgTex, uv).rgb;
-    float inv = texture(rowTex, vec2(0.5, uv.y)).r;
-    float m = movedPixel(c, b, inv);
-    col = vec4(c.r, c.g, c.b, m);
-}"""
-    prog = ctx.program(vertex_shader="""#version 330 core
-in vec2 pos; out vec2 uv;
-void main() { uv = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }""", fragment_shader=frag)
+    body = open(os.path.join(SH, "mask_body.glsl")).read()
+    vert = HEAD + "in vec2 pos; out vec2 uv;\nvoid main(){uv=pos*0.5+0.5;gl_Position=vec4(pos,0.0,1.0);}"
+    rows_prog = ctx.program(vertex_shader=vert, fragment_shader=HEAD + open(os.path.join(SH, "rows.frag")).read())
+    mask_prog = ctx.program(vertex_shader=vert, fragment_shader=HEAD + body + open(os.path.join(SH, "mask.frag")).read())
+    quad = ctx.buffer(np.array([-1, -1, 3, -1, -1, 3], np.float32).tobytes())
 
-    rng = np.random.default_rng(7)
+    rng = np.random.default_rng(11)
     worst = 0
-    for case in range(6):
-        # bytes, because bytes are what both sides really see. Case 0 is the nasty one: a
-        # background a hair from the frame, so a great many pixels sit exactly on the bar.
-        if case == 0:
-            fy = rng.integers(0, 256, (H, W), np.int32)
-            by = np.clip(fy + rng.integers(-32, 33, (H, W)), 0, 255)
+    cases = [
+        ("background within 32 levels: most pixels on the bar", "near"),
+        ("flat background 0: every column skipped, ratio falls back to 1", "dark"),
+        ("random everything", "rand"),
+        ("background all 255: the sums run to their maximum", "bright"),
+        ("a real flicker: rows banded 0.9 to 1.1", "band"),
+        ("random everything, another draw", "rand"),
+    ]
+    for name, kind in cases:
+        if kind == "near":
+            fy = rng.integers(0, 256, (H, W), np.int32); by = np.clip(fy + rng.integers(-32, 33, (H, W)), 0, 255)
+        elif kind == "dark":
+            fy = rng.integers(0, 256, (H, W), np.int32); by = np.zeros((H, W), np.int32)
+        elif kind == "bright":
+            fy = rng.integers(0, 256, (H, W), np.int32); by = np.full((H, W), 255, np.int32)
+        elif kind == "band":
+            base = rng.integers(40, 220, (H, W), np.int32)
+            band = (1.0 + 0.1 * np.sin(np.arange(H) * 0.4))[:, None]
+            fy = np.clip((base * band).astype(np.int32), 0, 255); by = base
         else:
             fy = rng.integers(0, 256, (H, W), np.int32); by = rng.integers(0, 256, (H, W), np.int32)
         fu = rng.integers(0, 256, (H, W), np.int32); fv = rng.integers(0, 256, (H, W), np.int32)
         bu = rng.integers(0, 256, (H, W), np.int32); bv = rng.integers(0, 256, (H, W), np.int32)
-        inv = (1.0 / rng.uniform(0.9, 1.1, H)).astype(np.float32) if case != 1 else np.ones(H, np.float32)
 
         frame = np.dstack([fy, fu, fv, np.full((H, W), 255)]).astype(np.uint8)
         bgimg = np.dstack([by, bu, bv, np.full((H, W), 255)]).astype(np.uint8)
-        t0 = ctx.texture((W, H), 4, frame.tobytes()); t0.filter = (moderngl.NEAREST, moderngl.NEAREST)
-        t1 = ctx.texture((W, H), 4, bgimg.tobytes()); t1.filter = (moderngl.NEAREST, moderngl.NEAREST)
-        t2 = ctx.texture((1, H), 1, inv.tobytes(), dtype="f4"); t2.filter = (moderngl.NEAREST, moderngl.NEAREST)
-        t0.use(0); t1.use(1); t2.use(2)
-        prog["tex"].value = 0; prog["bgTex"].value = 1; prog["rowTex"].value = 2
-        fbo = ctx.simple_framebuffer((W, H)); fbo.use()
-        quad = ctx.buffer(np.array([-1,-1, 3,-1, -1,3], np.float32).tobytes())
-        ctx.vertex_array(prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
-        got = np.frombuffer(fbo.read(components=4), np.uint8).reshape(H, W, 4)[:, :, 3]
-        got = (got > 127).astype(np.uint8)
+        tS = ctx.texture((W, H), 4, frame.tobytes()); tB = ctx.texture((W, H), 4, bgimg.tobytes())
+        for t in (tS, tB):
+            t.filter = (moderngl.NEAREST, moderngl.NEAREST); t.repeat_x = False; t.repeat_y = False
 
-        want = reference(fy, fu, fv, by, bu, bv, inv)
+        # pass 2: the row sums, into a 1 x H RGBA8 target
+        fRows = ctx.simple_framebuffer((1, H)); fRows.use()
+        tS.use(0); tB.use(1)
+        rows_prog["smallTex"].value = 0; rows_prog["bgTex"].value = 1
+        rows_prog["smallSize"].value = (float(W), float(H))
+        ctx.vertex_array(rows_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
+        rowPix = np.frombuffer(fRows.read(components=4), np.uint8).reshape(H, 1, 4)
+        tR = ctx.texture((1, H), 4, rowPix.tobytes())
+        tR.filter = (moderngl.NEAREST, moderngl.NEAREST); tR.repeat_x = False; tR.repeat_y = False
+
+        # pass 3: the mask, in alpha
+        fOut = ctx.simple_framebuffer((W, H)); fOut.use()
+        ctx.disable(moderngl.BLEND)
+        tS.use(0); tB.use(1); tR.use(2)
+        mask_prog["smallTex"].value = 0; mask_prog["bgTex"].value = 1; mask_prog["rowTex"].value = 2
+        mask_prog["rows"].value = float(H)
+        ctx.vertex_array(mask_prog, [(quad, "2f", "pos")]).render(moderngl.TRIANGLES)
+        got = (np.frombuffer(fOut.read(components=4), np.uint8).reshape(H, W, 4)[:, :, 3] > 127).astype(np.uint8)
+
+        want, raw, rowsRef = reference(fy, fu, fv, by.astype(np.int32), bu, bv)
+        # the sums, decoded, so a disagreement can be read rather than guessed at
+        sgGot = rowPix[:, 0, 0].astype(float) + rowPix[:, 0, 1].astype(float) * 256.0
+        cols = np.arange(0, W, 4); m = by[:, cols] > 20
+        sgRef = np.where(m, fy[:, cols], 0).sum(axis=1)
+        sumBad = int((sgGot != sgRef).sum())
         bad = int((got != want).sum())
         worst = max(worst, bad)
-        print(f"  case {case}: {bad:>6} of {W*H} pixels differ   ({'ok' if bad == 0 else 'MISMATCH'})"
-              + ("   [background within 32 levels: most pixels sit on the bar]" if case == 0 else ""))
-        for t in (t0, t1, t2): t.release()
-        fbo.release(); quad.release()
+        print(f"  {name:<52} {bad:>6} of {W*H} differ   row sums wrong on {sumBad} of {H} rows"
+              + ("" if bad == 0 else "   MISMATCH"))
+        for t in (tS, tB, tR): t.release()
+        fRows.release(); fOut.release()
+
     print()
     if worst == 0:
         print("the chip's mask and the processor's are the same mask.")
-    else:
-        print(f"they are NOT the same mask: {worst} pixels at worst. Do not ship it.")
-    return 0 if worst == 0 else 1
+        return 0
+    print(f"they are NOT the same mask: {worst} pixels at worst. Do not ship it.")
+    return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

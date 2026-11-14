@@ -232,7 +232,7 @@ class LivePipeline(
             val d = detectors.get() ?: Detector(rows.w, rows.h).also { detectors.set(it) }
             val t = System.nanoTime()
             val q = q0 ?: Downsample.quarter(rows)
-            if (index % 8 == 0L) pose?.offer(q, index * step)
+            if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
             val c = d.find(q, bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
@@ -317,7 +317,7 @@ class LivePipeline(
             val d = detectors.get() ?: Detector(w, h).also { detectors.set(it) }
             val t = System.nanoTime()
             val q = q0 ?: Downsample.fromRgba(rgba, w, h, f)
-            if (index % 8 == 0L) pose?.offer(q, index * step)
+            if (index % 16 == 0L) pose?.offer(q, index * step)   // 96 ms a look and 0 serves rejected over two sessions
             val c = d.find(q, bg)
             findMsAvg = avg(findMsAvg, (System.nanoTime() - t) / 1e6, index + 1)
             c
@@ -484,6 +484,10 @@ class LivePipeline(
     private val ringFrames = captureFps + captureFps / 2
     /** captures that have not yet taken their windows: while any is open the ring stops filling */
     private val ringHeld = java.util.concurrent.atomic.AtomicInteger(0)
+    /** the last frame the held capture wants: windows up to here are still taken while held */
+    @Volatile private var heldFrom = Long.MAX_VALUE
+    /** windows that arrived after the hold went up and belonged to the held capture anyway */
+    @Volatile var ringLate = 0L; private set
     @Volatile var ringHolds = 0L; private set
     /**
      * Every other row of the whole picture (see assets/shaders/crop_rows.frag).
@@ -708,7 +712,17 @@ class LivePipeline(
 
     /** one frame's window off the chip: the window's planes, then the picture's row sample */
     fun offerWindow(frameNo: Long, at: IntArray, bytes: ByteArray) {
-        if (ringHeld.get() > 0) return                   // a capture is still to take its windows
+        // A window reaches here well after the frame it was cut from: the chip reads it back
+        // through a queue of buffers and hands it over on another thread. The hold goes up at
+        // onServe, which is about 0.4 s after the flight ends, and under load the queue is
+        // deeper than that -- so this early return was throwing away the late arrivals FOR THE
+        // VERY FLIGHT being captured. A session reported "held 2 of 73": the capture asked the
+        // ring for its 73 frames and two of them had got in before the gate came down.
+        //
+        // The hold is there to stop what comes AFTER a serve from overwriting what the capture
+        // still has to read. A window from before the hold is not that: it is the capture's own,
+        // it lands in its own slot, and it can overwrite nothing that is wanted.
+        if (ringHeld.get() > 0) { if (frameNo > heldFrom) return else ringLate++ }
         val r = windows ?: return
         // The row sample is the same size whatever the window is, so what is left over is the
         // window, and a window is one and a half times its side squared. That is how a frame
@@ -774,7 +788,7 @@ class LivePipeline(
         // From here the ring stops taking frames: everything it holds for this serve has to
         // survive until the capture has read it, and the capture is still a grouping wait and a
         // decode away. Released in writeCapture, whatever happens there.
-        if (windowRing) { ringHeld.incrementAndGet(); ringHolds++ }
+        if (windowRing) { heldFrom = last; ringHeld.incrementAndGet(); ringHolds++ }
         // the capture is written on its own thread, so the tracker keeps up
         Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h, windowRing) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
     }

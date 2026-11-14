@@ -482,7 +482,7 @@ class MainActivity : Activity() {
             // forty "short" tracks says nothing about whether the ball was there to be found
             .put("candidatesPerFrame", "%.2f".format(p.candidatesPerFrame))
             .put("blobsRefused", p.blobsRefused).put("maskMoving", p.maskMoving)
-            .put("longestTrack", p.longestTrack)
+            .put("longestTrack", p.longestTrack).put("rejectedTracks", org.json.JSONArray(p.rejectedTracks))
             .put("maskBy", when (p.maskTrust) {
                 1 -> "chip"
                 -1 -> "processor (chip differed on ${p.maskDisagreed.get()} pixels over ${p.maskChecks.get()} frames, worst ${p.maskWorst.get()})"

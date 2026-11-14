@@ -639,7 +639,36 @@ class LivePipeline(
      * Live: a clip of each movement the last checks turned down ("slow (a body?)", "toss only"...),
      * up to 30 a session, so a real serve wrongly skipped can be seen (0.7.9: "some serves were skipped").
      */
+    /**
+     * The longest tracks that were judged and turned away, as their own points.
+     *
+     * A session can say "ten tracks, barely moves" and leave the important question open: was
+     * the thing being tracked a ball crossing the picture, or something sitting still? The
+     * points answer it in one look -- 28 pairs of coordinates either march across the frame or
+     * they do not -- and unlike a saved clip it costs nothing while the serve is happening.
+     *
+     * Three of them, longest first, in the small picture's own pixels (480 x 270).
+     */
+    val rejectedTracks: List<String> get() = synchronized(longTracks) { longTracks.map { it.second } }
+    private val longTracks = ArrayList<Pair<Int, String>>()
+
+    private fun watchTracks(tr: ServeTracker) {
+        tr.onTrack = { pts, why ->
+            if (why != null && pts.size >= 10) synchronized(longTracks) {
+                if (longTracks.size < 3 || pts.size > longTracks.last().first) {
+                    val dx = pts.last()[1] - pts.first()[1]; val dy = pts.last()[2] - pts.first()[2]
+                    val line = "$why: ${pts.size} points, moved ${"%.0f".format(kotlin.math.hypot(dx, dy))} px | " +
+                        pts.joinToString(" ") { "${it[1].toInt()},${it[2].toInt()},${"%.1f".format(it[3])}" }
+                    longTracks.add(pts.size to line)
+                    longTracks.sortByDescending { it.first }
+                    while (longTracks.size > 3) longTracks.removeAt(longTracks.size - 1)
+                }
+            }
+        }
+    }
+
     private fun watchSkips(tr: ServeTracker) {
+        watchTracks(tr)
         if (clipDir == null || onSkippedClip == null) return
         tr.onSkipped = { f, l, why ->
             val first = f * step; val last = l * step + step - 1

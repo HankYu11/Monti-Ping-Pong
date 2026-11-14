@@ -342,11 +342,24 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         return b[2] - a[2] > 2 * abs(b[1] - a[1])
     }
 
-    /** a track's speed, small-picture pixels per tracker frame: median and fastest (over 4-frame steps) */
+    /**
+     * A track's speed, small-picture pixels per tracker frame: median and fastest.
+     *
+     * Over four-frame steps where there are four to step over, and over whatever there is where
+     * there is not. It used to need five points and return ZERO speed below that -- and zero
+     * speed is not "no reading", it is the fastest possible way to fail notABall's first test,
+     * so every track of four points or fewer was reported as "slow (a body?)". A ball crossing
+     * the picture and a hand resting on the table came back as the same thing, from no evidence
+     * either way, and the sessions that could not keep up made short tracks by the hundred.
+     *
+     * A two-point track gives one reading over one step, which is noisy; it is still a
+     * measurement, and the rules downstream are written against measurements.
+     */
     fun speeds(p: List<FloatArray>): FloatArray {
+        val span = minOf(4, p.size - 1)
+        if (span < 1) return floatArrayOf(0f, 0f)
         val v = ArrayList<Float>()
-        for (k in 4 until p.size) { val a = p[k - 4]; val b = p[k]; v.add(hypot(b[1] - a[1], b[2] - a[2]) / max(1f, b[0] - a[0])) }
-        if (v.isEmpty()) return floatArrayOf(0f, 0f)
+        for (k in span until p.size) { val a = p[k - span]; val b = p[k]; v.add(hypot(b[1] - a[1], b[2] - a[2]) / max(1f, b[0] - a[0])) }
         v.sort(); return floatArrayOf(v[v.size / 2], v.last())
     }
 

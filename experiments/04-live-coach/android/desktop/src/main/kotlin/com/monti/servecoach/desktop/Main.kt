@@ -92,8 +92,12 @@ fun main(args: Array<String>) {
     // halves the fps the tracker is told, which moves notABall's speed bar with it, so a serve
     // can fail there for a reason the phone would never have.
     val thin = System.getenv("THIN") != null
+    // LOSE=n: n tracker frames gone out of every twelve, in a clump -- what a full finder queue
+    // does, and what thinning was invented to replace. This is how a live failure gets
+    // reproduced here instead of guessed at.
+    val lose = (System.getenv("LOSE") ?: "0").toInt()
     frames(clip, W, H) { f ->
-        if (n % step == 0L && !(thin && (n / step) % 2L == 1L)) {
+        if (n % step == 0L && !(thin && (n / step) % 2L == 1L) && !(lose > 0 && (n / step) % 12L < lose)) {
             val a = System.nanoTime()
             val q = (if (System.getenv("GPU") != null) Downsample.quarterMean(f) else Downsample.quarter(f))
             val b = System.nanoTime()

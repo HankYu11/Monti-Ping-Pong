@@ -36,8 +36,9 @@ class FrameDecoder(format: MediaFormat) {
         val i = codec.dequeueInputBuffer(timeoutUs)
         if (i < 0) return false
         val buf = codec.getInputBuffer(i)!!
-        buf.clear(); buf.put(fr.data)
-        codec.queueInputBuffer(i, 0, fr.data.size, fr.ptsUs, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+        val bytes = fr.data
+        buf.clear(); buf.put(bytes)
+        codec.queueInputBuffer(i, 0, bytes.size, fr.ptsUs, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         return true
     }
 

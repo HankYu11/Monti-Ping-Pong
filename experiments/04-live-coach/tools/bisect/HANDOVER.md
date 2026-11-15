@@ -50,7 +50,9 @@ Same as the desktop harness. These test builds had `android:largeHeap` added, be
 (`FileFrames`) holds the WHOLE video in the heap ("a serve clip is a few MB"): 127-178 MB of a 256 MB
 heap. Without it every version, 0.12.8 included, dies of `OutOfMemoryError` around the first
 capture -- 0.13 a little sooner (its room-background work). Live, `ClipRecorder` keeps only the last
-5 s, so this is a replay limit, not an app bug. Use clips under ~50 MB, or largeHeap, for replay.
+5 s, so live never hit it -- but TEST VIDEO did, on any long video. **Fixed in 0.13.21:** the video's
+frames go to a file in the app's cache and are read back as needed (`SpilledFrame`); both stock
+videos now replay at the normal heap, 2 and 3 serves, twice each, where `main` at 0.13.20 died.
 
 **Still open:**
 - ~~Not verified in a live session.~~ **Verified live (2026-11-15, two sessions on 0.13.19):** serves

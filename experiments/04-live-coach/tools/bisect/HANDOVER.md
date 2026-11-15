@@ -1,5 +1,67 @@
 # Handover: why ServeCoach stopped finding serves
 
+## RESULT (2026-11-15, on the Pixel 8) -- cause found and fixed in 0.13.19
+
+**Cause:** `GlTap.kt` created `fboTex` (the small picture's texture) without setting a minifying
+filter. GL's default is `NEAREST_MIPMAP_LINEAR`; with no mipmaps that texture is *incomplete*, and the
+Pixel 8's Mali samples an incomplete texture as black. Nothing sampled `fboTex` before 0.13.10; the
+mask passes (0.13.10, `fe3f1cd`) do, and they write their RGB into the picture the finders read back.
+So from 0.13.10 on every finder saw the same black frame -> the "empty or 100 % moving" mask, the
+blob measured identically for 11 frames, and 0 serves. `maskcheck.py` passed because moderngl sets
+NEAREST on its own texture. Hypothesis 1 was right about *where*, wrong about *why* (not a feedback
+loop -- an incomplete texture); 0.13.18's unbind/invalidate did not help, which the phone confirmed.
+
+**Fix:** `39e0bcd` -- `plain2D(fboTex, qw, qh)` like every other texture (NEAREST, CLAMP_TO_EDGE).
+
+**Evidence -- release builds (as shipped), phone replay of `clips/s1.mp4` + `clips/s2.mp4`,
+counting only runs with the screen on and unlocked and finder time under 10 ms:**
+
+| build | serves found | exact repeats among masked pictures |
+|---|---|---|
+| 0.12.8 (`b3b0a71`) | 7 / 7 | (no mask passes) |
+| 0.13.9 (`92b2f87`) | 4 / 4 | (no mask passes) |
+| 0.13.18 + the new report lines, without the fix | **0 / 6** | 213-236 of 214-237 (all but the first) |
+| with the fix | **8 / 8** | **0** in every run |
+
+Finder time 4.2-5.2 ms, 0 pictures skipped, for every build.
+
+**Things that looked like regressions but are not:**
+- *Debug* (debuggable) builds run the finders 8-10x slower (30-60 ms), so pictures get dropped and
+  `s2` misses its serve now and then -- **0.12.8 debug does this too**. Judge by release builds.
+- Overnight runs after ~03:15 are void: the runner never woke the screen, so the app ran behind the
+  lock screen (finder time 40-2700 ms) or never started. Six more fixed runs found their serve even
+  then, but they are not counted. `runguard.sh` (outside the repo) now wakes the screen and refuses to
+  run behind the keyguard or while another app is in use.
+- Feeding the raw stock videos is wrong: they are stored stretched to 30 fps, and the chip numbers
+  frames by time, so each frame looks 8 apart ("missed" ~7x the frame count). Re-time first --
+  `cut.sh` does, or multiply the video track's `mdhd` timescale by 8 (same frames, no re-encode).
+- 0.13.18 *without* the fix found a serve on the full re-timed video: its repeat detector switched
+  the mask passes off ("239 of 240 pictures were exact repeats") and the finders recovered. The short
+  clips end before it trips.
+
+**Full stock videos (re-timed to 240 fps), release builds, 2 runs each:**
+
+| build | `..161527357` (2 serves) | `..161337155` (2 by eye + 1 the harness finds) | repeats |
+|---|---|---|---|
+| 0.12.8 | 2, 2 | 3, 3 | -- |
+| with the fix | 2, 2 | 3, 3 | 0 |
+
+Same as the desktop harness. These test builds had `android:largeHeap` added, because replay
+(`FileFrames`) holds the WHOLE video in the heap ("a serve clip is a few MB"): 127-178 MB of a 256 MB
+heap. Without it every version, 0.12.8 included, dies of `OutOfMemoryError` around the first
+capture -- 0.13 a little sooner (its room-background work). Live, `ClipRecorder` keeps only the last
+5 s, so this is a replay limit, not an app bug. Use clips under ~50 MB, or largeHeap, for replay.
+
+**Still open:**
+- ~~Not verified in a live session.~~ **Verified live (2026-11-15, two sessions on 0.13.19):** serves
+  found again; 0 of 6,280 and 0 of 7,828 masked pictures repeated; finder 4.6 / 7.9 ms; 0 dropped,
+  0 skipped. One reading was wrong (7,086 rpm), a spin-engine matter, not this one -- see below.
+- The chip's own alpha mask is never trusted (`maskTrust` -1 in every run: a few pixels disagree), so
+  the finders use the CPU mask and the GPU mask passes are wasted work. Safe, but worth a look.
+- Release testing needs the clip in `/data/local/tmp` (no `run-as` on a non-debuggable app); `run.sh`
+  only does debug builds.
+
+
 Branch `claude/zealous-goldberg-qwboov`. Everything referred to here is committed and pushed.
 
 ## The problem in one paragraph
@@ -116,3 +178,13 @@ hypothesis 1 and some load. It does not run the camera, exposure locks, or the e
   rendering (hence `NOWEB`), and without `RIG` the chip replay drops frames so badly that 0.12.8 finds
   nothing. With `RIG` the replay is lossless, so it tests detection only — not load, not a real GPU.
   The `RIG` run was not completed; it last hit the 3 s chip setup limit, which `RIG` now raises.
+
+## Follow-up seen live: a 7,086 rpm reading (spin engine, not the finder)
+
+`Session_20261115_214545/serve04`: half-marked ball, 118.1 +/- 1.95 rps, fit 0.535, passed `isClear`
+(score >= 0.5, lead 0.29, 23.6 turns). Measured from the clip (ball-interior brightness over the 49
+clean frames): **56.75 rps, about 3,400 rpm**, 68 % of the swing; nothing else above 8 %. The wall
+beside the ball alternates every frame (180/188/180/187...): 60 Hz mains, lights at 120 Hz, filmed at
+238.25 fps while the engine assumes 240 -- that folds to ~119 rps, inside the reading's +/-. Not the
+2x harmonic (113.5, outside it). The segment also ran 10 frames past the ball (frames 66-75 are the
+player's arm). Not fixed: the gate has no notion that a rate at fps/2 is where flicker lands.

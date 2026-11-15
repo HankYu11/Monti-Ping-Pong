@@ -53,7 +53,9 @@ capture -- 0.13 a little sooner (its room-background work). Live, `ClipRecorder`
 5 s, so this is a replay limit, not an app bug. Use clips under ~50 MB, or largeHeap, for replay.
 
 **Still open:**
-- **Not verified in a live session.** Replay does not run the camera, exposure locks or the encoder.
+- ~~Not verified in a live session.~~ **Verified live (2026-11-15, two sessions on 0.13.19):** serves
+  found again; 0 of 6,280 and 0 of 7,828 masked pictures repeated; finder 4.6 / 7.9 ms; 0 dropped,
+  0 skipped. One reading was wrong (7,086 rpm), a spin-engine matter, not this one -- see below.
 - The chip's own alpha mask is never trusted (`maskTrust` -1 in every run: a few pixels disagree), so
   the finders use the CPU mask and the GPU mask passes are wasted work. Safe, but worth a look.
 - Release testing needs the clip in `/data/local/tmp` (no `run-as` on a non-debuggable app); `run.sh`
@@ -176,3 +178,13 @@ hypothesis 1 and some load. It does not run the camera, exposure locks, or the e
   rendering (hence `NOWEB`), and without `RIG` the chip replay drops frames so badly that 0.12.8 finds
   nothing. With `RIG` the replay is lossless, so it tests detection only — not load, not a real GPU.
   The `RIG` run was not completed; it last hit the 3 s chip setup limit, which `RIG` now raises.
+
+## Follow-up seen live: a 7,086 rpm reading (spin engine, not the finder)
+
+`Session_20261115_214545/serve04`: half-marked ball, 118.1 +/- 1.95 rps, fit 0.535, passed `isClear`
+(score >= 0.5, lead 0.29, 23.6 turns). Measured from the clip (ball-interior brightness over the 49
+clean frames): **56.75 rps, about 3,400 rpm**, 68 % of the swing; nothing else above 8 %. The wall
+beside the ball alternates every frame (180/188/180/187...): 60 Hz mains, lights at 120 Hz, filmed at
+238.25 fps while the engine assumes 240 -- that folds to ~119 rps, inside the reading's +/-. Not the
+2x harmonic (113.5, outside it). The segment also ran 10 frames past the ball (frames 66-75 are the
+player's arm). Not fixed: the gate has no notion that a rate at fps/2 is where flicker lands.

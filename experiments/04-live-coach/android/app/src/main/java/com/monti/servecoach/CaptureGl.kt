@@ -121,8 +121,9 @@ class CaptureGl(private val assets: AssetManager) {
                     if (i >= 0) {
                         if (k < frames.size) {
                             val fr = frames[k++]
-                            codec.getInputBuffer(i)!!.apply { clear(); put(fr.data) }
-                            codec.queueInputBuffer(i, 0, fr.data.size, fr.ptsUs, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
+                            val bytes = fr.data
+                            codec.getInputBuffer(i)!!.apply { clear(); put(bytes) }
+                            codec.queueInputBuffer(i, 0, bytes.size, fr.ptsUs, if (fr.key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
                         } else { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true }
                     }
                 }

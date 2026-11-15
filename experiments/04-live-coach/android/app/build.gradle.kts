@@ -20,8 +20,8 @@ android {
             abiFilters += listOf("arm64-v8a")
             if (project.hasProperty("emuAbi")) abiFilters += "x86_64"
         }
-        versionCode = 69
-        versionName = "0.13.19"
+        versionCode = 70
+        versionName = "0.13.20"
     }
     buildTypes {
         release {

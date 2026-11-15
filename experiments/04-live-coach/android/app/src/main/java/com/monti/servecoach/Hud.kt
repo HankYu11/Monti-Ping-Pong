@@ -55,6 +55,14 @@ object SpinLevel {
     fun of(rpm: Int): Int = EDGES.indexOfFirst { rpm < it }.let { if (it < 0) 3 else it }
     /** for the voice: "strong", "medium", "weak" or "almost no" spin */
     fun spoken(rpm: Int) = arrayOf("almost no", "weak", "medium", "strong")[of(rpm)]
+    /** the outcome in two words, for the screen's headline and the voice: "Strong backspin",
+     *  "Medium side-backspin", "Almost no spin". The kind without its qualifiers ("curves right",
+     *  "+ gyro"): those are for the line under it, not for a player mid-practice. */
+    fun outcome(rpm: Int, type: String): String {
+        val kind = type.lowercase(java.util.Locale.US).substringBefore(" (").substringBefore(" + ").trim()
+        val k = of(rpm)
+        return if (k == 0 || kind.isEmpty() || kind == "no spin") "Almost no spin" else "${arrayOf("", "Light", "Medium", "Strong")[k]} $kind"
+    }
 }
 
 /** The shading over the camera view: a dark fall-off on the right, behind the readout. (0.9.0 drew
@@ -63,7 +71,7 @@ class HudFrame(ctx: Context) : View(ctx) {
     private val shade = Paint()
     var color: Int = Hud.CYAN
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-        shade.shader = LinearGradient(w * 0.38f, 0f, w.toFloat(), 0f, Color.TRANSPARENT, Color.argb(200, 0, 8, 14), Shader.TileMode.CLAMP)
+        shade.shader = LinearGradient(w * 0.34f, 0f, w.toFloat(), 0f, Color.TRANSPARENT, Color.argb(232, 0, 8, 14), Shader.TileMode.CLAMP)
     }
     override fun onDraw(c: Canvas) { c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), shade) }
 }
@@ -81,11 +89,11 @@ class SpinScale(ctx: Context) : View(ctx) {
         set(v) { field = v; invalidate() }
     private val d = resources.displayMetrics.density
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(wSpec), (24 * d).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(wSpec), (30 * d).toInt())
     }
     private fun x(r: Float) = width * min(r, maxRpm) / maxRpm
     override fun onDraw(c: Canvas) {
-        val top = 2 * d; val barH = 5 * d
+        val top = 2 * d; val barH = 6 * d
         bar.color = Color.argb(38, 95, 242, 255)
         c.drawRect(0f, top, width.toFloat(), top + barH, bar)
         rpm?.let { bar.color = Hud.CYAN; c.drawRect(0f, top, x(it.toFloat()), top + barH, bar) }
@@ -94,12 +102,12 @@ class SpinScale(ctx: Context) : View(ctx) {
         val px = x(SpinLevel.WORLD_AVG_RPM.toFloat())
         bar.color = Hud.AMBER
         c.drawRect(px - 0.75f * d, top - 2.5f * d, px + 0.75f * d, top + barH + 2.5f * d, bar)
-        text.textSize = 8.5f * d
+        text.textSize = 11f * d
         text.color = Hud.DIM
-        c.drawText("NO SPIN", 0f, top + barH + 10.5f * d, text)
+        c.drawText("NO SPIN", 0f, top + barH + 13.5f * d, text)
         text.color = Hud.AMBER
         val lbl = "PRO AVG"; val w = text.measureText(lbl)
-        c.drawText(lbl, (px - w / 2).coerceIn(0f, width - w), top + barH + 10.5f * d, text)
+        c.drawText(lbl, (px - w / 2).coerceIn(0f, width - w), top + barH + 13.5f * d, text)
     }
 }
 
@@ -121,7 +129,7 @@ class SpinSplit(ctx: Context) : View(ctx) {
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Hud.mono(ctx); letterSpacing = 0.1f }
     private val value = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Hud.display(ctx, 600) }
     override fun onMeasure(wSpec: Int, hSpec: Int) {
-        setMeasuredDimension(MeasureSpec.getSize(wSpec), (62 * d).toInt())
+        setMeasuredDimension(MeasureSpec.getSize(wSpec), (84 * d).toInt())
     }
     override fun onDraw(c: Canvas) {
         val s = spin ?: return
@@ -132,23 +140,23 @@ class SpinSplit(ctx: Context) : View(ctx) {
             Triple(if (s.lift >= 0) "BACKSPIN" else "TOPSPIN", abs(s.lift), true),
             Triple(if (s.curve >= 0) "SIDE RIGHT" else "SIDE LEFT", abs(s.curve), true),
             Triple("GYRO", abs(s.gyro), s.dirKnown))
-        val labW = 76 * d; val valW = 30 * d
+        val labW = 104 * d; val valW = 38 * d
         val x0 = labW; val x1 = width - valW
-        label.textSize = 9.5f * d
-        value.textSize = 11f * d
+        label.textSize = 12.5f * d
+        value.textSize = 15f * d
         label.color = Hud.DIM
         val unit = "REV/S"
-        c.drawText(unit, width - label.measureText(unit), 8f * d, label)
+        c.drawText(unit, width - label.measureText(unit), 11f * d, label)
         for ((i, r) in rows.withIndex()) {
-            val y = 22f * d + i * 17f * d
+            val y = 31f * d + i * 23f * d
             label.color = if (r.third) Hud.DIM else Color.argb(90, 95, 242, 255)
             c.drawText(r.first, 0f, y, label)
-            val mid = y - 3.2f * d
+            val mid = y - 4.2f * d
             bar.color = Color.argb(34, 95, 242, 255)
-            c.drawRect(x0, mid - 2.5f * d, x1 - 6 * d, mid + 2.5f * d, bar)
+            c.drawRect(x0, mid - 3f * d, x1 - 6 * d, mid + 3f * d, bar)
             bar.color = if (r.third) Hud.CYAN else Color.argb(110, 95, 242, 255)
             val w = (x1 - 6 * d - x0) * (r.second / total).toFloat()
-            c.drawRect(x0, mid - 2.5f * d, x0 + w, mid + 2.5f * d, bar)
+            c.drawRect(x0, mid - 3f * d, x0 + w, mid + 3f * d, bar)
             value.color = if (r.third) Hud.WHITE else Color.argb(150, 240, 248, 250)
             val v = r.second.roundToInt().toString()
             c.drawText(v, width - value.measureText(v), y, value)

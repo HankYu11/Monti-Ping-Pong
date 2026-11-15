@@ -91,6 +91,11 @@ class MainActivity : Activity() {
 
     private val report = JSONObject()
     private val events = JSONArray()
+    /** where this session's events start: the last report took everything before it (15 Nov: the
+     *  21:45 report repeated every event of 21:44, because one app run kept one list) */
+    private var eventsFrom = 0
+    private var eventsEnd = 0                             // where the last session's report ended
+    private fun sessionEvents() = JSONArray().also { a -> for (k in eventsFrom until events.length()) a.put(events.get(k)) }
     private val results = JSONArray()
     private lateinit var capDir: File
 
@@ -110,6 +115,12 @@ class MainActivity : Activity() {
         buildUi()
         setupEngine()
         tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.US }
+        // the chime after "Ready.": a word can drown in a club's noise, a tone cuts through
+        tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+            override fun onStart(id: String?) {}
+            override fun onDone(id: String?) { if (id == "ready") main.post { if (mode == Mode.LIVE && turnId == 0) chime() } }
+            @Deprecated("TextToSpeech") override fun onError(id: String?) {}
+        })
         report.put("device", JSONObject().put("maker", Build.MANUFACTURER).put("model", Build.MODEL)
             .put("android", Build.VERSION.RELEASE).put("sdk", Build.VERSION.SDK_INT)).put("app", BuildConfig.VERSION_NAME)
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
@@ -393,6 +404,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         newSession()
+        sinceTip = 0; faults.clear()
         latestSpotted = 0
         screen.source = "SERVE"
         mode = Mode.LIVE
@@ -518,8 +530,10 @@ class MainActivity : Activity() {
     }
 
     override fun onResume() { super.onResume(); resumed = true; startPreview() }
-    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode == Mode.LIVE) stopAll() }
-    override fun onDestroy() { super.onDestroy(); stopAll(); tts?.shutdown(); camThread.quitSafely(); encThread.quitSafely() }
+    // a video test too: left running in the background it kept the codec, the GL threads and the
+    // engine busy for nobody (review 16 Nov)
+    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode != Mode.IDLE) stopAll() }
+    override fun onDestroy() { super.onDestroy(); stopAll(); tts?.shutdown(); chimer?.release(); camThread.quitSafely(); encThread.quitSafely() }
 
     // ------------------------------------------------------------------ replay a video (testing without a table)
     private fun pickVideo() {
@@ -740,6 +754,7 @@ class MainActivity : Activity() {
     private fun newSession() {
         session = "Session_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
         sessionFrom = results.length()
+        eventsFrom = eventsEnd
         reportUri = null
         synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0 }
     }
@@ -787,6 +802,7 @@ class MainActivity : Activity() {
         // a serve still being measured: its answer (and data) first, up to 30 s
         if ((measuring != null || waiting.isNotEmpty()) && tries < 60) { main.postDelayed({ finishSession(tries + 1) }, 500); return }
         writeReport()
+        eventsEnd = events.length()           // the next session's report starts here (its setup included)
         val name = session
         // once the clips still being written are in (they go on their own threads)
         main.postDelayed({
@@ -896,6 +912,19 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ what to say
+    /** a tip every this many readable serves */
+    private val tipEvery = 3
+    private var sinceTip = 0
+    private val faults = HashMap<String, Int>()
+    /** this serve's fault counted; every [tipEvery] serves, the commonest since the last tip (none if all were good) */
+    private fun nextTip(kind: String): Pair<String, String>? {
+        if (kind.isNotEmpty() && kind != "good" && titles.containsKey(kind)) faults[kind] = (faults[kind] ?: 0) + 1
+        if (++sinceTip < tipEvery) return null
+        sinceTip = 0
+        val worst = faults.maxByOrNull { it.value }?.key
+        faults.clear()
+        return worst?.let { titles[it] }
+    }
     private val titles = mapOf(
         "thick" to ("You pushed the ball instead of brushing it" to "Open the face and brush along under the ball."),
         "good" to ("Strong backspin" to "Keep this contact."),
@@ -914,7 +943,17 @@ class MainActivity : Activity() {
         turnId = 0
         tone(Hud.CYAN)
         state("Ready: serve")
-        if (spoken != null) say(spoken, queue = true)
+        // one serve at a time (decided 16 Nov), so Ready has to be unmistakable from the table:
+        // the border flashes now, and a chime follows the spoken "Ready."
+        if (mode == Mode.LIVE) screen.readyCue()
+        if (spoken != null) say(spoken, queue = true, id = "ready") else if (mode == Mode.LIVE) chime()
+    }
+    private var chimer: android.media.ToneGenerator? = null
+    private fun chime() {
+        try {
+            val g = chimer ?: android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 90).also { chimer = it }
+            g.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 220)
+        } catch (_: Exception) {}
     }
     private fun onSpotted(id: Int) {
         if (mode != Mode.LIVE) return
@@ -981,12 +1020,14 @@ class MainActivity : Activity() {
         val type = sv.optString("type")
         val coach = r.optJSONObject("coach")
         val kind = coach?.optString("kind") ?: ""
-        val t = titles[kind]
         val ballPx = sv.optDouble("ballPx", 0.0)
         // the only line the screen still carries on a good reading: something the player can act on.
         // The coaching prose and the timing numbers both went into the report, where they can be
         // read at leisure instead of competing with the serve.
         val closer = if (ballPx in 1.0..24.0) "The ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
+        // a coaching tip every few readable serves, about the commonest fault since the last one
+        // (PLAN.md: the outcome every serve, one cue now and then; 0.13.21 said a sentence a serve)
+        val tip = nextTip(kind)
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only
@@ -1001,11 +1042,13 @@ class MainActivity : Activity() {
         // m/s over the stretch the engine read -> km/h, which is how a player thinks about it.
         // Shown only when there is one: a reading from a handed-in track may carry no flight.
         val kmh = sv.optDouble("speed", 0.0).takeIf { it > 0.1 }?.let { (it * 3.6).roundToInt() }
-        screen.reading(r.optInt("capture"), rpm, type, closer, spin, kmh)
-        turnDone("$rpm RPM, ${SpinLevel.spoken(rpm)} spin, $type. ${t?.first ?: ""}", r.optInt("capture"))
+        screen.reading(r.optInt("capture"), rpm, type, closer.ifEmpty { tip?.let { "TIP  ${it.first}. ${it.second}" } ?: "" }, spin, kmh)
+        // "Strong backspin, 2710." -- then, every few serves, the fix (the half of each cue that
+        // 0.10 to 0.13.21 never said: "Open the face and brush along under the ball.")
+        turnDone("${SpinLevel.outcome(rpm, type)}, $rpm." + (tip?.let { " Tip: ${it.second}" } ?: ""), r.optInt("capture"))
     }
 
-    private fun say(text: String, queue: Boolean = false) { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, "r") }
+    private fun say(text: String, queue: Boolean = false, id: String = "r") { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, id) }
 
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
@@ -1057,7 +1100,7 @@ class MainActivity : Activity() {
     private fun writeReport() {
         if (session.isEmpty() || mode == Mode.REPLAY) return
         fillReport()
-        report.put("events", events).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
+        report.put("events", sessionEvents()).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
         val text = report.toString(1)
         val uri = reportUri ?: try {
             val values = ContentValues().apply {
@@ -1081,7 +1124,7 @@ class MainActivity : Activity() {
     /** the same report onto the clipboard, with every session's results, not just this one's */
     private fun copyReport() {
         fillReport()
-        report.put("events", events).put("results", results)
+        report.put("events", sessionEvents()).put("results", results)
         val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Serve Coach report", report.toString(1)))
         Toast.makeText(this, "Report copied (it is also in the session's folder)", Toast.LENGTH_LONG).show()

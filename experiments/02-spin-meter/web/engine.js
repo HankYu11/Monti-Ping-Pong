@@ -1677,8 +1677,20 @@
     }
     // troubleshooting: where the black half pointed in each frame (x right, y down, z toward the camera)
     DBG.poles = (DBG.poles || []).concat([rows.map((rw, k) => [rw.i, ...B[k].map((x) => +x.toFixed(2)), +rw.r.toFixed(1)])]);
-    const poleFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
+    const wobble = faint ? null : lightWobble(t, B, fps, ROBUST ? Wt : null);
+    if (wobble) {
+      DBG.lightWobble = (DBG.lightWobble || []).concat([{ hz: wobble.hz, rps: +wobble.rps.toFixed(2), share: +wobble.share.toFixed(3), removed: wobble.removed }]);
+    }
+    // The cleaned pole is for the half-marked fit only. With colour dots the rate comes from the
+    // dots and the pole fitted together as one rigid ball (fitRigid), seeded from the pole's own
+    // fit, and handing it the cleaned pole made it worse, not better: one live dot serve under the
+    // same lights went from 37.2 rev/s (fit 0.42) to 1.4 (0.14). So the dots get the raw pole and
+    // the raw pole's fit, exactly as before, and only a half-marked ball's reading changes.
+    const rawFit = faint ? null : fitRotatingVector(t, B, fps, ROBUST ? Wt : null);
+    const poleFit = faint ? null : wobble && wobble.removed ? fitRotatingVector(t, wobble.clean, fps, ROBUST ? Wt : null) : rawFit;
+    if (poleFit && wobble) poleFit.lightWobble = { hz: wobble.hz, share: wobble.share, removed: wobble.removed };
     if (poleFit) poleFit.change = stats.change;
+    if (rawFit) rawFit.change = stats.change;
     // colour dots: seen in enough frames, all marks are fitted together as one turning ball
     if (dotFrames < 4) return poleFit;
     const wOfRow = new Map(t.map((ti, k) => [ti, Wt[k]]));
@@ -1693,10 +1705,55 @@
       }
       if (tr.t.length >= 2) tracks.push(tr);
     }
-    const rigid = fitRigid(tracks, fps, poleFit, t, B, Wt);
+    const rigid = fitRigid(tracks, fps, rawFit, t, B, Wt);
     if (!rigid) return poleFit || { error: "The colour dots couldn't be followed: too few frames in a row." };
-    if (poleFit) { rigid.poleRps = poleFit.rps; rigid.poleAxis = poleFit.axis; }
+    if (rawFit) { rigid.poleRps = rawFit.rps; rigid.poleAxis = rawFit.axis; }
     return rigid;
+  }
+
+  // The room lights in the pole, taken out before the rate is fitted.
+  //
+  // The black half's direction is read from which pixels are dark, and its tilt toward the camera
+  // from how many are: a frame lit a few percent brighter moves both. Under mains lights filmed at
+  // 240 fps every other frame is such a frame, so the pole carries the ball's own turn PLUS a
+  // wobble locked to the lights. On a real serve (live 0.13.19, 2026-11-15, under 60 Hz lights)
+  // the pole's x leaned +0.31 on even frames and -0.54 on odd ones; consecutive poles 4 frames
+  // apart agreed (+0.82, the ball's own 57 rev/s) but 2 apart did not (~0, where 57 rev/s alone
+  // gives -0.99). With frames missing -- the phone's windows had 13 gaps -- the wobble fitted
+  // better than the turn and the serve read 118 rev/s, clear. Fitting the wobble in the band where
+  // the lights can land (flickerBands) and taking it out read 56.5 rev/s at r2 0.70 instead of
+  // 0.38, matching the ball's brightness (56.75) and the whole-crop reading (56.8).
+  //
+  // Only taken out when it explains a real share of the pole's movement: on a serve without
+  // flicker there is nothing in the band and the pole is left exactly as it was.
+  const WOBBLE_SHARE = 0.1;
+  function lightWobble(t, B, fps, wts) {
+    const bands = flickerBands(fps);
+    if (!bands.length || t.length < 8) return null;
+    const W = wts || t.map(() => 1), sw = W.reduce((s, v) => s + v, 0);
+    const mean = [0, 1, 2].map((d) => B.reduce((s, b, k) => s + W[k] * b[d], 0) / sw);
+    let variance = 0;
+    B.forEach((b, k) => { for (let d = 0; d < 3; d++) variance += W[k] * (b[d] - mean[d]) ** 2; });
+    if (!(variance > 1e-9)) return null;
+    let best = null;
+    for (const band of bands) {
+      for (let rps = band.lo - 0.5; rps <= band.hi + 0.5; rps += 0.05) {
+        const w = 2 * Math.PI * rps / fps, X = t.map((ti) => [1, Math.cos(w * ti), Math.sin(w * ti)]);
+        const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+        X.forEach((x, k) => { for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i][j] += W[k] * x[i] * x[j]; });
+        const coef = [0, 1, 2].map((d) => { const b = [0, 0, 0]; X.forEach((x, k) => { for (let i = 0; i < 3; i++) b[i] += W[k] * x[i] * B[k][d]; }); return solve3(A, b); });
+        let res = 0;
+        X.forEach((x, k) => { for (let d = 0; d < 3; d++) res += W[k] * (coef[d][0] + coef[d][1] * x[1] + coef[d][2] * x[2] - B[k][d]) ** 2; });
+        if (!best || res < best.res) best = { res, rps, hz: band.hz, coef, X };
+      }
+    }
+    const share = 1 - best.res / variance;
+    if (share < WOBBLE_SHARE) return { hz: best.hz, rps: best.rps, share, removed: false };
+    const clean = B.map((b, k) => {
+      const x = best.X[k], c = b.map((v, d) => v - best.coef[d][1] * x[1] - best.coef[d][2] * x[2]), n = norm(c);
+      return n > 1e-6 ? scale(c, 1 / n) : b;
+    });
+    return { hz: best.hz, rps: best.rps, share, removed: true, clean };
   }
 
   // ------------------------------------------------------------ 3. rate scan
@@ -1968,19 +2025,24 @@
   // slow real spin is far likelier than a light, and a refusal would cost real serves. A real
   // spin inside a band (98-102 rev/s at 240 fps on 50 Hz, 117.6-120 on 60 Hz) is refused too;
   // serves are read at 14-63 rev/s (README), so that is the cheaper mistake.
-  function lightFlicker(rps, plusMinus, fps) {
-    if (!(fps > 0) || !Number.isFinite(rps)) return 0;
+  function flickerBands(fps) {
+    if (!(fps > 0)) return [];
     const fold = (x) => { const m = ((x % fps) + fps) % fps; return Math.min(m, fps - m); };
-    const slack = (Number.isFinite(plusMinus) ? plusMinus : 0) + 0.5;
+    const out = [];
     for (const hz of [100, 120]) {
       let lo = Infinity, hi = -Infinity;
       for (let k = -20; k <= 20; k++) {
         const v = fold(hz * fps / (fps * (1 + k * 0.001)));
         lo = Math.min(lo, v); hi = Math.max(hi, v);
       }
-      if (hi < 10) continue;
-      if (rps >= lo - slack && rps <= hi + slack) return hz;
+      if (hi >= 10) out.push({ hz, lo, hi });
     }
+    return out;
+  }
+  function lightFlicker(rps, plusMinus, fps) {
+    if (!Number.isFinite(rps)) return 0;
+    const slack = (Number.isFinite(plusMinus) ? plusMinus : 0) + 0.5;
+    for (const b of flickerBands(fps)) if (rps >= b.lo - slack && rps <= b.hi + slack) return b.hz;
     return 0;
   }
 

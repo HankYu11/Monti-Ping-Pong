@@ -1439,7 +1439,36 @@
     const spread = (trs) => rigidCost(trs, [0, 0, 1], 0, tm);
     const sumW = tracks.reduce((s, tr) => s + tr.w.reduce((a, q) => a + q, 0), 0);
     let V = spread(tracks);
-    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots" };
+    // The ball is not turning: every dot sits where it sat, so no rate has anything to fit.
+    //
+    // This is the ONE test that can tell a float from a ball whose marking merely cannot be
+    // read, and it is worth saying why the obvious alternatives cannot. On a rendered 40 rev/s
+    // backspin whose inked pole lies on its own spin axis -- spinning hard, looking still --
+    // the pattern's change reads 0.074 against a float's 0.057, and the pole's swing reads
+    // 0.374 against a float's 0.672. Both put the real serve on the float's side of any line,
+    // so a rule built on either would announce a hard backspin as "no spin". The dots do not
+    // do that: they are discrete features that either move or do not, and unlike the pole's
+    // seam they do not collapse into noise when there is no rotation to dominate it.
+    //
+    // Where the bar sits, over seven rendered floats and eight spinning balls, six of them
+    // with the pole put on the axis on purpose so they look as still as a float can:
+    //
+    //   floats                     0.0036 0.0036 0.0048 0.0068 0.0069 0.0114   (one had no dots)
+    //   gyro 40, pole 8 deg off    0.0552      <- the nearest spinning ball
+    //   40 rev/s, pole 12 deg off  0.0705
+    //   15 rev/s, pole 5 deg off   0.0917
+    //   40 rev/s, pole 6 deg off   0.1309
+    //   2, 25, 10, 40 rev/s        0.2270 0.2378 0.4249 0.5415
+    //
+    // ...and that gap was an artefact of the sample. Every spinning ball above is side-on or
+    // near it. Filmed HEAD-ON, from the end of the table, a real 40 rev/s serve reads 0.0141
+    // and 0.0168 -- inside the float band, which tops out at 0.0114. Raising the bar to 0.02
+    // on the strength of the side-on cases announced both head-on serves as "no spin", caught
+    // by servecheck's head-on cases. A 1.2x gap is not a threshold, so the bar stays at 0.005:
+    // it catches the cleanest floats and leaves the rest to be refused, which is the safe
+    // failure. Telling a float from a ball whose marking cannot be read still wants a signal
+    // nobody here has found, and the head-on case is where any candidate has to be tested.
+    if (V / sumW < 0.005) return { rps: 0, axis: [0, 0, 1], score: 1, runner: NaN, r2: null, swing: 0, noSpin: true, candidates: [], method: "dots", dotSpread: V / sumW };
     // starting points: the black half's best rates, each dot's own circle, then for every
     // starting axis the best few rates along it
     const axes = [];
@@ -1518,7 +1547,7 @@
     const minTurns = dotFrames >= 4 && dotTurns >= 0.25 ? 0.25 : 1;
     const candidates = [];
     for (const f of fits) if (!candidates.some((c) => Math.abs(c.rps - f.rps) < 0.5)) candidates.push({ rps: f.rps, r2: 1 - f.res / V });
-    return { rps: best.rps, axis: best.a, score, runner, r2, swing, plusMinus, turns, minTurns, dotFrames, dotTurns,
+    return { rps: best.rps, axis: best.a, score, runner, r2, swing, plusMinus, turns, minTurns, dotFrames, dotTurns, dotSpread: V / sumW,
       candidates: candidates.slice(0, 5), method: "dots" };
   }
 
@@ -1924,11 +1953,42 @@
   // black disc), so any rate fitted to it is noise. Real clips: 0.11 and up when readable, 0.08
   // for a black-only stretch.
   const steady = (r) => r.method !== "dots" && r.change < 0.1;
+  // The rate the room's lights would read as, if this one is theirs.
+  //
+  // Lamps on mains flicker at twice its frequency: 100 Hz on 50 Hz mains, 120 Hz on 60 Hz. Filmed
+  // at 240 fps a 120 Hz flicker is a picture that alternates every frame, and a half-marked ball
+  // whose black half is read against the light swings with it -- which fits as a rate right at
+  // half the frame rate, where nothing can be told apart. The camera's real rate is not quite the
+  // nominal one (a Pixel 8 at "240" delivered 238.25), so the flicker lands a little off fps/2:
+  // live 0.13.19 read a 57 rev/s backspin as 118.1 +/- 1.95 rev/s under 60 Hz lights, the wall
+  // beside the ball alternating 180/188/180/187 frame by frame. A 100 Hz flicker reads near 100.
+  //
+  // Returns the flicker (Hz) whose reading overlaps this rate, or 0. The band takes the frame rate
+  // as anywhere within 2% of nominal. Readings it lands under 10 rev/s are left alone: there a
+  // slow real spin is far likelier than a light, and a refusal would cost real serves. A real
+  // spin inside a band (98-102 rev/s at 240 fps on 50 Hz, 117.6-120 on 60 Hz) is refused too;
+  // serves are read at 14-63 rev/s (README), so that is the cheaper mistake.
+  function lightFlicker(rps, plusMinus, fps) {
+    if (!(fps > 0) || !Number.isFinite(rps)) return 0;
+    const fold = (x) => { const m = ((x % fps) + fps) % fps; return Math.min(m, fps - m); };
+    const slack = (Number.isFinite(plusMinus) ? plusMinus : 0) + 0.5;
+    for (const hz of [100, 120]) {
+      let lo = Infinity, hi = -Infinity;
+      for (let k = -20; k <= 20; k++) {
+        const v = fold(hz * fps / (fps * (1 + k * 0.001)));
+        lo = Math.min(lo, v); hi = Math.max(hi, v);
+      }
+      if (hi < 10) continue;
+      if (rps >= lo - slack && rps <= hi + slack) return hz;
+    }
+    return 0;
+  }
+
   function isClear(r) {
     const lead = Number.isFinite(r.runner) ? r.score - r.runner : 1;
     // at least one full turn: a part of a turn fits almost any rate (a quarter turn when colour
     // dots were seen in several frames: a dot shows the turn directly)
-    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1)) && !steady(r);
+    return r.score >= 0.5 && lead >= (r.score >= 0.75 ? 0.1 : 0.2) && !(r.turns < (r.minTurns || 1)) && !steady(r) && !r.lights;
   }
 
   // What in the footage stood in the way of a clear reading, each with what to change.
@@ -1948,6 +2008,8 @@
       add(`The ball turned only ${r.turns < 0.1 ? "a little" : "about " + Math.round(r.turns * 100) + "% of a turn"} in this stretch, too little to tell the rate.`, "Keep more of the flight in view, so the ball turns at least once.");
     if (r && steady(r))
       add("The ball showed the same side all the way (its marking hardly changed), so there is nothing to read the spin from.", "Film from the side of the ball's path, so both halves come into view as it turns.");
+    if (r && r.lights)
+      add(`The rate read (${Math.round(r.rps)} turns a second) is where the room lights' ${r.lights} Hz flicker lands at this frame rate, so it can't be told from the lights.`, "Light the ball with daylight or flicker-free lamps, or keep the ball against an evenly lit background.");
     if (r && !clear && !steady(r) && Number.isFinite(r.runner) && r.runner > r.score - 0.2)
       add("The spin rate is ambiguous: a quite different rate fits the marking about as well.", "Usually blur or a small ball: see the other points. More frames of the ball also help.");
     if (r && !clear && !out.length)
@@ -2097,6 +2159,7 @@
     const fix = c.lift > 0 && sideOn && geo.fallAccel > 9.81 && geo.fallAccel < 9.81 / 0.85 ? 9.81 / geo.fallAccel : 1;
     // the toss: the same ball at the same distance, so the flight's scale (its own blurred size read 5-15% fast)
     const tossMs = seg.toss ? 2 * geo.mmPerPx * fix * fps / 1000 : 0;
+    r.lights = lightFlicker(r.rps, r.plusMinus, fps);
     return {
       rps: r.rps, rpm: r.rps * 60, spinType: spinLabel(r.rps, c),
       backspin: Math.max(0, c.lift), topspin: Math.max(0, -c.lift), sidespin: Math.abs(c.curve),
@@ -2108,7 +2171,7 @@
       gyro: c.gyro, gyroDirKnown, lift: c.lift, curve: c.curve, tilt: c.tilt,
       // clear: a high fit, or a good fit well ahead of the best other spin rate
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
-      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
+      plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, oneSide: stats.oneSide, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing, dotSpread: r.dotSpread, dotFrames: r.dotFrames }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
       flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
         // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)

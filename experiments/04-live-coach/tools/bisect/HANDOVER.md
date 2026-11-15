@@ -13,24 +13,36 @@ loop -- an incomplete texture); 0.13.18's unbind/invalidate did not help, which 
 
 **Fix:** `39e0bcd` -- `plain2D(fboTex, qw, qh)` like every other texture (NEAREST, CLAMP_TO_EDGE).
 
-**Evidence -- release builds (as shipped), phone replay of `clips/s1.mp4` + `clips/s2.mp4`:**
+**Evidence -- release builds (as shipped), phone replay of `clips/s1.mp4` + `clips/s2.mp4`,
+counting only runs with the screen on and unlocked and finder time under 10 ms:**
 
 | build | serves found | exact repeats among masked pictures |
 |---|---|---|
-| 0.12.8 (`b3b0a71`) | 6 / 6 | (no mask passes) |
-| 0.13.9 (`92b2f87`) | 5 / 5 completed runs | (no mask passes) |
+| 0.12.8 (`b3b0a71`) | 7 / 7 | (no mask passes) |
+| 0.13.9 (`92b2f87`) | 4 / 4 | (no mask passes) |
 | 0.13.18 + the new report lines, without the fix | **0 / 6** | 213-236 of 214-237 (all but the first) |
-| tip with the fix | **12 / 12 completed runs** | **0** in every run |
+| with the fix | **8 / 8** | **0** in every run |
 
-Finder time in the clean window: 4.2-5.2 ms with 0 pictures skipped, for every build.
+Finder time 4.2-5.2 ms, 0 pictures skipped, for every build.
 
 **Things that looked like regressions but are not:**
 - *Debug* (debuggable) builds run the finders 8-10x slower (30-60 ms), so pictures get dropped and
   `s2` misses its serve now and then -- **0.12.8 debug does this too**. Judge by release builds.
-- After ~03:15 the phone got busy (swap ~3 GB, other apps); find time went to 40-2700 ms and some runs
-  died without a crash on every build alike (0.12.8, 0.13.9 and the fix). Not the app.
-- The full stock clips could not be replayed on the phone in this setup (0.12.8 never started; the
-  fixed build ran but the chip "missed" most ticks). Inconclusive, not counted.
+- Overnight runs after ~03:15 are void: the runner never woke the screen, so the app ran behind the
+  lock screen (finder time 40-2700 ms) or never started. Six more fixed runs found their serve even
+  then, but they are not counted. `runguard.sh` (outside the repo) now wakes the screen and refuses to
+  run behind the keyguard or while another app is in use.
+- Feeding the raw stock videos is wrong: they are stored stretched to 30 fps, and the chip numbers
+  frames by time, so each frame looks 8 apart ("missed" ~7x the frame count). Re-time first --
+  `cut.sh` does, or multiply the video track's `mdhd` timescale by 8 (same frames, no re-encode).
+- 0.13.18 *without* the fix found a serve on the full re-timed video: its repeat detector switched
+  the mask passes off ("239 of 240 pictures were exact repeats") and the finders recovered. The short
+  clips end before it trips.
+
+**Separate bug, every version incl. 0.12.8:** on the full re-timed stock videos the app dies of
+`OutOfMemoryError` in `Capture.crop` (from `writeCapture` and `buildScene`) a few seconds after the
+first serve: the 256 MB heap fills with full-size capture frames. Not a regression and not what
+stopped serves, but it can kill a session.
 
 **Still open:**
 - **Not verified in a live session.** Replay does not run the camera, exposure locks or the encoder.

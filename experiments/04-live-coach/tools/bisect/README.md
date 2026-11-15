@@ -23,7 +23,7 @@ than by reasoning about them.
 ## Running it on the phone
 
 The phone needs USB debugging on; the computer needs `adb`, an Android SDK on `ANDROID_HOME`,
-`gradle`, `ffmpeg`, and this repo on branch `claude/zealous-goldberg-qwboov`.
+`gradle`, `ffmpeg`, and this repo on `main`.
 
 ```bash
 cd experiments/04-live-coach/tools/bisect

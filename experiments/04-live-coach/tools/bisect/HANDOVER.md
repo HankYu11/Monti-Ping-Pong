@@ -64,7 +64,8 @@ videos now replay at the normal heap, 2 and 3 serves, twice each, where `main` a
   only does debug builds.
 
 
-Branch `claude/zealous-goldberg-qwboov`. Everything referred to here is committed and pushed.
+Everything referred to here is on `main`. (The work was done on `claude/zealous-goldberg-qwboov`, merged
+into `main` and deleted; the commits named here are all on `main`.)
 
 ## The problem in one paragraph
 
@@ -135,8 +136,8 @@ Warning: `run.sh` uninstalls ServeCoach before each install, which removes its p
 (reports and clips in `Download/ServeCoach` are kept).
 
 ```bash
-git fetch origin claude/zealous-goldberg-qwboov
-git worktree add ../servecoach-bisect origin/claude/zealous-goldberg-qwboov
+git fetch origin main
+git worktree add ../servecoach-bisect origin/main
 cd ../servecoach-bisect/experiments/04-live-coach/tools/bisect
 ./run.sh b3b0a71 v0.12.8  clips/s1.mp4 clips/s2.mp4
 ./run.sh ee5b75f v0.13.0  clips/s1.mp4 clips/s2.mp4

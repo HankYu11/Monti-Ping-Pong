@@ -39,10 +39,18 @@ Finder time 4.2-5.2 ms, 0 pictures skipped, for every build.
   the mask passes off ("239 of 240 pictures were exact repeats") and the finders recovered. The short
   clips end before it trips.
 
-**Separate bug, every version incl. 0.12.8:** on the full re-timed stock videos the app dies of
-`OutOfMemoryError` in `Capture.crop` (from `writeCapture` and `buildScene`) a few seconds after the
-first serve: the 256 MB heap fills with full-size capture frames. Not a regression and not what
-stopped serves, but it can kill a session.
+**Full stock videos (re-timed to 240 fps), release builds, 2 runs each:**
+
+| build | `..161527357` (2 serves) | `..161337155` (2 by eye + 1 the harness finds) | repeats |
+|---|---|---|---|
+| 0.12.8 | 2, 2 | 3, 3 | -- |
+| with the fix | 2, 2 | 3, 3 | 0 |
+
+Same as the desktop harness. These test builds had `android:largeHeap` added, because replay
+(`FileFrames`) holds the WHOLE video in the heap ("a serve clip is a few MB"): 127-178 MB of a 256 MB
+heap. Without it every version, 0.12.8 included, dies of `OutOfMemoryError` around the first
+capture -- 0.13 a little sooner (its room-background work). Live, `ClipRecorder` keeps only the last
+5 s, so this is a replay limit, not an app bug. Use clips under ~50 MB, or largeHeap, for replay.
 
 **Still open:**
 - **Not verified in a live session.** Replay does not run the camera, exposure locks or the encoder.

@@ -115,7 +115,7 @@ After the visit: update the tracker the same day (status, phone model, next step
 | Weeks | Focus | Activity per week | Which clubs |
 |---|---|---|---|
 | 1–2 | Prepare and friends | Test 2 loan phones; mark 100 balls; send version D to all known coaches; 2–3 visits | Founder's coaches |
-| 3–6 | Pilots running, first cold visits | 1 pilot check-in each; **3 new visits a week** | Taipei private studios and chains first (see `clubs.csv`, "Priority" A), then 萬華/中正/大安 sports centres near the office |
+| 3–6 | Pilots running, first cold visits | 1 pilot check-in each; **3 new visits a week** | Taipei private studios and chains first (see `clubs.csv`: "Priority" A1 first, the clubs with their own YouTube channel, then A), then 萬華/中正/大安 sports centres near the office |
 | 7–10 | Convert pilots, widen | Close the pilots; **3–4 visits a week**; 1 talk at a coach gathering if possible | New Taipei (板橋, 中和, 永和, 三重) and Taoyuan; strong school teams |
 | 11–13 | Review | 2 visits a week; write up what worked; decide on the south | Taichung/Tainan/Kaohsiung by LINE and video call only, unless a partner (JOOLA Taiwan, 東暎) carries it |
 

@@ -7,7 +7,7 @@ import csv, json, re, sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
-COLS = ["name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","source_url","notes"]
+COLS = ["name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","youtube","source_url","notes"]
 OUT_COLS = ["id","prio"] + COLS
 CITY_ORDER = ["台北市","新北市","桃園市","台中市","臺南市","高雄市"]
 CITY_CODE = {"台北市":"tpe","新北市":"ntpc","桃園市":"tyn","台中市":"txg","臺南市":"tnn","高雄市":"khh"}
@@ -19,7 +19,7 @@ def norm_city(c):
 
 def prio(r):
     t = r["type"]
-    if r["city"] == "台北市" and t in ("private studio","chain"): return "A"
+    if r["city"] == "台北市" and t in ("private studio","chain"): return "A1" if r.get("youtube") else "A"
     if r["city"] == "台北市" or (r["city"] == "新北市" and t in ("private studio","chain")): return "B"
     return "C"
 

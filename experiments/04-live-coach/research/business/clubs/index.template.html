@@ -67,6 +67,7 @@ td.name .meta{font-size:12px;color:var(--muted)}
 .chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:var(--chip);white-space:nowrap}
 .prio{font-family:var(--mono);font-weight:500;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
 .prio.A{color:var(--ball);border-color:var(--ball)}
+.prio.A1{color:var(--surface);background:var(--ball);border-color:var(--ball)}
 .contact{display:grid;gap:2px;font-size:12.5px;word-break:break-word}
 .offer{max-width:34ch;font-size:12.5px}
 td select{font-size:13px;padding:4px 6px}
@@ -154,7 +155,7 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
       <h3>90 days</h3>
       <table class="simple">
         <tr><td class="num">Wk 1–2</td><td>Test loan phones, mark 100 balls, message known coaches, 2–3 visits.</td></tr>
-        <tr><td class="num">Wk 3–6</td><td>Pilot check-ins; 3 new visits a week, Taipei priority A first.</td></tr>
+        <tr><td class="num">Wk 3–6</td><td>Pilot check-ins; 3 new visits a week, Taipei A1 (clubs with YouTube) first, then A.</td></tr>
         <tr><td class="num">Wk 7–10</td><td>Close pilots; 3–4 visits a week in New Taipei, Taoyuan and school teams.</td></tr>
         <tr><td class="num">Wk 11–13</td><td>2 visits a week; review; south by video call or via a partner.</td></tr>
       </table>
@@ -185,13 +186,13 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
     <h2 id="h-list">Clubs and coaching places</h2>
     <span class="trackmsg" id="trackmsg">Loading the tracker…</span>
   </div>
-  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A = Taipei studio or chain, B = other Taipei and New Taipei studios, C = the rest. Status and notes save for everyone who can edit this page.</p>
+  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A1 = Taipei studio or chain with its own YouTube channel (first choice), A = other Taipei studios and chains, B = other Taipei and New Taipei studios, C = the rest. Emails marked in notes as "search snippet" need checking before use. Status and notes save for everyone who can edit this page.</p>
   <div class="toolbar">
     <label for="q" class="eyebrow" hidden>Search</label>
     <input type="search" id="q" placeholder="Search name, district, offer…" aria-label="Search clubs">
     <select id="fcity" aria-label="City"><option value="">All cities</option></select>
     <select id="ftype" aria-label="Type"><option value="">All types</option></select>
-    <select id="fprio" aria-label="Priority"><option value="">All priorities</option><option>A</option><option>B</option><option>C</option></select>
+    <select id="fprio" aria-label="Priority"><option value="">All priorities</option><option value="A1">A1 (has YouTube)</option><option>A</option><option>B</option><option>C</option></select>
     <select id="fstatus" aria-label="Status"><option value="">All statuses</option></select>
     <button id="copycsv" type="button">Copy CSV</button>
     <button id="savecsv" type="button" hidden>Save CSV</button>
@@ -242,7 +243,7 @@ fillSelect($("#fstatus"), STATUSES.map(([k,l])=>[k||"none",l]));
 function stats(){
   const n = CLUBS.length, by = k => CLUBS.filter(c=>c.city===k).length;
   const st = s => Object.values(track).filter(t=>t.status===s).length;
-  const items = [[n,"clubs listed"],[by("台北市")||by("臺北市"),"in Taipei"],[CLUBS.filter(c=>c.prio==="A").length,"priority A"],
+  const items = [[n,"clubs listed"],[by("台北市")||by("臺北市"),"in Taipei"],[CLUBS.filter(c=>c.prio==="A1").length,"A1 with YouTube"],[CLUBS.filter(c=>c.email).length,"with email"],
     [st("pilot"),"pilots"],[st("paying"),"paying"]];
   $("#stats").innerHTML = items.map(([b,s])=>`<div class="stat"><b>${b}</b><span>${s}</span></div>`).join("");
 }
@@ -253,7 +254,8 @@ function contactHtml(c){
   if (c.facebook) parts.push(link(c.facebook,"Facebook"));
   if (c.line) parts.push(c.line.startsWith("http") ? link(c.line,"LINE") : "LINE " + esc(c.line));
   if (c.phone) parts.push(`<span class="num">${esc(c.phone)}</span>`);
-  if (c.email) parts.push(esc(c.email));
+  if (c.email) parts.push(`<span class="num">${esc(c.email)}</span>`);
+  (c.youtube||"").split(";").map(x=>x.trim()).filter(Boolean).forEach((u,i)=>parts.push(link(u, i?"YouTube 2":"YouTube")));
   parts.push(link(c.source_url,"Source"));
   return `<div class="contact">${parts.filter(Boolean).join("")}</div>`;
 }
@@ -269,7 +271,8 @@ function rows(){
     if (q && !(c.name+" "+c.district+" "+c.offer+" "+c.ages+" "+c.notes).toLowerCase().includes(q)) return false;
     return true;
   });
-  const key = c => sortK==="status" ? STATUSES.findIndex(x=>x[0]===(track[c.id]?.status||""))
+  const PR = {A1:0,A:1,B:2,C:3};
+  const key = c => sortK==="prio" ? (PR[c.prio] ?? 9) : sortK==="status" ? STATUSES.findIndex(x=>x[0]===(track[c.id]?.status||""))
     : sortK==="note" ? (track[c.id]?.note||"") : sortK==="contact" ? (c.phone||c.website||"") : (c[sortK]||"");
   r.sort((a,b)=>{ const x=key(a), y=key(b); const cmp = typeof x==="number" ? x-y : String(x).localeCompare(String(y),"zh-Hant"); return (cmp || a.idx-b.idx) * sortDir; });
   return r;
@@ -315,7 +318,7 @@ $("#tbody").addEventListener("change", e=>{
   else if (e.target.classList.contains("note")) save(id,{note:e.target.value.slice(0,300)});
 });
 
-const CSV_COLS = ["id","prio","name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","source_url","notes"];
+const CSV_COLS = ["id","prio","name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","youtube","source_url","notes"];
 function csv(){
   const q = v => `"${String(v??"").replace(/"/g,'""')}"`;
   return [CSV_COLS.concat(["status","note"]).join(","), ...CLUBS.map(c=>CSV_COLS.map(k=>q(c[k])).concat([q(SLABEL[track[c.id]?.status||""]), q(track[c.id]?.note)]).join(","))].join("\n");

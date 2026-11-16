@@ -79,3 +79,57 @@ Short version (Facebook comment / first line on LINE):
 > 剛剛〔學生名〕發出了〔數字〕RPM，大家很有感 😄
 > 試用的部分：我〔日期〕會再帶 24 顆標記球過去，6 週內有任何問題都可以直接 LINE 我。
 > 再次感謝！
+
+---
+
+## F. Email to 卓越乒乓 (excellencepingpong@gmail.com)
+
+*Draft, not sent. Address from their YouTube channel description (@epp037), which invites brand and event partnerships.*
+
+**主旨：** 合作邀請：用手機即時測發球轉速，想到卓越乒乓示範（奇斯科技）
+
+> 卓越乒乓 您好：
+>
+> 我是奇斯科技 QI SI TECHNOLOGY 的〔名字〕，我們是台北萬華的小型產品團隊。在 YouTube 上看到卓越的教學影片和課程介紹，頻道上寫歡迎品牌合作，所以冒昧來信。
+>
+> 我們做了一個 Android App「Serve Coach Live」：手機架在腳架上，以每秒 240 格拍攝，學生每發一球，App 就用聲音報出**轉速（RPM）、旋轉種類和強度**。不需要網路，一台手機可以讓整班學生輪流發球（NEXT SERVE）。作為參考，世界級選手的發球平均約 2,760 RPM。
+>
+> 想到兩種可能的合作，看哪個比較適合：
+> 1. **6 週免費試用**：我們到館架設、提供 24 顆標記球，教練在發球課或國手菁英班使用，每週聽聽教練的意見。
+> 2. **一起拍一支影片**：例如「學生發球轉速挑戰」，放在卓越的頻道，我們提供設備和剪輯協助。
+>
+> 先說明目前的限制：需要可拍 240 fps 的 Android 手機（教練端一台即可，沒有的話試用期間可以借）；球需要做標記（我們提供）；語音目前是英文；還沒有學生個人報表。
+>
+> 如果有興趣，我可以帶設備過去示範 30 分鐘，看哪天方便。也可以直接回信或留電話給我。
+>
+> 謝謝！
+>
+> 〔名字〕
+> 奇斯科技 QI SI TECHNOLOGY｜台北市萬華區
+> support@handyla.co
+
+---
+
+## G. Email to 小章魚Skr (yuskr0830@gmail.com)
+
+*Draft, not sent. Address from the channel description ("想學球或者是商業合作可以發到這裡"). Decide before sending: free product trial only, or a paid video? The draft asks for his rates and commits to nothing.*
+
+**主旨：** 合作邀約：會報出發球轉速的 App，想請你試試看（奇斯科技）
+
+> 小章魚 你好：
+>
+> 我是奇斯科技的〔名字〕，常看你的頻道〔可加一支你真的看過的影片名稱〕。
+>
+> 我們做了一個 Android App「Serve Coach Live」：手機放在腳架上，你每發一球，它就馬上用聲音報出**轉速（RPM）、旋轉種類和強度**。不用網路，也可以幾個人輪流發，比誰轉得多。世界級選手發球平均約 2,760 RPM，很好奇你的發球能到多少。
+>
+> 想邀請你先免費試用，如果覺得好玩，再談要不要一起拍一支影片，例如「發球轉速挑戰」或「不同下旋發球實測幾轉」。設備和標記好的球我們會準備好送過去或當面架設。
+>
+> 也想請問你業配或合作影片的方式和報價，方便我們內部評估。
+>
+> 先講清楚目前的限制：只支援 Android（要能拍 240 fps）、球要先做標記（我們提供）、語音是英文。
+>
+> 有興趣的話回信就好，謝謝！
+>
+> 〔名字〕
+> 奇斯科技 QI SI TECHNOLOGY
+> support@handyla.co

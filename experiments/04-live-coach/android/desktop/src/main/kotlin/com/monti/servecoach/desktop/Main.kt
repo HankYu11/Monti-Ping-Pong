@@ -60,6 +60,9 @@ fun main(args: Array<String>) {
     // the fault -- 6 and 4 keep a short flight, 12 and 2 throw it away as "short".
     System.getenv("MINPOINTS")?.let { tracker.minPoints = it.toInt() }
     System.getenv("MAXGAP")?.let { tracker.maxGap = it.toInt() }
+    // RINGPOINTS: how young a track the live ring may follow (LiveAim.MIN_POINTS); the tracker
+    // has to publish tracks that young for it to see them
+    System.getenv("RINGPOINTS")?.let { tracker.livePoints = it.toInt() }
     // warm the background up from frames spread over the clip (live, it is always warm)
     val total = countFrames(clip)
     val every = maxOf(1L, total / 6)

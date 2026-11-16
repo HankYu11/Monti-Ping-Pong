@@ -166,3 +166,87 @@ class WindowRing(capacity: Int) {
         val coverage get() = if (count == 0) 0.0 else have.toDouble() / count
     }
 }
+
+/**
+ * Which live track the ring follows, and where that puts frame N's window.
+ *
+ * One rule, here, so the app (LivePipeline) and the desktop's reproduction of the ring
+ * (RingSim) cannot drift apart: they had, the reproduction lacking the app's size bar.
+ *
+ * What limits the start of a flight is not where the window goes but WHEN the ring first hears
+ * of the ball. On the phone the live track runs some tracker frames behind the camera (two to
+ * eight on the 15 Nov sessions, fitted per serve from where the first window that fitted fell),
+ * and a track is not followed until it has [MIN_POINTS] points, so the first window that can hold
+ * the ball comes 2 x (MIN_POINTS - 1 + lag) camera frames into the flight. On 15 of the 21 serves
+ * of 15 Nov that was 9 to 21 frames with no window at all. No margin or lead helps there: until
+ * the track exists there is nothing to lead from. Once it is followed the window holds the ball
+ * (the median miss is a few pixels).
+ */
+object LiveAim {
+    /**
+     * Points a live track needs before the ring follows it, and before [Predict] will place a
+     * window from it; [ServeTracker.liveTracks] publishes from the same number.
+     *
+     * Three, where it was four. Each point fewer is a tracker frame -- two camera frames -- sooner
+     * that the ring hears of the ball. Over the 18 serves of 15 Nov the desktop's reproduction of
+     * the ring could replay (each at the lag its own phone gap says), three put the first window
+     * two frames earlier on 9 of them and added two to four flight windows on 7, lost a window on
+     * none, and moved no reading by more than 0.25 rev/s. Two gains nothing more: the radius
+     * filter in [Predict] then has a paddle-merged first point as its middle value and drops the
+     * ball, which is why [Predict.at]'s own default stays at four.
+     */
+    const val MIN_POINTS = 3
+
+    /**
+     * The track most likely to be the ball, or null when none is.
+     *
+     * Fast enough NOW to be a ball, ball-sized, and then the one that is longest times furthest
+     * travelled. [tracks] are [frame, x, y, r] in the tracker's own pixels (a quarter of the
+     * picture's), [trackerW] the tracker's width.
+     *
+     * The speed gate first: length times travel alone -- which is how the grouping scores a
+     * FINISHED track -- picks an arm that has been alive for a hundred frames over a flight ten
+     * frames old, and the first part of the flight is exactly where the window is wanted. 2 px a
+     * tracker frame over the last few points; a served ball runs 8 to 25.
+     *
+     * Then the size: the window's side comes from the track's radius, so a body once got a 352 px
+     * window cut and read back off the chip every frame, seven times a real ball's, for a track
+     * ServeTracker.notABall would throw out the moment it finished. Same bar as that one (a median
+     * radius over 7 px at a tracker width of 480).
+     */
+    fun pick(tracks: List<List<FloatArray>>, trackerW: Int, minPoints: Int = MIN_POINTS): List<FloatArray>? {
+        var best: List<FloatArray>? = null; var bestScore = 0f
+        for (t in tracks) {
+            val k = t.size
+            if (k < minPoints || k < 2) continue
+            val a0 = t[maxOf(0, k - 4)]; val b0 = t[k - 1]
+            val v = kotlin.math.hypot(b0[1] - a0[1], b0[2] - a0[2]) / maxOf(1f, b0[0] - a0[0])
+            if (v < 2f) continue
+            val rs = FloatArray(k) { t[it][3] }
+            java.util.Arrays.sort(rs)
+            if (rs[(k - 1) / 2] > 7f * trackerW / 480f) continue
+            val a = t[0]
+            val s = k * kotlin.math.hypot(b0[1] - a[1], b0[2] - a[2])
+            if (s > bestScore) { bestScore = s; best = t }
+        }
+        return best
+    }
+
+    /**
+     * The top-left corner of a [side] square window for tracker frame [at] (fractional: a camera
+     * frame between two tracker frames), in whole-picture pixels -- even, and inside the
+     * picture -- or null when the track is too young to say.
+     *
+     * [scale] is picture pixels per tracker pixel. No lag is asked of [Predict]: the track handed
+     * in is already as new as the tracker has, which is itself behind, and asking for one would
+     * throw the newest points away.
+     */
+    fun place(track: List<FloatArray>, at: Float, side: Int, scale: Float, frameW: Int, frameH: Int,
+              minPoints: Int = MIN_POINTS): IntArray? {
+        if (track.isEmpty()) return null
+        val p = Predict.at(track, at, lag = 0f, minPrior = minPoints) ?: return null
+        val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
+        val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
+        return intArrayOf(x, y)
+    }
+}

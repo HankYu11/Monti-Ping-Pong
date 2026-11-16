@@ -7,9 +7,9 @@ import com.monti.servecoach.core.Background
 import com.monti.servecoach.core.Detector
 import com.monti.servecoach.core.Downsample
 import com.monti.servecoach.core.Quarter
-import com.monti.servecoach.core.Predict
 import com.monti.servecoach.core.SceneBackground
 import com.monti.servecoach.core.ServeTracker
+import com.monti.servecoach.core.LiveAim
 import com.monti.servecoach.core.WindowRing
 import com.monti.servecoach.core.Windows
 import java.io.DataOutputStream
@@ -896,28 +896,9 @@ class LivePipeline(
             if (planning) { planning = false; put?.invoke(null) }
             return
         }
-        var best: List<FloatArray>? = null; var bestScore = 0f
-        for (t in tr.liveTracks) {
-            val k = t.size
-            // fast enough NOW to be a ball, and then the longest of those. Length times travel
-            // alone -- which is how the grouping scores a FINISHED track -- picks an arm that
-            // has been alive for a hundred frames over a flight ten frames old, and the first
-            // part of the flight is exactly where the window is wanted. The gate is 2 px a
-            // tracker frame at quarter size; a served ball runs 8 to 25.
-            val a0 = t[maxOf(0, k - 4)]; val b0 = t[k - 1]
-            val v = kotlin.math.hypot(b0[1] - a0[1], b0[2] - a0[2]) / maxOf(1f, b0[0] - a0[0])
-            if (v < 2f) continue
-            // and ball-SIZED, which this never asked. The window's side comes from the track's
-            // radius, so a body got a 352 px window cut and read back off the chip every frame
-            // -- seven times the pixels of a real ball's, for a track ServeTracker.notABall
-            // would throw out the moment it finished. Same bar as that one, so the ring cannot
-            // spend the chip's time on something the tracker has already decided against.
-            val rr = t.map { it[3] }.sorted()[(t.size - 1) / 2]
-            if (rr > 7f * tr.w / 480f) continue
-            val a = t[0]; val b = t[k - 1]
-            val s = k * kotlin.math.hypot(b[1] - a[1], b[2] - a[2])
-            if (s > bestScore) { bestScore = s; best = t }
-        }
+        // fast enough NOW to be a ball, ball-sized, then the longest of those: LiveAim, the
+        // rule the desktop's reproduction of the ring (RingSim) runs too
+        val best = LiveAim.pick(tr.liveTracks, tr.w)
         if (best == null) {
             // the plan goes, but not the size it settled on: a flight breaks into several
             // tracks, and starting the size again each time is what made it drift
@@ -954,18 +935,8 @@ class LivePipeline(
 
     /** the size the last plan asked for, kept across a flight's gaps so it does not drift */
     /** where frame [no]'s window goes, from the live track: even, and inside the picture */
-    private fun aimAt(side: Int, no: Long): IntArray? {
-        val t = aim.track
-        if (t.isEmpty()) return null
-        // no lag: the track handed over is already as new as the tracker has, which is itself
-        // a few frames behind. Predict's own lag is for measuring the miss against a finished
-        // track; asking for it here would discard the newest points and double the delay.
-        val p = Predict.at(t, no.toFloat() / step, lag = 0f) ?: return null
-        val scale = step * 2f
-        val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
-        val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
-        return intArrayOf(x, y)
-    }
+    private fun aimAt(side: Int, no: Long): IntArray? =
+        LiveAim.place(aim.track, no.toFloat() / step, side, step * 2f, frameW, frameH)
 
     // ------------------------------------------------------------ the scene's background
 

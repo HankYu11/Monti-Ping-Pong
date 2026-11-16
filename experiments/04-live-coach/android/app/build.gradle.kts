@@ -60,8 +60,8 @@ android {
             abiFilters += listOf("arm64-v8a")
             if (project.hasProperty("emuAbi")) abiFilters += "x86_64"
         }
-        versionCode = 73
-        versionName = "0.13.23"
+        versionCode = 74
+        versionName = "0.13.24"
     }
     // The release key (README, "Signing a release"): from android/keystore.properties, which git
     // ignores, or from SERVECOACH_* environment variables (CI). Without either, release builds are

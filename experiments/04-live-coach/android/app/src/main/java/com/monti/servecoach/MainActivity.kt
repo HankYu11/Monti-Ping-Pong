@@ -40,6 +40,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.monti.servecoach.core.Capture
+import com.monti.servecoach.core.NoRead
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -434,6 +435,7 @@ class MainActivity : Activity() {
         })
         newSession()
         tips.reset()
+        noReads.reset()
         latestSpotted = 0
         screen.source = "SERVE"
         mode = Mode.LIVE
@@ -1049,6 +1051,8 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ what to say
     /** a coaching tip every few readable serves, about the commonest fault since the last one */
     private val tips = TipPicker()
+    /** an unread serve's cause in the player's words, its fix said once per cause every few serves */
+    private val noReads = NoRead.Advisor()
 
     // ------------------------------------------------------------------ turn by turn (live)
     // Ready -> a serve spotted ("Got it", others ignored) -> its answer spoken -> Ready. Answers
@@ -1109,7 +1113,8 @@ class MainActivity : Activity() {
         if (r.optBoolean("net")) {
             unclear++
             log("unclear", "#${r.optInt("capture")}: into the net")
-            screen.noRead(r.optInt("capture"), "Into the net")
+            noReads.read()
+            screen.noRead(r.optInt("capture"), "Couldn't read it: Into the net")
             if (mode == Mode.LIVE) turnDone("Into the net.", r.optInt("capture"))
             return
         }
@@ -1118,9 +1123,15 @@ class MainActivity : Activity() {
             unclear++
             // a JSON null reads as "null" through optString
             val why = (if (r.isNull("error")) "" else r.optString("error")).ifEmpty { sv?.optJSONArray("issues")?.optString(0) ?: "no clear reading" }
-            log("unclear", "#${r.optInt("capture")}: $why")
-            screen.noRead(r.optInt("capture"), why)
-            if (mode == Mode.LIVE) turnDone("Couldn't read that one.", r.optInt("capture"))
+            // why, in the player's words, when the result supports a cause; else the old words
+            val err = if (r.isNull("error")) null else r.optString("error")
+            val issues = sv?.optJSONArray("issues")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+            val cause = if (sv == null) null else NoRead.of(sv.optString("marking").takeIf { !sv.isNull("marking") },
+                sv.optDouble("toward", Double.NaN), issues, err)
+            val (spoken, shown) = noReads.next(cause)
+            log("unclear", "#${r.optInt("capture")}: $why" + (cause?.let { " -> ${it.cause}" } ?: ""))
+            screen.noRead(r.optInt("capture"), if (cause != null) shown else "Couldn't read it: $why")
+            if (mode == Mode.LIVE) turnDone(spoken, r.optInt("capture"))
             return
         }
         // read only "after a bounce" and slowly turning: in the live tests that was other movement
@@ -1131,7 +1142,7 @@ class MainActivity : Activity() {
         if (!own && sv.optDouble("rps") < 10) {
             unclear++
             log("unclear", "#${r.optInt("capture")}: only read after a bounce (${(sv.optDouble("rps") * 60).roundToInt()} RPM ${sv.optString("type")}): not counted as a serve")
-            if (mode == Mode.LIVE) turnDone("Couldn't read that one.", r.optInt("capture"))
+            if (mode == Mode.LIVE) turnDone(noReads.next(null).first, r.optInt("capture"))
             return
         }
         val rps = sv.optDouble("rps")
@@ -1146,6 +1157,7 @@ class MainActivity : Activity() {
         // a coaching tip every few readable serves, about the commonest fault since the last one
         // (PLAN.md: the outcome every serve, one cue now and then; 0.13.21 said a sentence a serve)
         val tip = tips.next(kind)
+        noReads.read()
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only

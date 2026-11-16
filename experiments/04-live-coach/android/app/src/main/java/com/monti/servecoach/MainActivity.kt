@@ -143,7 +143,7 @@ class MainActivity : Activity() {
     private lateinit var screen: HudScreen
 
     private fun buildUi() {
-        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() },
+        screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() },
             onShareClips = { toggleShareClips() },
             onWindows = { windowRingOn = !windowRingOn; screen.windowsState(windowRingOn); pipeline?.windowRing = windowRingOn
                 log("camera", "windows cut on the chip: " + (if (windowRingOn) "on" else "off")) })
@@ -723,7 +723,7 @@ class MainActivity : Activity() {
         if (requestCode != 7 || resultCode != RESULT_OK || uri == null) return
         stopPreview()
         mode = Mode.REPLAY
-        setStartButton(true); screen.nextBtn.visibility = android.view.View.GONE
+        setStartButton(true)
         val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: "the video"
         screen.testStarted(name)
         tone(Hud.AMBER)
@@ -1098,17 +1098,12 @@ class MainActivity : Activity() {
     /** after an answer (or none) in live mode: the next turn */
     private fun turnDone(spoken: String, id: Int) {
         screen.busy(false)
-        // its own turn: then ready for the next. A turn already ended by NEXT SERVE: readiness left as
-        // it is, and its answer said only if no serve came after it (only the latest serve is spoken)
+        // its own turn: then ready for the next. A turn already ended (the 30 s timeout): readiness left
+        // as it is, and its answer said only if no serve came after it (only the latest serve is spoken).
+        // There is no NEXT SERVE button any more: an answer takes about 2 s, so the turn ends
+        // on its own before a helper could reach the phone.
         if (mode == Mode.LIVE && id == turnId) setReady("$spoken Ready.")
         else if (mode != Mode.LIVE || id >= latestSpotted) say(spoken, queue = true)
-    }
-
-    /** NEXT SERVE (0.9.2): a helper ends the turn now; a serve being measured still gets its answer */
-    private fun forceReady() {
-        if (mode != Mode.LIVE || turnId == 0) return
-        log("turn", "#$turnId: ready for the next serve (button)")
-        setReady("Ready.")
     }
 
     private fun show(r: JSONObject) {

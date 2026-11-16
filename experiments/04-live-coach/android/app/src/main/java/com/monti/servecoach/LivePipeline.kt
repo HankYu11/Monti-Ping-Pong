@@ -48,6 +48,12 @@ class LivePipeline(
     private val onSpotted: ((Int) -> Unit)? = null,
     /** the app's assets (the capture shaders), to cut captures on the graphics chip */
     private val assets: android.content.res.AssetManager? = null,
+    /**
+     * The number the first capture gets. 1 for a fresh session; past the last one still in flight
+     * when an earlier pipeline's captures are still being written or measured, so that the two
+     * never share a cap_<id> file or an entry in [writing].
+     */
+    firstId: Int = 1,
 ) {
     /** measuring a serve: others are ignored until [resume] (turn by turn, so each answer is clearly about one serve) */
     @Volatile var paused = false; private set
@@ -130,7 +136,47 @@ class LivePipeline(
     @Volatile var servesFound = 0; private set
     @Volatile var trimmed = 0; private set                // captures cut down to 300 MB
     @Volatile var tracker: ServeTracker? = null; private set
-    private var captures = 0
+    private var captures = firstId - 1
+
+    // ---- the work that runs beside the hot path -----------------------------------------
+    // Captures, the clips of skipped movements and the room's background used to be bare
+    // Thread { }s that nobody held: Stop could not end them, and a session started straight
+    // after could find the last one's capture still writing cap_1 while its own wrote cap_1 too.
+    // They are now this pipeline's, on one executor, started from the tracker's thread only when
+    // a serve (or a skipped movement, or a background refresh) asks for one -- never per frame.
+    //
+    // At [stop]: no new work is taken; the optional work (skipped clips, the room) ends at its
+    // next check; a capture already being written is let finish, because its serve is the one
+    // the session's report waits for -- but only for [captureGraceMs]. Past that it is told to
+    // give up ([abandoned]) and ends at its next frame. [whenWorkersDone] runs once all of it has.
+    private val workers = java.util.concurrent.ThreadPoolExecutor(0, Int.MAX_VALUE, 5L, TimeUnit.SECONDS,
+        java.util.concurrent.SynchronousQueue()) { r -> Thread(r, "pipeline-work").apply { priority = Thread.MIN_PRIORITY } }
+    /** past Stop's grace: captures still writing drop what they have */
+    @Volatile private var abandoned = false
+    private val captureGraceMs = 30_000L   // a video test's largest captures took 9 s, several at once
+    private val afterWorkers = ArrayList<() -> Unit>()
+    private var workersDone = false
+    private var stopped = false
+
+    /** [what] on a worker, named [name]; false when the pipeline has stopped and takes no more */
+    private fun work(name: String, what: () -> Unit): Boolean = try {
+        workers.execute { Thread.currentThread().name = name; what() }
+        true
+    } catch (e: java.util.concurrent.RejectedExecutionException) { false }
+
+    /** the capture's worker gives up here when Stop's grace has run out */
+    private class Abandoned : RuntimeException("stopped before it was written")
+    private fun checkAbandoned() { if (abandoned) throw Abandoned() }
+
+    /**
+     * [action] once this pipeline has stopped and every worker it started has ended (at once if
+     * that has already happened). A replayed video closes its spill file here: its captures read
+     * their frames from it until the last one is written.
+     */
+    fun whenWorkersDone(action: () -> Unit) {
+        val now = synchronized(afterWorkers) { if (workersDone) true else { afterWorkers.add(action); false } }
+        if (now) action()
+    }
 
     fun start() { thread.start(); linker.start() }
     fun stop() {
@@ -138,10 +184,28 @@ class LivePipeline(
         thread.interrupt(); linker.interrupt()
         thread.join(1000); linker.join(1000)
         finders.shutdownNow()
+        retireWorkers()
     }
 
     /** replay: the video ended; decode what's left and let a serve still being watched out. Blocks until done. */
     fun finish() { queue.put(END); thread.join(); linker.join(); finders.shutdown() }
+
+    /** no more work taken; the work already running is waited for, off the caller's thread, up to the grace */
+    private fun retireWorkers() {
+        synchronized(afterWorkers) { if (stopped) return; stopped = true }
+        workers.shutdown()
+        Thread({
+            try {
+                if (!workers.awaitTermination(captureGraceMs, TimeUnit.MILLISECONDS)) {
+                    abandoned = true
+                    workers.shutdownNow()
+                    workers.awaitTermination(5, TimeUnit.SECONDS)
+                }
+            } catch (_: InterruptedException) {}
+            val todo = synchronized(afterWorkers) { workersDone = true; ArrayList(afterWorkers).also { afterWorkers.clear() } }
+            for (a in todo) try { a() } catch (e: Exception) { onError("after the pipeline stopped: ${e.message}") }
+        }, "pipeline-retire").apply { isDaemon = true }.start()
+    }
 
     /**
      * Replay: learn the background from keyframes spread over the video before it plays (live, the
@@ -730,13 +794,14 @@ class LivePipeline(
                 val n = ++skippedClips
                 val fromUs = ptsRing[(first % ptsRing.size).toInt()] - 1
                 val toUs = ptsRing[(minOf(last, dec - 1) % ptsRing.size).toInt()] + 1
-                Thread({
+                work("skipped-$n") {
                     try {
-                        val fmt = store.outputFormat ?: return@Thread
+                        if (!running) return@work                 // stopped: an optional clip, not worth the session's end
+                        val fmt = store.outputFormat ?: return@work
                         val file = File(clipDir, "skipped_$n.mp4")
                         if (writeMp4(store.between(fromUs - 500_000, toUs + 300_000), fmt, toUs + 300_000, file) > 0) onSkippedClip.invoke(n, why, file)
                     } catch (e: Exception) { onError("skipped clip $n: ${e.message}") }
-                }, "skipped-$n").apply { priority = Thread.MIN_PRIORITY }.start()
+                }
             }
         }
     }
@@ -943,10 +1008,11 @@ class LivePipeline(
         if (now - sceneAt < (if (scene?.complete == true) sceneRefreshMs else sceneEveryMs)) return
         if (!sceneBusy.compareAndSet(false, true)) return
         sceneAt = now
-        Thread({
+        val took = work("scene-bg") {
             try { buildScene() } catch (e: Exception) { sceneNote = "could not build: ${e.message}" }
             finally { sceneBusy.set(false) }
-        }, "scene-bg").apply { priority = Thread.MIN_PRIORITY }.start()
+        }
+        if (!took) sceneBusy.set(false)
     }
 
     private fun buildScene() {
@@ -962,6 +1028,7 @@ class LivePipeline(
         val t0 = SystemClock.elapsedRealtime()
         for (k in pick) {
             if (ringHeld.get() > 0) break                        // a serve came: the room can wait
+            if (!running) break                                  // stopped: nobody will use it
             val dec = FrameDecoder(fmt)
             try {
                 var fed = false; var eos = false; var tries = 0; var took = false
@@ -1101,8 +1168,12 @@ class LivePipeline(
         // survive until the capture has read it, and the capture is still a grouping wait and a
         // decode away. Released in writeCapture, whatever happens there.
         if (windowRing) { heldFrom = last; ringHeld.incrementAndGet(); ringHolds++ }
-        // the capture is written on its own thread, so the tracker keeps up
-        Thread({ writeCapture(id, serve, first, fromUs, toUs, rect, w, h, windowRing) }, "capture-$id").apply { priority = Thread.MIN_PRIORITY }.start()
+        // the capture is written on a worker of its own, so the tracker keeps up
+        val held = windowRing
+        if (!work("capture-$id") { writeCapture(id, serve, first, fromUs, toUs, rect, w, h, held) }) {
+            if (held) ringHeld.decrementAndGet()
+            onError("capture #$id: not written, the session had stopped")
+        }
     }
 
     /**
@@ -1443,6 +1514,7 @@ class LivePipeline(
             var fitCrop: ByteArray? = null
             var seenAt = 0
             val sink: (ByteArray) -> Unit = { b ->
+                checkAbandoned()
                 if (seenAt == fitAt) fitCrop = b
                 seenAt++
                 if (builder != null) builder!!.add(b) else out!!.write(b)
@@ -1463,6 +1535,7 @@ class LivePipeline(
                     lastCaptureBy = "chip: ${r.frames} frames, decode + cut ${r.decodeMs} ms (cutting ${r.cutMs} ms, waiting ${r.waitMs} ms)" + (if (reference != null) ", fit ${refMs} ms: ${CaptureGl.calibNote}" else "")
                     onNote("capture #$id: $lastCaptureBy")
                 }
+            } catch (e: Abandoned) { throw e
             } catch (e: Throwable) {
                 gpuFailures++
                 onError("capture #$id on the chip: ${e.message}; copying it out instead")
@@ -1477,7 +1550,9 @@ class LivePipeline(
                 // (a failure on the chip part way: the engine may have read its first frames already;
                 // the processor's copy of the rest matches them to within the fit, rms under 3)
                 var k = 0
+                try {
                 while (!dec.ended) {
+                    checkAbandoned()
                     if (k < frames.size) { if (dec.feed(frames[k], 5_000)) k++ } else if (k == frames.size) { if (dec.endOfStream()) k++ }
                     dec.drain(if (k > frames.size) 10_000 else 0) { pts, yuv ->
                         if (pts < fromUs || pts > toUs) return@drain
@@ -1485,7 +1560,7 @@ class LivePipeline(
                         sink(c.crop(yuv)); n++
                     }
                 }
-                dec.release()
+                } finally { dec.release() }
                 lastCaptureBy = "copied out"
             }
             } finally { out?.close() }
@@ -1511,7 +1586,8 @@ class LivePipeline(
                 if (writeMp4(clipFrames, fmt, toUs + 300_000, f) > 0) clip = f
             } catch (e: Exception) { onError("clip #$id: ${e.message}") }
             onCapture(Capture.Info(id, n, c.frameBytes, head, writeMs, fromUs, toUs), clip)
-        } catch (e: Exception) { onError("capture: ${e.message}") }
+        } catch (e: Abandoned) { onError("capture #$id: ${e.message} (still writing ${captureGraceMs / 1000} s after Stop)") }
+        catch (e: Exception) { onError("capture: ${e.message}") }
         finally { writing[id]?.finish(); if (release) { release = false; ringHeld.decrementAndGet() } }
     }
 

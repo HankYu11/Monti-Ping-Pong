@@ -1129,7 +1129,8 @@ That is a precaution, not a fix for a measured problem. Settling it needs a phon
 ## Build
 
 `android/build.sh` (Android SDK 35, Gradle 8.9+, JDK 17+; the NDK to rebuild the native part, else the committed .so is used): copies the current engine in and
-writes `release/serve-coach-live-<version>.apk`, signed with a debug key (sideloading only).
+writes `release/serve-coach-live-<version>.apk`, signed with the release key when one is set up
+(next section), else with the debug key and a loud warning in the build output.
 `gradle :desktop:installDist`, then `desktop/build/install/desktop/bin/desktop clip.mp4 outDir`
 (needs ffmpeg) runs the serve tracker on a clip and writes its captures (`.cap`).
 mp4box.js (BSD-3-Clause, gpac) is bundled in `assets/`.
@@ -1149,3 +1150,66 @@ Confirmed again at 0.10.3, so the finding is not stale: an x86_64 build installs
 starts, and it dies the same way -- `signal 5 (SIGTRAP), code 128 (SI_KERNEL)`, the stack running
 `MainActivity.buildUi` into `WebViewChromium.init` and `BrowserStartupControllerImpl`. The crash
 is inside Chromium's own startup; the app never reaches its own code.
+
+## Signing a release
+
+Android installs an update only if it is signed by the same key as the app already on the phone.
+A debug key is per machine and its password is public, so a release signed with it can't be
+updated from anywhere else, and it can't go to anyone else's phone either. The release key is the
+app's identity: **lose it and no phone that has the app can ever take an update**, only an
+uninstall (which wipes the settings and the Gemini key) and a fresh install.
+
+**Make the key once** (keep it outside the repo; `.gitignore` ignores `*.jks`, `*.keystore` and
+`keystore.properties` anywhere, in case one lands inside by mistake):
+
+```bash
+mkdir -p ~/.android-keys && keytool -genkeypair -v -storetype PKCS12 \
+  -keystore ~/.android-keys/servecoach-upload.jks -alias servecoach \
+  -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=Serve Coach Live"
+```
+
+keytool asks for a password; with PKCS12 the key's password is the same as the store's.
+**Back it up straight away**, the `.jks` and its password together, in two places that don't fail
+together (a password manager that takes file attachments, and an encrypted USB stick or similar).
+Record the certificate's SHA-256 next to it (`keytool -list -v -keystore … -alias servecoach`)
+so an APK can be checked against it later.
+
+**Point the build at it** with `android/keystore.properties` (git-ignored):
+
+```properties
+storeFile=/Users/<you>/.android-keys/servecoach-upload.jks
+storePassword=…
+keyAlias=servecoach
+keyPassword=…
+```
+
+`storeFile` is either absolute or relative to `android/`. For CI, set the environment variables
+`SERVECOACH_KEYSTORE`, `SERVECOACH_KEYSTORE_PASSWORD`, `SERVECOACH_KEY_ALIAS` and
+`SERVECOACH_KEY_PASSWORD` instead (they are read only when there is no `keystore.properties`).
+All four or none: a partial set fails the build rather than quietly falling back. With none, the
+release APK is signed with the debug key and the build prints a `WARNING` banner, even under `-q`.
+
+**Build and check:** `android/build.sh` as before, then
+
+```bash
+$ANDROID_HOME/build-tools/<version>/apksigner verify --print-certs release/serve-coach-live-<version>.apk
+```
+
+should show `CN=Serve Coach Live` and the SHA-256 recorded above, not `CN=Android Debug`.
+
+**A phone that has a debug-signed build** (every one up to 0.13.23) can't take the first
+release-signed one as an update: `adb install -r` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+It needs one uninstall and install, which erases the app's settings. Before uninstalling, note the
+four settings (the app keeps nothing else that outlives a session): whether the AI coach is on,
+whether the window ring is shown, whether clips are shared, and the Gemini API key. The app never
+shows the stored key, so get it from aistudio.google.com/apikey (or make a new one there) before
+uninstalling. Session folders in `Download/ServeCoach/` are files in shared storage and survive the
+uninstall, but the reinstalled app should no longer own them (expected from scoped storage, not
+yet seen on the phone), so `pruneOldSessions` won't see them and they stay until deleted by hand; copy
+off any that matter (`adb pull /sdcard/Download/ServeCoach`). After the switch every release
+updates in place again.
+
+If an install ever fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` after the switch, the APK was
+built without the key (look for the `WARNING` banner): rebuild with it rather than uninstalling.
+`keystore.properties` is git-ignored, so a fresh clone or another worktree doesn't have it;
+exporting the four `SERVECOACH_*` variables in the shell profile covers every checkout at once.

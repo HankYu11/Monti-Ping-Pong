@@ -131,7 +131,7 @@ object SetupCheck {
             t.share > 0.45f -> Advice(Kind.NEAR, "Move back a little: the table fills the picture.")
             t.y0 < 0.30f -> Advice(Kind.TABLE_HIGH, "Tilt the phone up a little: leave room above the table for the toss.")
             t.y0 > 0.75f -> Advice(Kind.TABLE_LOW, "Tilt the phone down a little: more of the table should show.")
-            else -> Advice(Kind.GOOD, "Looks good. Press Start when you're ready.")
+            else -> Advice(Kind.GOOD, "Looks good. Best with the dot-marked ball, bright light and a plain wall behind the flight. Press Start when you're ready.")
         }
         return a to t
     }

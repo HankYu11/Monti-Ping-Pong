@@ -206,12 +206,12 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         message(coach)
     }
 
-    /** a serve that couldn't be read, and why */
-    fun noRead(serve: Int, why: String) {
+    /** a serve that couldn't be read, and why ([text] in full: "Couldn't read it: ...") */
+    fun noRead(serve: Int, text: String) {
         serveLabel.text = "$source %02d · NO READ".format(serve)
         bigText.text = "----"; typeText.text = ""; qualText.text = ""; scale.rpm = null
         showSpin(null)
-        message("Couldn't read it: $why")
+        message(text)
     }
 
     /** setting up (before Start): the on-device check's advice; the state line names it */

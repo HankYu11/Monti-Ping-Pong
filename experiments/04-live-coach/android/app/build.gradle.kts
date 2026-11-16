@@ -35,8 +35,8 @@ if (releaseSigning == null) {
             logger.quiet("""
                 |
                 |WARNING: ********************************************************************
-                |WARNING: This RELEASE APK is signed with the DEBUG key. No keystore.properties
-                |WARNING: and no SERVECOACH_KEYSTORE* environment: see README, "Signing a release".
+                |WARNING: This RELEASE APK is signed with the DEBUG key: no keystore.properties
+                |WARNING: and no SERVECOACH_* variables. See README, "Signing a release".
                 |WARNING: Fine for the phone on your desk; not for anyone else's.
                 |WARNING: ********************************************************************
                 |""".trimMargin())

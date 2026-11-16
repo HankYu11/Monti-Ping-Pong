@@ -1200,9 +1200,16 @@ should show `CN=Serve Coach Live` and the SHA-256 recorded above, not `CN=Androi
 **A phone that has a debug-signed build** (every one up to 0.13.23) can't take the first
 release-signed one as an update: `adb install -r` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
 It needs one uninstall and install, which erases the app's settings. Before uninstalling, note the
-four settings: whether the AI coach is on, the Gemini API key (it is only on the phone and in the
-Google AI Studio account it came from), whether the window ring is shown and whether clips are
-shared. Session folders in `Download/ServeCoach/` are files in shared storage and survive the
-uninstall, but the reinstalled app no longer owns them, so `pruneOldSessions` can't see them and
-they stay until deleted by hand; copy off any that matter (`adb pull /sdcard/Download/ServeCoach`). After that, every release
+four settings (the app keeps nothing else that outlives a session): whether the AI coach is on,
+whether the window ring is shown, whether clips are shared, and the Gemini API key. The app never
+shows the stored key, so get it from aistudio.google.com/apikey (or make a new one there) before
+uninstalling. Session folders in `Download/ServeCoach/` are files in shared storage and survive the
+uninstall, but the reinstalled app should no longer own them (expected from scoped storage, not
+yet seen on the phone), so `pruneOldSessions` won't see them and they stay until deleted by hand; copy
+off any that matter (`adb pull /sdcard/Download/ServeCoach`). After the switch every release
 updates in place again.
+
+If an install ever fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` after the switch, the APK was
+built without the key (look for the `WARNING` banner): rebuild with it rather than uninstalling.
+`keystore.properties` is git-ignored, so a fresh clone or another worktree doesn't have it;
+exporting the four `SERVECOACH_*` variables in the shell profile covers every checkout at once.

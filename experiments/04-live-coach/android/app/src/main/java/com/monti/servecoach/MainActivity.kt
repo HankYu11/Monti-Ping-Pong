@@ -1232,10 +1232,11 @@ class MainActivity : Activity() {
      * The cost is small and off the hot path: the text is built here, on the main thread, which
      * the 240 fps work never runs on, and written on [reportWriter], one file at a time.
      *
-     * Each write is whole: the text goes into a new file (report.tmp.json), and only once it is
-     * all there is the old report.json deleted and the new one renamed to it. A kill part way
-     * leaves the previous report.json, or -- between the delete and the rename -- a complete
-     * report.tmp.json, never a truncated report.json ("wt" on the one file could).
+     * One report.json per session, made on the first write and rewritten in place ("wt") after
+     * that, the whole text in one write of a few KB. (0.13.23 wrote report.tmp.json, deleted the
+     * old report.json's row and renamed the new one to it; on the Pixel 8 the deleted row's file
+     * stayed on disk, so the rename landed on "report (1).json" beside a stale report.json.)
+     * A kill in the middle of the one write can leave it short; between writes it is whole.
      *
      * The text is built here and the thread is handed a String: [report], [events] and [results]
      * belong to the main thread. The events are this session's only ([sessionEvents]).
@@ -1263,26 +1264,22 @@ class MainActivity : Activity() {
     /** each session's report.json as it stands (the writer thread's only) */
     private val reportUris = HashMap<String, android.net.Uri>()
 
-    /** on [reportWriter]: the text into a new file, then swapped in for the session's report.json */
+    /** on [reportWriter]: the session's report.json, made on its first write, rewritten after */
     private fun putReport(folder: String, text: String) {
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, "report.tmp.json")
-            put(MediaStore.Downloads.MIME_TYPE, "application/json")
-            put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
+        val uri = reportUris[folder] ?: run {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, "report.json")
+                put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
+            }
+            (contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("the phone's storage refused a new file")).also { u ->
+                reportUris[folder] = u
+                synchronized(sessionFiles) { if (filesFor == folder) sessionFiles.add(u) }
+            }
         }
-        val tmp = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("the phone's storage refused a new file")
-        try {
-            contentResolver.openOutputStream(tmp, "w")?.use { it.write(text.toByteArray()) }
-                ?: throw IllegalStateException("couldn't open report.tmp.json")
-        } catch (e: Exception) { runCatching { contentResolver.delete(tmp, null, null) }; throw e }
-        val old = reportUris[folder]
-        if (old != null) runCatching { contentResolver.delete(old, null, null) }
-        reportUris[folder] = tmp
-        synchronized(sessionFiles) { if (filesFor == folder) { if (old != null) sessionFiles.remove(old); sessionFiles.add(tmp) } }
-        // the same row, renamed: its uri does not change, so the list of files to send holds
-        val renamed = contentResolver.update(tmp, ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, "report.json") }, null, null)
-        if (renamed < 1) throw IllegalStateException("written as report.tmp.json, could not rename it to report.json")
+        contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
+            ?: throw IllegalStateException("couldn't open report.json")
     }
 
     /** the same report onto the clipboard, with every session's results, not just this one's */

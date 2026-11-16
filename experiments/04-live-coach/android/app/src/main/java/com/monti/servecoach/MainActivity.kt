@@ -358,6 +358,7 @@ class MainActivity : Activity() {
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
         val p = newPipeline(rec, blocking = false, firstId = firstFreeCaptureId())
+        p.optics = { camera.optics(c) }
         p.start()
         // Watching: the camera's recording stream through the graphics chip, which shrinks each
         // frame for the tracker and passes it on to the encoder (GlTap with an encoder); if that
@@ -414,6 +415,8 @@ class MainActivity : Activity() {
                     log("camera", "running" + (if (t != null && !viaRecording) ", every frame to the preview: ${camera.everyFrameToPreview}" else "") +
                         camera.burstNote.let { if (it.isEmpty()) "" else " ($it)" })
                     if (t != null) calibrateSoon(p, 0)
+                    // the field of view the speeds will be worked out with, once the exposure has locked
+                    main.postDelayed({ if (pipeline === p) log("camera", "optics {${camera.optics(c).drop(1)}}") }, 2500)
                     if (viaRecording) main.postDelayed({
                         if (tap === t && t.queued == 0L) { log("error", "no frames from the camera's recording stream after 3 s; stop and send the report"); state("No frames from the camera: stop and send the report"); tone(Hud.RED) }
                     }, 3000)

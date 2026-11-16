@@ -55,6 +55,13 @@ class LivePipeline(
      */
     firstId: Int = 1,
 ) {
+    /**
+     * The camera's field of view and shutter time, as fields for a capture's header (Optics): the
+     * engine works the speed out with them. Live, the camera's; on a replay of a recorded file
+     * nothing, and the engine keeps its own 68 degrees.
+     */
+    @Volatile var optics: () -> String = { "" }
+
     /** measuring a serve: others are ignored until [resume] (turn by turn, so each answer is clearly about one serve) */
     @Volatile var paused = false; private set
     @Volatile var ignoredWhileMeasuring = 0; private set
@@ -1490,7 +1497,7 @@ class LivePipeline(
             val tracks = (listOf(serve.track) + serve.near).map(::conv).filter { it.size >= 2 }
             val windowed = windowCaptures && tracks.isNotEmpty()
             writeHead(id, Capture(w, h, rect, false, captureFps).header(
-                ""","id":$id,"partial":true""" + (if (windowed) ""","windowed":true""" else ""), nGuess))
+                ""","id":$id,"partial":true""" + (if (windowed) ""","windowed":true""" else "") + optics(), nGuess))
             onCaptureStarted?.invoke(Capture.Info(id, nGuess, per, "", 0, fromUs, toUs))
             var cap: Capture? = null
             var n = 0
@@ -1574,7 +1581,7 @@ class LivePipeline(
                 DataOutputStream(FileOutputStream(bin).buffered(1 shl 20)).use { o -> bld.writeBody(o) }
                 lastCaptureBy += ", ${bld.side}x${bld.side} windows"
             }
-            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" +
+            val head = c.header(""","id":$id,"fromUs":$fromUs,"toUs":$toUs,"why":"${serve.why}"""" + optics() +
                 (bld?.headerExtra() ?: "") + serve.tracksJson(step, w.toFloat() / (w / 4), firstFrame, n), n)
             writeHead(id, head)
             prog.finish()

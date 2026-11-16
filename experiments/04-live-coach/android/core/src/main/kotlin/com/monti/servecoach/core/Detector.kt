@@ -55,6 +55,14 @@ class Detector(val w: Int, val h: Int) {
             // (the engine's search takes 3 and up, then its rules drop the small ones)
             if (area < 12) { refused[0]++; return@components }
             if (area > 625) { refused[1]++; return@components }
+            // 1.8 is not raised for fast serves on purpose. A ball smeared by the shutter is
+            // longer than this from about 10 m/s on (engine.js, ballShape), but these blobs only
+            // have to spot and follow the flight: a frame or two lost is bridged, and the engine,
+            // which measures every frame, allows for the smear the track predicts. A fixed limit
+            // high enough for every serve would let in every long thing that moves. Rendered
+            // serves (shutter open the whole frame): the engine's search, with the same 1.8,
+            // still finds a 13 m/s flight; at 16 m/s the ball's black half smears into the
+            // background and what is left breaks into pieces no shape limit makes a ball of.
             val aspect = max(bw, bh).toFloat() / max(1, min(bw, bh))
             if (aspect > 1.8f) { refused[2]++; if (aspect > worstAspect) worstAspect = aspect; return@components }
             if (area.toFloat() / (bw * bh) < 0.5f) { refused[3]++; return@components }

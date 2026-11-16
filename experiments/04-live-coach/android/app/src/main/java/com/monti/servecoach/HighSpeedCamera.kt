@@ -9,6 +9,8 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.MediaCodecInfo
@@ -18,6 +20,7 @@ import android.os.Handler
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import com.monti.servecoach.core.Optics
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executor
@@ -146,10 +149,11 @@ class HighSpeedCamera(private val context: Context) {
                                     // over (the app watches the preview stream). If refused: Android's own.
                                     everyFrameToPreview = false
                                     if (surfaces.size == 2 && list.size > 1 && allToPreview) try {
-                                        hs.setRepeatingBurst(List(list.size) { list[0] }, null, handler)
+                                        hs.setRepeatingBurst(List(list.size) { list[0] }, results, handler)
                                         everyFrameToPreview = true
                                     } catch (e: Exception) { burstNote = "every frame to the preview refused: ${e.message}" }
-                                    if (!everyFrameToPreview) hs.setRepeatingBurst(list, null, handler)
+                                    // (results: the shutter time and the crop each frame was taken with -- optics, below)
+                                    if (!everyFrameToPreview) hs.setRepeatingBurst(list, results, handler)
                                 }
                                 send(burst(lock = false, freezeFocus = false))
                                 onRunning()
@@ -226,6 +230,45 @@ class HighSpeedCamera(private val context: Context) {
             override fun onError(d: CameraDevice, error: Int) { d.close(); if (device === d) device = null; if (gen == generation) onError("camera error $error") }
         }, handler)
     }
+
+    // What the camera says it did, frame by frame: the shutter time, the part of the sensor read,
+    // and the focal length (one lens on a phone's main camera, but the result is what it used).
+    // Three reads per frame, 240 a second, on the camera's thread.
+    @Volatile private var lastExposureNs = 0L
+    @Volatile private var lastCrop: android.graphics.Rect? = null
+    @Volatile private var lastFocalMm = 0f
+    private val results = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, res: TotalCaptureResult) {
+            res.get(CaptureResult.SENSOR_EXPOSURE_TIME)?.let { lastExposureNs = it }
+            res.get(CaptureResult.SCALER_CROP_REGION)?.let { lastCrop = it }
+            res.get(CaptureResult.LENS_FOCAL_LENGTH)?.let { lastFocalMm = it }
+        }
+    }
+
+    /**
+     * The camera's optics for a capture's header (Optics.headerFields): the horizontal field of
+     * view across the stream's width, worked out from the sensor's size, the lens and the part of
+     * the sensor the stream is cut from, and the shutter time. Before the first frame's result
+     * (or on a camera that reports none) the crop is the whole active array and the lens the
+     * first one listed; when even those are missing the engine keeps its 68 degrees.
+     */
+    fun optics(cfg: Config): String = try {
+        val ch = manager.getCameraCharacteristics(cfg.cameraId)
+        val phys = ch.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        val pixels = ch.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val active = ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val crop = lastCrop?.takeIf { it.width() > 0 && it.height() > 0 } ?: active
+        val focal = lastFocalMm.takeIf { it > 0 } ?: ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+        val hfov = if (phys == null || pixels == null || crop == null || focal == null) null
+            else Optics.horizontalFov(phys.width.toDouble(), pixels.width, crop.width(), crop.height(), cfg.size.width, cfg.size.height, focal.toDouble())
+        val detail = JSONObject().put("sensorMm", phys?.let { JSONArray().put(it.width.toDouble()).put(it.height.toDouble()) } ?: JSONObject.NULL)
+            .put("pixelArray", pixels?.let { JSONArray().put(it.width).put(it.height) } ?: JSONObject.NULL)
+            .put("crop", crop?.let { JSONArray().put(it.left).put(it.top).put(it.width()).put(it.height()) } ?: JSONObject.NULL)
+            .put("cropFrom", if (lastCrop != null) "result" else "active array")
+            .put("focalMm", focal?.toDouble() ?: JSONObject.NULL)
+            .put("stream", JSONArray().put(cfg.size.width).put(cfg.size.height))
+        Optics.headerFields(hfov, lastExposureNs.takeIf { it > 0 }, detail.toString())
+    } catch (e: Exception) { Optics.headerFields(null, null) }
 
     /** send every frame to the preview stream too (else 1 in 8), and whether that was taken */
     var allToPreview = false

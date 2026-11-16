@@ -18,6 +18,8 @@
     // because a table tennis ball sheds speed hard to drag and the extrapolation does not model
     // it. The app shows `speed`; launchSpeed rides along for the report, flagged for what it is.
     fit: r.fit, speed: r.flight && r.flight.speed, launchSpeed: r.flight && r.flight.launchSpeed,
+    // the field of view the speed was worked out with (degrees across the picture's width)
+    hfov: r.flight && r.flight.hfov,
     toward: r.flight && r.flight.towardCameraDeg,
     frames: r.nFrames, issues: (r.issues || []).map((i) => i.text), ballPx: r.ballRadiusPx ? 2 * r.ballRadiusPx : undefined,
   };
@@ -31,6 +33,9 @@
     segment: r.segment && { kind: r.segment.kind, start: r.segment.start, end: r.segment.end, hit: r.segment.hit, roi: r.segment.roi,
       track: r.segment.track, toss: r.segment.toss },
   });
+  // what the engine took the camera to be: the field of view and where it came from (the phone's
+  // camera, or the 68 assumed without one), and the share of each frame the shutter was open
+  const opticsOf = (res) => res && res.meta && { hfov: res.meta.hfov, from: res.meta.hfovFrom, shutter: res.meta.shutter };
   async function analyse(url, id) {
     const t0 = performance.now();
     try {
@@ -45,7 +50,7 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: res.meta && res.meta.nFrames, engineSeconds: res.meta && res.meta.seconds,
+        coach, frames: res.meta && res.meta.nFrames, engineSeconds: res.meta && res.meta.seconds, optics: opticsOf(res),
         time: dbg.time, read: dbg.read, decoder: dbg.decoder, workers: dbg.workers,
       }));
     } catch (e) {
@@ -103,7 +108,8 @@
       }
       if (frames && frames.length > head.n) frames.length = head.n;
       const tFetch = performance.now() - t0;
-      const res = await window.SpinMeter.measureCapture(Object.assign({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near }, win || {}), {
+      const res = await window.SpinMeter.measureCapture(Object.assign({ W: head.W, H: head.H, rect: head.rect, n: frames ? frames.length : head.n, frames, frame, full: head.full, fps: head.fps, track: head.track, near: head.near,
+        hfov: head.hfov, hfovFrom: head.hfovFrom, exposureUs: head.exposureUs }, win || {}), {
         // Measure along the live tracker's own tracks instead of searching the crop: about 3x
         // faster over the 21 recorded captures (97.7 s -> 33.0 s). The engine declines a track
         // it shouldn't measure -- one that doesn't fly like a ball, one that measures to nothing
@@ -119,7 +125,7 @@
       Android.onResult(id, JSON.stringify({
         ms: performance.now() - t0, error: sv ? null : (res.error || "No serve found."),
         serve: sv ? Object.assign(pick(sv), { phases: (sv.phases || []).map(pick), notes: (sv.notes || []).map((n) => n.text) }) : null,
-        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), net: !!res.net, skipped: res.skipped || null,
+        coach, frames: head.n, crop: head.rect, fetchMs: Math.round(tFetch), optics: opticsOf(res), net: !!res.net, skipped: res.skipped || null,
         data: sv ? { phases: (sv.phases || []).map(dataOf), notes: (sv.notes || []).map((n) => n.text) } : null, usedTrack: !!(dbg.trackGiven && !dbg.trackRefused), trackRefused: dbg.trackRefused || false,
         // what the track said before it was given up, so a report shows whether the search
         // that replaced it was worth its seconds rather than leaving that to be argued

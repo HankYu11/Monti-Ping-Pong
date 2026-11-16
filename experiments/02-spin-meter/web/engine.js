@@ -644,7 +644,14 @@
     return out;
   }
 
-  /** a blob round enough and the right size to be the ball: its middle and radius, or null */
+  /**
+   * A blob round enough and the right size to be the ball: its middle and radius, or null.
+   * The 1.8 is the live tracker's (Detector.kt) and stays fixed for fast serves: the search only has
+   * to find the flight, and measureSegment, which reads every frame, allows for the smear the track
+   * predicts (ballShape). Letting longer blobs in here, judged by the motion between frames, was
+   * tried on rendered serves: more frames at 10-13 m/s, but a different stretch chosen at 13 m/s
+   * with a shorter shutter (52 frames measured to 26), and at 16 m/s a track of ball fragments.
+   */
   function ballCandidate(c) {
     if (c.area < 12 || c.area > 2500) return null;
     if (Math.max(c.w, c.h) / Math.max(1, Math.min(c.w, c.h)) > 1.8 || c.area / (c.w * c.h) < 0.5) return null;
@@ -1199,9 +1206,39 @@
   }
 
   // ------------------------------------------------------------ 2. ball + pole per frame
+  // Whether a blob of w x h pixels (area of them set) is the shape of the ball.
+  //
+  // At rest: no longer than 1.6 times its width, and filling 60% of the circle round it. But the
+  // shutter stays open while the ball moves, and a disc of diameter D that moves L pixels during
+  // the exposure leaves a stadium D wide and up to D + L long -- shorter in practice, as the
+  // smeared ends are faint and some of them fall under the mask's threshold. At 240 fps a ball
+  // moves v x 4.17 mm a frame, a tenth of its own 40 mm per m/s, and the shutter may be open the
+  // whole frame time: 1 + 0.104 v long at most, so 1.6 is reached near 6 m/s and the owner's
+  // 7 m/s serves measured 1.4 (the faint ends lost). A 10 m/s serve reaches 1.6-2.0.
+  //
+  // `streak` is the smear the flight predicts for this frame, [x, y] in pixels: the ball's motion
+  // per frame times the share of the frame the shutter was open. The box grows by |x| across and
+  // |y| down, so its long side outgrows its short one by at most ||x| - |y||, and only along the
+  // way the ball went. That much extra length is allowed on top of the 1.6. The fill is then
+  // judged against the ellipse in the box rather than the circle round its long side: a smear
+  // longer than the ball is no stadium, as its middle is covered for less than the whole exposure
+  // and its ends fade first, which leaves a lens (rendered 16 m/s serve: 31 x 19 px, 302 px set,
+  // 0.59 of the stadium, 0.65 of the ellipse). Without a streak, or for a still ball, the test is
+  // exactly the one it always was.
+  function ballShape(w, h, area, streak = null) {
+    const lo = Math.min(w, h), hi = Math.max(w, h);
+    let s = 0;
+    if (streak) {
+      const sx = Math.abs(streak[0]), sy = Math.abs(streak[1]);
+      if ((w >= h) === (sx >= sy)) s = Math.min(hi - lo, Math.abs(sx - sy));   // long the way the ball went, or no allowance
+    }
+    if (hi - lo > 0.6 * lo + s) return false;
+    const d = hi - s;                          // the blob's length without the smear allowed for
+    return area / (Math.PI / 4 * hi * d) >= 0.6;
+  }
   // The ball in one frame: pixels that differ from the background in brightness or colour.
   // With a predicted position (from the flight search), take the blob nearest to it.
-  function findBall(g, bg, W, H, minR, col = null, pred = null) {
+  function findBall(g, bg, W, H, minR, col = null, pred = null, streak = null) {
     // With a predicted spot, only a window around it: the ball is taken no farther than 2r + 15
     // from it, and the clean-up below reaches only a few pixels. Over a whole crop this was most
     // of the measuring time for a ball crossing the picture (1.1 of 3.4 s).
@@ -1213,7 +1250,7 @@
         const w = x1 - x0, h = y1 - y0;
         const sub = (a) => { const o = new Float32Array(w * h); for (let y = 0; y < h; y++) for (let x = 0, r = (y0 + y) * W + x0; x < w; x++) o[y * w + x] = a[r + x]; return o; };
         const c2 = col ? { u: sub(col.u), v: sub(col.v), bgU: sub(col.bgU), bgV: sub(col.bgV) } : null;
-        const r = findBall(sub(g), sub(bg), w, h, minR, c2, [pred[0] - x0, pred[1] - y0, pred[2]]);
+        const r = findBall(sub(g), sub(bg), w, h, minR, c2, [pred[0] - x0, pred[1] - y0, pred[2]], streak);
         if (r) { r[0] += x0; r[1] += y0; }
         return r;
       }
@@ -1224,9 +1261,7 @@
     let best = null, bestScore = Infinity;
     for (const c of components(m, W, H, true)) {
       if (c.w < 2 * minR || c.h < 2 * minR) continue;
-      const aspect = Math.max(c.w, c.h) / Math.min(c.w, c.h);
-      const fill = c.area / (Math.PI * (Math.max(c.w, c.h) / 2) ** 2);
-      if (aspect > 1.6 || fill < 0.6) continue;
+      if (!ballShape(c.w, c.h, c.area, streak)) continue;
       let score = -c.area;
       if (pred) {
         const d = Math.hypot(c.cx - pred[0], c.cy - pred[1]);
@@ -2080,7 +2115,7 @@
   }
 
   // ------------------------------------------------------------ 3. measure one serve
-  async function measureSegment(R, seg, fps, hfov) {
+  async function measureSegment(R, seg, fps, hfov, shutter = 1) {
     const [rx, ry, rw, rh] = seg.roi, { ctx } = makeCanvas(R.W, R.H);
     const n = seg.end - seg.start;
     const BG_FRAMES = 15;                       // enough for a background; see medianFrames
@@ -2090,6 +2125,18 @@
       if (!seen.size) return null;
       for (let d = 0; d < 6; d++) { if (seen.has(k - d)) return seen.get(k - d); if (seen.has(k + d)) return seen.get(k + d); }
       return null;
+    };
+    // the smear the shutter leaves in frame k: the track's motion per frame there, times the share
+    // of the frame the shutter was open (ballShape). From the nearest points on either side, or two
+    // on one side at the ends of the track; none when the track says nothing near k.
+    const streakAt = (k) => {
+      const near = (from, dir) => { for (let d = 0; d < 6; d++) if (seen.has(from + dir * d)) return from + dir * d; return null; };
+      let a = near(k - 1, -1), b = near(k + 1, 1);
+      if (a == null && b != null) { a = b; b = near(a + 1, 1); }
+      else if (b == null && a != null) { b = a; a = near(b - 1, -1); }
+      if (a == null || b == null || a === b) return null;
+      const pa = seen.get(a), pb = seen.get(b), dt = b - a;
+      return [(pb[0] - pa[0]) / dt * shutter, (pb[1] - pa[1]) / dt * shutter];
     };
     // Each frame is read into a box round the ball rather than whole. findBall takes no blob
     // farther than 2r + 15 from the predicted spot and its clean-up reaches a few pixels past
@@ -2152,7 +2199,7 @@
     }
     const balls = parts.map((P, k) => {
       const p = predict(k), [x0, y0, w] = P.box, h = P.box[3];
-      const b = findBall(P.g, P.bg, w, h, 5.0, cols[k], p ? [p[0] - x0, p[1] - y0, p[2]] : null);
+      const b = findBall(P.g, P.bg, w, h, 5.0, cols[k], p ? [p[0] - x0, p[1] - y0, p[2]] : null, p ? streakAt(k) : null);
       if (b) { b[0] += x0; b[1] += y0; }        // back into the crop's own pixels
       return b;
     });
@@ -2235,7 +2282,7 @@
       axis, fit: r.score, reliable: isClear(r), runnerUp: r.runner, candidates: r.candidates,
       plusMinusRps: r.plusMinus, turns: r.turns, minTurns: r.minTurns || 1, marking: r.method === "dots" ? "dots" : "half", diag: { change: stats.change, white: stats.whiteShare, oneSide: stats.oneSide, ballChroma: stats.ballChroma, stretch: stats.stretch, swing: r.swing, dotSpread: r.dotSpread, dotFrames: r.dotFrames }, dots: stats.dots, poleRps: r.poleRps, camAxis: r.axis, poleAxis: r.poleAxis,
       phase: seg.kind, reference: stats.reference, nFrames: balls.length, issues: diagnose(stats, r), bgChange: stats.bgChange,
-      flight: { speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
+      flight: { hfov, speed: geo.speed * fix, launchSpeed: geo.launchSpeed * fix, scaleFix: fix, hitFrame: seg.hit,
         // its velocity at the hit: gravity adds 4 cm/s a frame after the toss's mean frame (upright: y down)
         tossVel: seg.toss ? matvec(geo.turn, scale([...seg.toss.v, 0], tossMs)).map((x, j) => x + (j === 1 ? 9.81 * (seg.toss.dt || 0) / fps : 0)) : null,
         launchVel: scale(geo.launchVel, fix), towardCameraDeg: geo.towardCameraDeg, downAccel: geo.downAccel, rotatedDeg: geo.rotatedDeg, accel3: geo.accel3, dir: geo.f },
@@ -2338,7 +2385,17 @@
   // measurement of each serve, the checks between its stretches, and which serve to show.
   async function analyzeReader(R, meta, opts, fileInfo, tStart) {
     const progress = opts.onProgress || (() => {});
-    const hfov = opts.hfov || 68;
+    // The camera's horizontal field of view, across the picture's width, in degrees: from the phone's
+    // own lens and sensor when the app could read them (Camera2), else the 68 a phone's main camera
+    // typically has. It sets how far away a ball of a given size is, and so how fast it comes
+    // toward or goes away from the camera; the speed across the picture doesn't depend on it.
+    const given = +opts.hfov;
+    const hfov = given >= 30 && given <= 120 ? given : 68;
+    const hfovFrom = hfov === given ? (opts.hfovFrom || "given") : "assumed";
+    // The share of each frame the shutter was open, for how far a moving ball is smeared
+    // (ballShape). Unknown: the whole frame, the longest it can be at this rate and so the most
+    // smear to allow for.
+    const shutter = opts.exposureUs > 0 ? clamp(opts.exposureUs * 1e-6 * (captureFps || 240), 0.02, 1) : 1;
     const captureFps = opts.captureFps || meta.captureFps || null;
     const fps = captureFps || 240;
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
@@ -2360,7 +2417,7 @@
         checks.push(flightCheck(segs)); emit();
         const tFound = performance.now();
         DBG.time = Object.assign(DBG.time || {}, { search: +((tFound - tStart) / 1000).toFixed(1) });
-        const metaOut = { captureFps, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
+        const metaOut = { captureFps, hfov, hfovFrom, shutter, nFrames: R.n, W: R.W, H: R.H, reader: R.kind, rotation: meta.rotation };
         DBG.file = { name: fileInfo.name, size: fileInfo.size, frames: R.n, reader: R.kind, captureFps: meta.captureFps || null, rotation: meta.rotation };
         const timing = () => Object.assign(metaOut, { debug: Object.assign(DBG, { read: Object.assign({}, readStats) }), seconds: (performance.now() - tStart) / 1000,
           frameRead: R.kind === "seek" ? "seek" : readStats.direct >= readStats.canvas ? "direct" : "canvas" });
@@ -2370,7 +2427,7 @@
           progress(segs.length > 1 ? `Measuring serve ${k + 1} of ${segs.length}` : "Measuring the spin", 0.86 + 0.14 * k / segs.length);
           const readings = [];
           for (const part of segs[k].parts) {
-            const one = await measureSegment(R, part, fps, hfov);
+            const one = await measureSegment(R, part, fps, hfov, shutter);
             readings.push(Object.assign(one, { phase: part.kind }));
           }
           crossCheck(readings);
@@ -2654,6 +2711,10 @@
     setUp(opts);
     const R = captureReader(cap);
     const o = Object.assign({}, opts, { captureFps: cap.fps || 240 });
+    // the phone's own field of view and shutter, from the capture's header (the app reads them off
+    // the camera); given in opts, those win
+    if (opts.hfov == null && cap.hfov) Object.assign(o, { hfov: cap.hfov, hfovFrom: cap.hfovFrom || "camera" });
+    if (opts.exposureUs == null && cap.exposureUs) o.exposureUs = cap.exposureUs;
     // The live tracker's own track of the flight (whole-picture pixels, every few frames), so the
     // search can be skipped: in the crop at the search's half size, filled in for every frame.
     if (opts.useTrack && cap.track && cap.track.length >= 6) {
@@ -2682,5 +2743,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { ballShape, findBall, webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote } };
 })(typeof window !== "undefined" ? window : globalThis);

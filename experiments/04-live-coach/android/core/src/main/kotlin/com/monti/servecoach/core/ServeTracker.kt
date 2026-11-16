@@ -363,12 +363,47 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
      * ball 6.1 px or less, under a tenth of the picture moving. Walking, arms and a handled camera:
      * slower, bigger, or much of the picture moving. Scaled to the picture's width and the rate.
      */
-    private fun notABall(sp: FloatArray, r: Float, moving: FloatArray): String? {
+    private fun notABall(p: List<FloatArray>, sp: FloatArray, r: Float, moving: FloatArray): String? {
         val perFrame = w / 480f * 120f / fps
         if (sp[1] < 4.5f * perFrame || sp[0] < 1.5f * perFrame) return "slow (a body?)"
         if (r > 7f * w / 480f) return "too big (a body?)"
         if (moving[1] > 0.2f) return "picture moving"
+        if (wanders(p, sp)) return "wandering (a body?)"
         return null
+    }
+
+    /**
+     * A short, uneven, bent track: a body part, not a ball.
+     *
+     * The 15 Nov home sessions sent three movements to the engine as serves: someone walking
+     * through carrying clothes, the player stepping in at the picture's edge, and the player
+     * raising the racket at the edge with no ball in the air (16 Nov added a fourth: text moving
+     * on a laptop screen). Each was fast enough and small enough to pass the tests above, and
+     * each came back "Couldn't read that one" -- the player heard a failed serve for walking
+     * past the phone.
+     *
+     * A ball in flight keeps its speed and its line, and a serve crosses the table. On the
+     * phone's own tracks (19 real serves against those 4, in BodyTrackTest):
+     *
+     *   travel across the picture   real 38-77% of its width     bodies 10-24%
+     *   fastest / median speed      real 1.04-1.37               bodies 1.71-2.20
+     *   straightness (travel/path)  real 0.89-0.99               bodies 0.75-0.84
+     *
+     * One sign alone is not enough. Head-on, the stretch off the paddle travels only 8-15% of the
+     * picture (M6, M7, M12, M14 in real-segments.json), and a best track that runs from the toss
+     * into the flight changes speed by 2x (23:04 #5 replayed on the desktop) -- both real. So it
+     * takes all three: short, uneven and bent, which none of the 19 serves was. Head-on serves
+     * have only had their travel measured, not their speed or line: untested there.
+     */
+    private fun wanders(p: List<FloatArray>, sp: FloatArray): Boolean {
+        if (p.size < 2 || sp[0] <= 0f) return false
+        val a = p.first(); val b = p.last()
+        val disp = hypot(b[1] - a[1], b[2] - a[2])
+        if (disp >= 0.3f * w) return false
+        if (sp[1] < 1.5f * sp[0]) return false
+        var path = 0f
+        for (k in 1 until p.size) path += hypot(p[k][1] - p[k - 1][1], p[k][2] - p[k - 1][2])
+        return disp < 0.87f * path
     }
 
     private fun falls(tr: Track): Boolean {
@@ -449,7 +484,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         // the best track, unless it doesn't fly like a ball (0.8.0, K2: the ball rolling back along
         // the table, 140 frames, slow, and the serve went with it as "a body"); then the best of
         // those that do and cross the picture (P31: not a short drop beside a walking body)
-        fun ballLike(tr: Track) = notABall(speeds(tr.pts), median(tr.pts.map { it[3] }), floatArrayOf(0f, 0f)) == null
+        fun ballLike(tr: Track) = notABall(tr.pts, speeds(tr.pts), median(tr.pts.map { it[3] }), floatArrayOf(0f, 0f)) == null
         val top = done.maxByOrNull { it.score }!!
         val best = if (ballLike(top)) top else done.filter { ballLike(it) && !falls(it) }.maxByOrNull { it.score } ?: top
         // only falling tracks (Q2: the toss coming down, its flight unseen): no serve. A real serve
@@ -493,7 +528,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         val moving = if (mv.isEmpty()) floatArrayOf(0f, 0f) else floatArrayOf(mv[mv.size / 2], mv.last())
         val sp = speeds(best.pts)
         val r = median(best.pts.map { it[3] })
-        val no = notABall(sp, r, moving)
+        val no = notABall(best.pts, sp, r, moving)
         if (no != null) {
             rejected[no] = (rejected[no] ?: 0) + 1
             onSkipped?.invoke(first, last, no)

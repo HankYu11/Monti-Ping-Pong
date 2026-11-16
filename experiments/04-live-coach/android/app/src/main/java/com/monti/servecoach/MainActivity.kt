@@ -707,7 +707,7 @@ class MainActivity : Activity() {
 
     /** what the tracker saw in a video with no serve, in words (its counts of turned-down movements) */
     private fun whyNoServe(rejected: Map<String, Int>): String {
-        val words = mapOf("slow (a body?)" to "slow movements (a body?)", "too big (a body?)" to "large moving shapes (a body?)",
+        val words = mapOf("slow (a body?)" to "slow movements (a body?)", "too big (a body?)" to "large moving shapes (a body?)", "wandering (a body?)" to "people moving about (not a ball)",
             "picture moving" to "moments with the picture moving", "toss only" to "tosses with no flight after",
             "upward (toss)" to "balls going up (tosses)", "straight drop" to "balls dropping straight down", "short flight" to "flights too short to measure")
         val seen = rejected.filterKeys { it in words }.entries.sortedByDescending { it.value }.take(3).map { "${words[it.key]}: ${it.value}" }

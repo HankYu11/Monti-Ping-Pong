@@ -28,6 +28,33 @@ class SpilledFrame(ptsUs: Long, key: Boolean, private val ch: java.nio.channels.
     }
 }
 
+/**
+ * Appends frames' bytes to a spill file, one after another, and hands back the frames that read
+ * them from it (FileFrames' writing half, apart from MediaExtractor so a JVM test can run it).
+ */
+class FrameSpill(private val ch: java.nio.channels.FileChannel) {
+    /** how many bytes have been written */
+    var bytes = 0L; private set
+    /** writes buf's bytes from position 0 to its limit, and returns the frame that reads them back */
+    fun add(ptsUs: Long, key: Boolean, buf: java.nio.ByteBuffer): SpilledFrame {
+        val at = bytes; val n = buf.limit()
+        buf.position(0)
+        while (buf.hasRemaining()) ch.write(buf, at + buf.position())
+        bytes += n
+        return SpilledFrame(ptsUs, key, ch, at, n)
+    }
+}
+
+/**
+ * Phones store slow motion either at its real rate or stretched for playback; 120 fps only when
+ * the median gap between frame times (microseconds, any order) says so.
+ */
+fun captureFpsOf(ptsUs: List<Long>): Int {
+    val gaps = ptsUs.sorted().zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
+    val gap = if (gaps.isEmpty()) 0L else gaps[gaps.size / 2]
+    return if (gap in 6_000..12_000) 120 else 240
+}
+
 /** Where recent encoded frames are kept: the live recorder's memory, or a video file being replayed. */
 interface FrameStore {
     val outputFormat: MediaFormat?
@@ -107,25 +134,20 @@ class FileFrames(context: android.content.Context, uri: android.net.Uri) : Frame
         spill.delete()                           // gone from the folder now; readable while ch is open
         this.ch = ch
         val buf = java.nio.ByteBuffer.allocateDirect(8 shl 20)
-        var at = 0L
+        val writer = FrameSpill(ch)
         try {
             while (true) {
                 buf.clear()
                 val n = ex.readSampleData(buf, 0)
                 if (n < 0) break
                 buf.position(0); buf.limit(n)
-                while (buf.hasRemaining()) ch.write(buf, at + buf.position())
-                frames.add(SpilledFrame(ex.sampleTime, ex.sampleFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC != 0, ch, at, n))
-                at += n
+                frames.add(writer.add(ex.sampleTime, ex.sampleFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC != 0, buf))
                 ex.advance()
             }
         } catch (e: Throwable) { runCatching { ch.close() }; throw e }
         finally { ex.release() }
-        spilledBytes = at
-        // phones store slow motion either at its real rate or stretched for playback; 120 fps only when that's what the times say
-        val gaps = frames.map { it.ptsUs }.sorted().zipWithNext { a, b -> b - a }.filter { it > 0 }.sorted()
-        val gap = if (gaps.isEmpty()) 0L else gaps[gaps.size / 2]
-        captureFps = if (gap in 6_000..12_000) 120 else 240
+        spilledBytes = writer.bytes
+        captureFps = captureFpsOf(frames.map { it.ptsUs })
     }
 
     override fun between(fromUs: Long, toUs: Long) = framesBetween(frames, fromUs, toUs)

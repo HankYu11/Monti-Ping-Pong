@@ -1,0 +1,76 @@
+# Regression tests for the spin engine (experiments/02-spin-meter/web) and Serve Coach Live
+# (experiments/04-live-coach/android), on every PR that touches either.
+#
+# - engine: plain Node, no browser, no npm install (test/synthpole.mjs: the light-flicker fix and
+#   the pole fit on synthetic tracks with a known spin)
+# - JVM: gradle :core:test :app:testReleaseUnitTest. The app's unit tests include Paparazzi's
+#   HudShot, which renders the HUD headless; it is run as a render (does every screen still draw?)
+#   and the images are uploaded, but not compared against the committed goldens: those predate the
+#   0.13.22 HUD and were recorded on another machine, so verifyPaparazzi fails on all of them.
+name: Live coach tests
+
+on:
+  pull_request:
+    paths:
+      - "experiments/0[24]-*/**"
+      - ".github/workflows/live-coach-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-coach-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Engine (Node)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Synthetic pole tracks
+        run: node experiments/02-spin-meter/web/test/synthpole.mjs
+      - name: The app's copy of the engine
+        # build.sh copies engine.js into the APK on every build, so a stale committed copy is not a
+        # bug in what ships -- but it is what a debug build from Android Studio would run.
+        run: |
+          if ! cmp -s experiments/02-spin-meter/web/engine.js experiments/04-live-coach/android/app/src/main/assets/engine.js; then
+            echo "::warning file=experiments/04-live-coach/android/app/src/main/assets/engine.js::differs from experiments/02-spin-meter/web/engine.js; run build.sh"
+          fi
+
+  jvm:
+    name: JVM (core + app unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: experiments/04-live-coach/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-35 build-tools;34.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"     # the project has no wrapper; build.sh asks for 8.9+
+      - name: Unit tests
+        run: gradle --no-daemon :core:test :app:testReleaseUnitTest
+      - name: Test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            experiments/04-live-coach/android/core/build/reports/tests/
+            experiments/04-live-coach/android/app/build/reports/tests/
+            experiments/04-live-coach/android/app/build/reports/paparazzi/
+          if-no-files-found: ignore

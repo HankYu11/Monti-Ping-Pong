@@ -54,6 +54,9 @@ import kotlin.math.roundToInt
  * measures it with the spin meter's own engine and says how it went. Nothing to press between
  * serves. "Test with a video" runs a saved slow-motion clip through the same steps.
  */
+/** retention: session folders in Download/ServeCoach older than this are deleted at app start (0: never) */
+private const val KEEP_DAYS = 30
+
 class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val camThread = HandlerThread("camera").apply { start() }
@@ -126,6 +129,7 @@ class MainActivity : Activity() {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
         else checkCamera()
         main.post(object : Runnable { override fun run() { updateStats(); main.postDelayed(this, 400) } })
+        pruneOldSessions()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -139,6 +143,7 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() },
+            onShareClips = { toggleShareClips() },
             onWindows = { windowRingOn = !windowRingOn; screen.windowsState(windowRingOn); pipeline?.windowRing = windowRingOn
                 log("camera", "windows cut on the chip: " + (if (windowRingOn) "on" else "off")) })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
@@ -148,6 +153,7 @@ class MainActivity : Activity() {
         setContentView(screen.root)
         screen.aiState(aiOn)
         screen.windowsState(windowRingOn)
+        screen.shareState(shareClipsOn)
     }
 
     private fun tone(c: Int) = screen.tone(c)
@@ -205,7 +211,8 @@ class MainActivity : Activity() {
             camHandler.post { if (previewing) camera.startPreview(c, holder.surface, camHandler,
                 onError = { msg -> main.post { if (previewing) {
                     log("camera", "preview: $msg")
-                    if (g != null && !guideFailed) { guideFailed = true; stopPreview { startPreview() } } else stopPreview()
+                    if (g != null && !guideFailed) { guideFailed = true; stopPreview { startPreview() } }
+                    else { stopPreview(); screen.problem("The camera didn't open. Close other camera apps, then open Serve Coach again.") }
                 } } },
                 onRunning = { main.post { log("camera", "preview running" + (if (g != null) ", setup check ${g.size.width}x${g.size.height}" else "")); if (aiOn) startCoach() } },
                 analysis = g?.surface) }
@@ -224,11 +231,15 @@ class MainActivity : Activity() {
     private var guide: SetupGuide? = null
     private var guideFailed = false
     private var lastAdviceSaid = 0L
+    private var lastAdviceKind: com.monti.servecoach.core.SetupCheck.Kind? = null
 
-    private fun newGuide(c: HighSpeedCamera.Config) = SetupGuide(this, c.cameraId, camHandler,
-        rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
-        onAdvice = { a -> main.post { showAdvice(a) } },
-        onJpeg = { j -> coach?.sendFrame(j) })
+    private fun newGuide(c: HighSpeedCamera.Config): SetupGuide {
+        lastAdviceKind = null                               // a new setup: its first advice is said
+        return SetupGuide(this, c.cameraId, camHandler,
+            rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
+            onAdvice = { a -> main.post { showAdvice(a) } },
+            onJpeg = { j -> coach?.sendFrame(j) })
+    }
 
     private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
         if (mode != Mode.IDLE || !previewing) return
@@ -247,11 +258,17 @@ class MainActivity : Activity() {
         screen.advice(short, a.text, a.ok)
         log("setup", a.toString())
         // spoken: by the AI coach when it's on (asked with this advice), else the phone's own voice,
-        // not "hold still" (it's said while the phone is being moved), and not more than every 4 s
+        // not "hold still" (it's said while the phone is being moved). New advice is said at once;
+        // the same advice again (it comes back after every "hold still") only after 15 s of quiet.
+        // 0.13.22 said anything every 4 s, so "level the phone" came round and round, and a change
+        // that landed inside the 4 s was never said at all.
         val c = coach
         if (c != null && c.ready) c.ask(a.text)
-        else if (a.kind != com.monti.servecoach.core.SetupCheck.Kind.MOVING && SystemClock.uptimeMillis() - lastAdviceSaid > 4000) {
-            lastAdviceSaid = SystemClock.uptimeMillis(); say(a.text)
+        else if (a.kind != com.monti.servecoach.core.SetupCheck.Kind.MOVING) {
+            val now = SystemClock.uptimeMillis()
+            if (a.kind != lastAdviceKind || now - lastAdviceSaid > ADVICE_REPEAT_MS) {
+                lastAdviceSaid = now; lastAdviceKind = a.kind; say(a.text)
+            }
         }
     }
 
@@ -268,11 +285,20 @@ class MainActivity : Activity() {
         val key = prefs.getString("key", null)
         if (key.isNullOrBlank()) { askKey(); return }
         aiOn = true; screen.aiState(true)
+        Toast.makeText(this, "Setup assistant on, key ${masked(key)}", Toast.LENGTH_SHORT).show()
         if (previewing && mode == Mode.IDLE) startCoach()
     }
 
+    /** the saved key as it may be shown: its last 4 characters only */
+    private fun masked(key: String) = "••••" + key.takeLast(4)
+
     private fun askKey() {
-        val input = android.widget.EditText(this).apply { hint = "Gemini API key"; isSingleLine = true }
+        // a password field: the key is a secret, and the phone may be on a tripod in a club
+        val input = android.widget.EditText(this).apply {
+            hint = "Gemini API key"; isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
         android.app.AlertDialog.Builder(this)
             .setTitle("AI setup coach")
             .setMessage("While you set the phone up, it sends what the camera sees, about one picture a second, to Google's Gemini and plays its spoken advice. Nothing is sent once you press Start. It uses your own Gemini API key (aistudio.google.com/apikey), kept on this phone only.")
@@ -331,7 +357,7 @@ class MainActivity : Activity() {
         val rec = ClipRecorder(c)
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
-        val p = newPipeline(rec, blocking = false)
+        val p = newPipeline(rec, blocking = false, firstId = firstFreeCaptureId())
         p.optics = { camera.optics(c) }
         p.start()
         // Watching: the camera's recording stream through the graphics chip, which shrinks each
@@ -407,7 +433,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         newSession()
-        sinceTip = 0; faults.clear()
+        tips.reset()
         latestSpotted = 0
         screen.source = "SERVE"
         mode = Mode.LIVE
@@ -442,8 +468,16 @@ class MainActivity : Activity() {
         }, 500)
     }
 
-    private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240): LivePipeline =
-        LivePipeline(store, capDir, fps, blocking,
+    /**
+     * The first capture number a new pipeline may use: 1, unless an earlier session's or test's
+     * captures are still being written or waiting for the engine -- then past them, so the two
+     * never share a cap_<id> file. Main thread (it reads [waiting]).
+     */
+    private fun firstFreeCaptureId(): Int =
+        maxOf(LivePipeline.writing.keys.maxOrNull() ?: 0, waiting.maxOfOrNull { it.id } ?: 0, measuring?.id ?: 0) + 1
+
+    private fun newPipeline(store: FrameStore, blocking: Boolean, fps: Int = 240, firstId: Int = 1): LivePipeline =
+        LivePipeline(store, capDir, fps, blocking, firstId = firstId,
             pose = PoseWatcher(this, fps) { msg -> main.post { log("error", msg) } }.also { poseWatcher = it },
             // "too slow" is the one note the player can act on while it is happening -- the rest
             // are for the report -- so it is said out loud as well as written down
@@ -532,10 +566,32 @@ class MainActivity : Activity() {
         main.post { startPreview() }          // unless something started meanwhile (a restart)
     }
 
-    override fun onResume() { super.onResume(); resumed = true; startPreview() }
+    override fun onResume() { super.onResume(); resumed = true; resumeEngine(); startPreview() }
     // a video test too: left running in the background it kept the codec, the GL threads and the
     // engine busy for nobody (review 16 Nov)
-    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode != Mode.IDLE) stopAll() }
+    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode != Mode.IDLE) stopAll(); pauseEngine() }
+
+    /**
+     * The engine's WebView, paused with the app (review 16 Nov: it never was).
+     *
+     * onPause() stops what can safely stop (animations and the like) but not the page's
+     * JavaScript. pauseTimers() does -- for every WebView in the process; this is the only one --
+     * and it would also freeze a serve being measured mid-way, so it waits until the engine has
+     * nothing left: the serves already spotted are measured first, because Stop's report waits
+     * for them (finishSession). [onResult] calls this again when the last one is done.
+     */
+    private var timersPaused = false
+    private fun pauseEngine() {
+        if (!::web.isInitialized || resumed) return
+        web.onPause()
+        if (!timersPaused && !engineBusy && waiting.isEmpty()) { web.pauseTimers(); timersPaused = true }
+    }
+    private fun resumeEngine() {
+        if (!::web.isInitialized) return
+        web.onResume()
+        if (timersPaused) { web.resumeTimers(); timersPaused = false }
+        next()
+    }
     override fun onDestroy() { super.onDestroy(); stopAll(); tts?.shutdown(); chimer?.release(); camThread.quitSafely(); encThread.quitSafely() }
 
     // ------------------------------------------------------------------ replay a video (testing without a table)
@@ -671,11 +727,16 @@ class MainActivity : Activity() {
         tone(Hud.AMBER)
         state("Video test: reading the video…")
         testSpotted = 0; testRead = 0; testGood = 0
+        val firstId = firstFreeCaptureId()
         Thread {
+            // this test's spill file is its own: closed once this thread is done feeding it AND
+            // the pipeline's captures are done reading it (not by the next test, 16 Nov review)
+            var spill: FileFrames? = null
+            var owner: LivePipeline? = null
             try {
-                val ff = FileFrames(this, uri)
+                val ff = FileFrames(this, uri).also { spill = it }
                 main.post { log("replay", "${ff.frames.size} frames (${ff.spilledBytes / 1_000_000} MB read from the cache as needed, not held in memory)") }
-                val p = newPipeline(ff, blocking = true, fps = ff.captureFps)
+                val p = newPipeline(ff, blocking = true, fps = ff.captureFps, firstId = firstId).also { owner = it }
                 p.prime(ff.frames)
                 p.start()
                 // Through the chip when it can be: the clip's frames are decoded into the tap's
@@ -709,6 +770,10 @@ class MainActivity : Activity() {
                     }
                 }
             } catch (e: Exception) { main.post { log("error", "replay: ${e.message}"); stopAll(); tone(Hud.RED); state("Video test failed: ${e.message}") } }
+            finally {
+                val f = spill
+                if (f != null) { val q = owner; if (q != null) q.whenWorkersDone { f.close() } else f.close() }
+            }
         }.start()
     }
 
@@ -720,7 +785,7 @@ class MainActivity : Activity() {
         // 1.5 GB of frames (a capture is up to ~350 MB); the oldest go first, their clips are saved
         fun bytes() = waiting.sumOf { it.n.toLong() * it.frameBytes }
         while (waiting.size > (if (mode == Mode.LIVE) 12 else 30) || (waiting.size > 1 && bytes() > 1_500_000_000L))
-            waiting.removeFirst().let { File(capDir, "cap_${it.id}.bin").delete(); log("skipped", "#${it.id}: too many serves waiting to be measured") }
+            waiting.removeFirst().let { LivePipeline.writing.remove(it.id); File(capDir, "cap_${it.id}.bin").delete(); log("skipped", "#${it.id}: too many serves waiting to be measured") }
         next()
     }
 
@@ -734,7 +799,7 @@ class MainActivity : Activity() {
     }
 
     private fun next() {
-        if (!engineReady || engineBusy) return
+        if (!engineReady || engineBusy || timersPaused) return   // paused: resumeEngine picks it up
         val info = waiting.removeFirstOrNull() ?: return
         engineBusy = true
         measuring = info
@@ -743,23 +808,83 @@ class MainActivity : Activity() {
         web.evaluateJavascript("analyseCapture('https://$host/capture/${info.id}', ${info.id})", null)
     }
 
-    /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
     // ------------------------------------------------------------------ the session's files (0.8.3)
     // Download/ServeCoach/<session>/: each serve's clip and data, the skipped movements' clips, the
-    // report; at Stop, all of them can go to Drive in one share (training data for the spin model).
+    // report. The clips show the player (a face, possibly a minor's), so offering to send them on
+    // at Stop is opt-in: only with "Offer to share clips" turned on in the developer row.
     private var session = ""
     private var sessionFrom = 0                         // results before this session
     private val sessionFiles = ArrayList<android.net.Uri>()
     private var sessionBytes = 0L
-    /** this session's report.json, so it is rewritten rather than written again */
-    @Volatile private var reportUri: android.net.Uri? = null
+    /** the session [sessionFiles] belongs to (read by the report's writer thread) */
+    @Volatile private var filesFor = ""
+    private var sessionClips = 0                        // of sessionFiles, the videos
+
+    /** the end-of-session share prompt: off unless turned on, by whoever runs the phone, each install */
+    private var shareClipsOn: Boolean
+        get() = prefs.getBoolean("shareClips", false)
+        set(v) { prefs.edit().putBoolean("shareClips", v).apply() }
+
+    private fun toggleShareClips() {
+        shareClipsOn = !shareClipsOn; screen.shareState(shareClipsOn)
+        log("files", "offer to share clips at Stop: " + (if (shareClipsOn) "on" else "off"))
+    }
+
+    /**
+     * Retention, at app start: a session folder in Download/ServeCoach whose newest file is older
+     * than [KEEP_DAYS] days is deleted. Set by that constant (0 or less: keep everything).
+     * Only this app's own files are seen (scoped storage), and a file the phone won't let it
+     * delete (made by an earlier install, say) is left alone. The session being recorded is
+     * never touched: its name is skipped, and its files are new.
+     */
+    private fun pruneOldSessions() {
+        if (KEEP_DAYS <= 0) return
+        Thread {
+            try {
+                val cutoffSec = System.currentTimeMillis() / 1000 - KEEP_DAYS * 24L * 3600
+                val prefix = "Download/ServeCoach/"
+                // folder -> its files, and the newest file's time
+                val files = HashMap<String, ArrayList<android.net.Uri>>()
+                val newest = HashMap<String, Long>()
+                contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.DATE_ADDED, MediaStore.Downloads.DATE_MODIFIED),
+                    "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?", arrayOf("$prefix%"), null)?.use { c ->
+                    while (c.moveToNext()) {
+                        val folder = c.getString(1)?.removePrefix(prefix)?.trimEnd('/')?.substringBefore('/') ?: continue
+                        if (folder.isEmpty()) continue
+                        val t = maxOf(c.getLong(2), c.getLong(3))
+                        files.getOrPut(folder) { ArrayList() }.add(android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0)))
+                        newest[folder] = maxOf(newest[folder] ?: 0L, t)
+                    }
+                }
+                var gone = 0; var kept = 0
+                for ((folder, uris) in files) {
+                    if (folder == session || (newest[folder] ?: Long.MAX_VALUE) >= cutoffSec) continue
+                    for (u in uris) {
+                        try { if (contentResolver.delete(u, null, null) > 0) gone++ else kept++ } catch (_: SecurityException) { kept++ }
+                    }
+                }
+                if (gone + kept > 0) main.post { log("files", "older than $KEEP_DAYS days: $gone files deleted" + (if (kept > 0) ", $kept the phone wouldn't let go" else "")) }
+            } catch (e: Exception) { main.post { log("error", "clearing old sessions: ${e.message}") } }
+        }.start()
+    }
 
     private fun newSession() {
         session = "Session_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
         sessionFrom = results.length()
         eventsFrom = eventsEnd
-        reportUri = null
-        synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0 }
+        synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0; sessionClips = 0; filesFor = session }
+        reportEvery(session)
+    }
+
+    /** while this session is live: its report rewritten every [reportEveryMs] (a crash keeps the last one) */
+    private val reportEveryMs = 30_000L
+    private fun reportEvery(name: String) {
+        main.postDelayed({
+            if (session != name || mode != Mode.LIVE) return@postDelayed
+            writeReport()
+            reportEvery(name)
+        }, reportEveryMs)
     }
 
     /** a file into this session's folder (on its own thread), then logged */
@@ -781,7 +906,7 @@ class MainActivity : Activity() {
                     }
                     write(counting); counting.flush()
                 } ?: throw IllegalStateException("couldn't open the new file")
-                synchronized(sessionFiles) { sessionFiles.add(uri); sessionBytes += n }
+                synchronized(sessionFiles) { sessionFiles.add(uri); sessionBytes += n; if (mime == "video/mp4") sessionClips++ }
                 if (mime == "video/mp4") main.post { log("saved", "Download/ServeCoach/$folder/$name") }
             } catch (e: Exception) { main.post { log("error", "save $name: ${e.message}") } }
         }.start()
@@ -799,25 +924,29 @@ class MainActivity : Activity() {
         saveToSession("serve%02d.json".format(id), "application/json") { it.write(rec.toString().toByteArray()) }
     }
 
-    /** at Stop: the report into the session's folder, then offer to send the whole folder on */
+    /** at Stop: the report into the session's folder, then (only if turned on) offer to send the folder on */
     private fun finishSession(tries: Int = 0) {
         if (session.isEmpty()) return
         // a serve still being measured: its answer (and data) first, up to 30 s
         if ((measuring != null || waiting.isNotEmpty()) && tries < 60) { main.postDelayed({ finishSession(tries + 1) }, 500); return }
-        writeReport()
-        eventsEnd = events.length()           // the next session's report starts here (its setup included)
         val name = session
-        // once the clips still being written are in (they go on their own threads)
-        main.postDelayed({
-            val (uris, bytes) = synchronized(sessionFiles) { ArrayList(sessionFiles) to sessionBytes }
+        // the report first (its file is swapped in whole, so the list of files to send is read
+        // after it is in), then, once the clips still being written are in (they go on their
+        // own threads), the offer to send -- only if it is turned on
+        writeReport { main.postDelayed({
+            if (!shareClipsOn) return@postDelayed
+            val (uris, bytes, clips) = synchronized(sessionFiles) { Triple(ArrayList(sessionFiles), sessionBytes, sessionClips) }
             if (uris.size <= 1 || isFinishing) return@postDelayed
+            val what = if (clips == 1) "1 video clip that shows the player" else "$clips video clips that show the player"
             android.app.AlertDialog.Builder(this)
-                .setTitle("Send this session?")
-                .setMessage("${uris.size} files (${bytes / 1_000_000} MB) in Download/ServeCoach/$name, report.json among them. Send them to Drive, into the shared folder, to train the spin model.")
-                .setPositiveButton("Send") { _, _ -> shareSession(uris) }
-                .setNegativeButton("Not now", null)
+                .setTitle("Share this session's clips?")
+                .setMessage("This sends $what, with each serve's data and report.json (${uris.size} files, ${bytes / 1_000_000} MB, in Download/ServeCoach/$name), to wherever you pick next.\n\n" +
+                    "Only share them if the player agreed, and a parent or guardian too if the player is under 18.")
+                .setPositiveButton("Choose where to send") { _, _ -> shareSession(uris) }
+                .setNegativeButton("Don't share", null)
                 .show()
-        }, 1500)
+        }, 1500) }
+        eventsEnd = events.length()           // the next session's report starts here (its setup included)
     }
 
     private fun shareSession(uris: ArrayList<android.net.Uri>) {
@@ -910,30 +1039,16 @@ class MainActivity : Activity() {
                 testRead++; if (r.optJSONObject("serve")?.optBoolean("clear") == true) testGood++
                 finishTest()
             }
+            // after every serve, so a session killed before Stop still leaves its report
+            if (mode == Mode.LIVE) writeReport()
             next()
+            if (!resumed) pauseEngine()                     // in the background: the last one done, the engine rests
         }
     }
 
     // ------------------------------------------------------------------ what to say
-    /** a tip every this many readable serves */
-    private val tipEvery = 3
-    private var sinceTip = 0
-    private val faults = HashMap<String, Int>()
-    /** this serve's fault counted; every [tipEvery] serves, the commonest since the last tip (none if all were good) */
-    private fun nextTip(kind: String): Pair<String, String>? {
-        if (kind.isNotEmpty() && kind != "good" && titles.containsKey(kind)) faults[kind] = (faults[kind] ?: 0) + 1
-        if (++sinceTip < tipEvery) return null
-        sinceTip = 0
-        val worst = faults.maxByOrNull { it.value }?.key
-        faults.clear()
-        return worst?.let { titles[it] }
-    }
-    private val titles = mapOf(
-        "thick" to ("You pushed the ball instead of brushing it" to "Open the face and brush along under the ball."),
-        "good" to ("Strong backspin" to "Keep this contact."),
-        "slip" to ("The ball slid on the rubber" to "Let the ball drop lower and brush slightly into it."),
-        "slow" to ("The brush was too slow" to "Accelerate through the contact: snap the wrist."),
-    )
+    /** a coaching tip every few readable serves, about the commonest fault since the last one */
+    private val tips = TipPicker()
 
     // ------------------------------------------------------------------ turn by turn (live)
     // Ready -> a serve spotted ("Got it", others ignored) -> its answer spoken -> Ready. Answers
@@ -1030,7 +1145,7 @@ class MainActivity : Activity() {
         val closer = if (ballPx in 1.0..24.0) "The ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
         // a coaching tip every few readable serves, about the commonest fault since the last one
         // (PLAN.md: the outcome every serve, one cue now and then; 0.13.21 said a sentence a serve)
-        val tip = nextTip(kind)
+        val tip = tips.next(kind)
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only
@@ -1051,13 +1166,43 @@ class MainActivity : Activity() {
         turnDone("${SpinLevel.outcome(rpm, type)}, $rpm." + (tip?.let { " Tip: ${it.second}" } ?: ""), r.optInt("capture"))
     }
 
+    private companion object { const val ADVICE_REPEAT_MS = 15_000L }
+
     private fun say(text: String, queue: Boolean = false, id: String = "r") { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, id) }
 
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
         events.put(JSONObject().put("t", SystemClock.uptimeMillis()).put("kind", kind).put("text", text))
-        // errors always reach the report; on screen only with the developer row open (a clean demo screen)
+        // errors always reach the report; as written, on screen only with the developer row open (a clean demo screen)
         if (kind == "error" && ::screen.isInitialized && screen.devMode) Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        // the player's own line: only for what they can do something about, in their words
+        if (kind == "error" && ::screen.isInitialized) forPlayer(text)?.let { screen.problem(it) }
+    }
+
+    /**
+     * An error, as the player at the table should hear of it, or null when it isn't theirs: the
+     * app's own fallbacks (shaders, the chip's queue, "the chip's picture doesn't match the
+     * recording"), and anything a later step already covers, stay in the report only.
+     * Keyed on the start of the logged text; the PR that added this lists every source.
+     */
+    private fun forPlayer(text: String): String? {
+        val again = if (mode == Mode.IDLE) "Press Start to try again." else "Press Stop, then Start."
+        return when {
+            // the camera (HighSpeedCamera's messages, while serving)
+            text.startsWith("camera error") || text.startsWith("the camera refused") ||
+                text.startsWith("request:") || text.startsWith("session:") -> "The camera stopped. Press Start to try again."
+            text.startsWith("no frames from the camera") -> "No picture from the camera. $again"
+            // recording: starting it, or the encoder failing while serving
+            text.startsWith("encoder") -> "Recording failed. $again"
+            // watching for serves: those threads end on an error, so nothing more is spotted
+            text.startsWith("decoder:") || text.startsWith("tracker:") -> "Serve watching stopped. $again"
+            text.startsWith("the engine didn't load") -> "The spin measurer didn't load. Close Serve Coach and open it again."
+            text.startsWith("picture check failed") -> "Picture check failed: readings may be off. Watching anyway."
+            text.startsWith("setup check:") -> "Setup check is off. Line up the table by eye."
+            Regex("^#\\d+: no answer in 30 s").containsMatchIn(text) -> "That serve wasn't measured. Serve again."
+            text.startsWith("save ") -> "Couldn't save a clip. Is the phone's storage full?"
+            else -> null
+        }
     }
 
     /** the counters as they stand, into [report]: shared by the file and the clipboard */
@@ -1081,48 +1226,63 @@ class MainActivity : Activity() {
      * The session's report, into the session's folder beside the clips it describes, so that it
      * goes out with them in the one share and nobody has to copy and paste anything.
      *
-     * Written once, at Stop. It is not worth a line of work while a serve is being measured:
-     * the session this was built for was spending 70 ms a frame against a 4 ms budget, and the
-     * report only grows, so rewriting the whole of it after every serve is work that gets
-     * heavier exactly as the app gets more desperate for CPU. The cost of waiting is that a
-     * session killed before Stop leaves its clips without one.
+     * Written after every serve's answer and every 30 s while live ([reportEvery]), and at Stop.
+     * It used to be written only at Stop, so a session killed before then -- a crash, the app
+     * swiped away -- left its clips with no report, and the report is what says why it died.
+     * The cost is small and off the hot path: the text is built here, on the main thread, which
+     * the 240 fps work never runs on, and written on [reportWriter], one file at a time.
      *
-     * The old Stop-time copy never called what is now [fillReport], so it carried the events
-     * and the results and NONE of the counters -- how far behind the tracker ran, how many
-     * frames it skipped, whether the ring ever fitted. All of that lived only in the clipboard
-     * copy the REPORT button made, which is why the button was the only way to get a report
-     * worth reading.
+     * Each write is whole: the text goes into a new file (report.tmp.json), and only once it is
+     * all there is the old report.json deleted and the new one renamed to it. A kill part way
+     * leaves the previous report.json, or -- between the delete and the rename -- a complete
+     * report.tmp.json, never a truncated report.json ("wt" on the one file could).
      *
-     * The MediaStore row is made HERE, not on the writer thread, because the share dialog is
-     * offered 1.5 s later off a list of this session's files: a row added by a thread that has
-     * not got there yet is a report that quietly misses the upload. The bytes still go on the
-     * thread. "wt" truncates, so a second Stop rewrites the file instead of making another.
-     *
-     * The text is built here too and the thread is handed a String: [report], [events] and
-     * [results] belong to the main thread.
+     * The text is built here and the thread is handed a String: [report], [events] and [results]
+     * belong to the main thread. The events are this session's only ([sessionEvents]).
+     * [then] runs (on the writer's thread) once this write is done, whether it worked or not.
      */
-    private fun writeReport() {
-        if (session.isEmpty() || mode == Mode.REPLAY) return
+    private fun writeReport(then: (() -> Unit)? = null) {
+        if (session.isEmpty() || mode == Mode.REPLAY) { then?.invoke(); return }
         fillReport()
         report.put("events", sessionEvents()).put("results", JSONArray().also { a -> for (k in sessionFrom until results.length()) a.put(results.get(k)) })
         val text = report.toString(1)
-        val uri = reportUri ?: try {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, "report.json")
-                put(MediaStore.Downloads.MIME_TYPE, "application/json")
-                put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$session")
-            }
-            (contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IllegalStateException("the phone's storage refused a new file"))
-                .also { reportUri = it; synchronized(sessionFiles) { sessionFiles.add(it) } }
-        } catch (e: Exception) { log("error", "report: ${e.message}"); return }
-        Thread {
+        val folder = session
+        val last = then != null
+        reportWriter.execute {
             try {
-                contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) }
-                    ?: throw IllegalStateException("couldn't open report.json")
-                main.post { log("saved", "Download/ServeCoach/$session/report.json") }
+                putReport(folder, text)
+                if (last) main.post { log("saved", "Download/ServeCoach/$folder/report.json") }
             } catch (e: Exception) { main.post { log("error", "report: ${e.message}") } }
-        }.start()
+            finally { then?.invoke() }
+        }
+    }
+
+    /** report writes, in order, one at a time, off the main thread (its one thread ends when idle) */
+    private val reportWriter = java.util.concurrent.ThreadPoolExecutor(0, 1, 10L, java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.LinkedBlockingQueue()) { r -> Thread(r, "report").apply { priority = Thread.MIN_PRIORITY } }
+    /** each session's report.json as it stands (the writer thread's only) */
+    private val reportUris = HashMap<String, android.net.Uri>()
+
+    /** on [reportWriter]: the text into a new file, then swapped in for the session's report.json */
+    private fun putReport(folder: String, text: String) {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, "report.tmp.json")
+            put(MediaStore.Downloads.MIME_TYPE, "application/json")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/ServeCoach/$folder")
+        }
+        val tmp = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("the phone's storage refused a new file")
+        try {
+            contentResolver.openOutputStream(tmp, "w")?.use { it.write(text.toByteArray()) }
+                ?: throw IllegalStateException("couldn't open report.tmp.json")
+        } catch (e: Exception) { runCatching { contentResolver.delete(tmp, null, null) }; throw e }
+        val old = reportUris[folder]
+        if (old != null) runCatching { contentResolver.delete(old, null, null) }
+        reportUris[folder] = tmp
+        synchronized(sessionFiles) { if (filesFor == folder) { if (old != null) sessionFiles.remove(old); sessionFiles.add(tmp) } }
+        // the same row, renamed: its uri does not change, so the list of files to send holds
+        val renamed = contentResolver.update(tmp, ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, "report.json") }, null, null)
+        if (renamed < 1) throw IllegalStateException("written as report.tmp.json, could not rename it to report.json")
     }
 
     /** the same report onto the clipboard, with every session's results, not just this one's */

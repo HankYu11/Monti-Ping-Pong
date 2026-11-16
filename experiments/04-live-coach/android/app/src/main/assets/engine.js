@@ -2395,8 +2395,8 @@
     // The share of each frame the shutter was open, for how far a moving ball is smeared
     // (ballShape). Unknown: the whole frame, the longest it can be at this rate and so the most
     // smear to allow for.
-    const shutter = opts.exposureUs > 0 ? clamp(opts.exposureUs * 1e-6 * (captureFps || 240), 0.02, 1) : 1;
     const captureFps = opts.captureFps || meta.captureFps || null;
+    const shutter = opts.exposureUs > 0 ? clamp(opts.exposureUs * 1e-6 * (captureFps || 240), 0.02, 1) : 1;
     const fps = captureFps || 240;
     const checks = videoChecks(meta, R, opts), emit = () => { if (opts.onChecks) opts.onChecks(checks.slice()); };
     emit();
@@ -2743,5 +2743,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { ballShape, findBall, webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { ballShape, findBall, webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote, lightWobble, lightFlicker, flickerBands, isClear } };
 })(typeof window !== "undefined" ? window : globalThis);

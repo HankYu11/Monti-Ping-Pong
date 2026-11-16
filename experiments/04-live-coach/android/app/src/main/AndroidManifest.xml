@@ -4,7 +4,12 @@
     <!-- only for the optional AI setup coach (Gemini Live, the player's own key) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <!-- no backup: the Gemini API key (app-private prefs) must not go into Google's cloud backup
+         or a device-to-device transfer. allowBackup="false" covers Android 10-11 (and cloud backup
+         on 12+); dataExtractionRules excludes everything on 12+, device transfer included. -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Serve Coach Live"
         android:icon="@android:drawable/ic_menu_camera"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">

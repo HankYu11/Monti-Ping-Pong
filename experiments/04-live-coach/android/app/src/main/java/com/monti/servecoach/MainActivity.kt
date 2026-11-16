@@ -54,6 +54,9 @@ import kotlin.math.roundToInt
  * measures it with the spin meter's own engine and says how it went. Nothing to press between
  * serves. "Test with a video" runs a saved slow-motion clip through the same steps.
  */
+/** retention: session folders in Download/ServeCoach older than this are deleted at app start (0: never) */
+private const val KEEP_DAYS = 30
+
 class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private val camThread = HandlerThread("camera").apply { start() }
@@ -126,6 +129,7 @@ class MainActivity : Activity() {
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(arrayOf(Manifest.permission.CAMERA), 1)
         else checkCamera()
         main.post(object : Runnable { override fun run() { updateStats(); main.postDelayed(this, 400) } })
+        pruneOldSessions()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -139,6 +143,7 @@ class MainActivity : Activity() {
 
     private fun buildUi() {
         screen = HudScreen(this, onStart = { if (mode == Mode.IDLE) startLive() else stopAll() }, onTest = { pickVideo() }, onReport = { copyReport() }, onAi = { toggleAi() }, onNext = { forceReady() },
+            onShareClips = { toggleShareClips() },
             onWindows = { windowRingOn = !windowRingOn; screen.windowsState(windowRingOn); pipeline?.windowRing = windowRingOn
                 log("camera", "windows cut on the chip: " + (if (windowRingOn) "on" else "off")) })
         preview = screen.preview; stateText = screen.stateText; bigText = screen.bigText; coachText = screen.coachText
@@ -148,6 +153,7 @@ class MainActivity : Activity() {
         setContentView(screen.root)
         screen.aiState(aiOn)
         screen.windowsState(windowRingOn)
+        screen.shareState(shareClipsOn)
     }
 
     private fun tone(c: Int) = screen.tone(c)
@@ -268,11 +274,20 @@ class MainActivity : Activity() {
         val key = prefs.getString("key", null)
         if (key.isNullOrBlank()) { askKey(); return }
         aiOn = true; screen.aiState(true)
+        Toast.makeText(this, "Setup assistant on, key ${masked(key)}", Toast.LENGTH_SHORT).show()
         if (previewing && mode == Mode.IDLE) startCoach()
     }
 
+    /** the saved key as it may be shown: its last 4 characters only */
+    private fun masked(key: String) = "••••" + key.takeLast(4)
+
     private fun askKey() {
-        val input = android.widget.EditText(this).apply { hint = "Gemini API key"; isSingleLine = true }
+        // a password field: the key is a secret, and the phone may be on a tripod in a club
+        val input = android.widget.EditText(this).apply {
+            hint = "Gemini API key"; isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+        }
         android.app.AlertDialog.Builder(this)
             .setTitle("AI setup coach")
             .setMessage("While you set the phone up, it sends what the camera sees, about one picture a second, to Google's Gemini and plays its spoken advice. Nothing is sent once you press Start. It uses your own Gemini API key (aistudio.google.com/apikey), kept on this phone only.")
@@ -740,14 +755,64 @@ class MainActivity : Activity() {
         web.evaluateJavascript("analyseCapture('https://$host/capture/${info.id}', ${info.id})", null)
     }
 
-    /** the serve's own clip in the phone's videos (Movies/ServeCoach), to look at or send */
     // ------------------------------------------------------------------ the session's files (0.8.3)
     // Download/ServeCoach/<session>/: each serve's clip and data, the skipped movements' clips, the
-    // report; at Stop, all of them can go to Drive in one share (training data for the spin model).
+    // report. The clips show the player (a face, possibly a minor's), so offering to send them on
+    // at Stop is opt-in: only with "Offer to share clips" turned on in the developer row.
     private var session = ""
     private var sessionFrom = 0                         // results before this session
     private val sessionFiles = ArrayList<android.net.Uri>()
     private var sessionBytes = 0L
+    private var sessionClips = 0                        // of sessionFiles, the videos
+
+    /** the end-of-session share prompt: off unless turned on, by whoever runs the phone, each install */
+    private var shareClipsOn: Boolean
+        get() = prefs.getBoolean("shareClips", false)
+        set(v) { prefs.edit().putBoolean("shareClips", v).apply() }
+
+    private fun toggleShareClips() {
+        shareClipsOn = !shareClipsOn; screen.shareState(shareClipsOn)
+        log("files", "offer to share clips at Stop: " + (if (shareClipsOn) "on" else "off"))
+    }
+
+    /**
+     * Retention, at app start: a session folder in Download/ServeCoach whose newest file is older
+     * than [KEEP_DAYS] days is deleted. Set by that constant (0 or less: keep everything).
+     * Only this app's own files are seen (scoped storage), and a file the phone won't let it
+     * delete (made by an earlier install, say) is left alone. The session being recorded is
+     * never touched: its name is skipped, and its files are new.
+     */
+    private fun pruneOldSessions() {
+        if (KEEP_DAYS <= 0) return
+        Thread {
+            try {
+                val cutoffSec = System.currentTimeMillis() / 1000 - KEEP_DAYS * 24L * 3600
+                val prefix = "Download/ServeCoach/"
+                // folder -> its files, and the newest file's time
+                val files = HashMap<String, ArrayList<android.net.Uri>>()
+                val newest = HashMap<String, Long>()
+                contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.DATE_ADDED, MediaStore.Downloads.DATE_MODIFIED),
+                    "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?", arrayOf("$prefix%"), null)?.use { c ->
+                    while (c.moveToNext()) {
+                        val folder = c.getString(1)?.removePrefix(prefix)?.trimEnd('/')?.substringBefore('/') ?: continue
+                        if (folder.isEmpty()) continue
+                        val t = maxOf(c.getLong(2), c.getLong(3))
+                        files.getOrPut(folder) { ArrayList() }.add(android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0)))
+                        newest[folder] = maxOf(newest[folder] ?: 0L, t)
+                    }
+                }
+                var gone = 0; var kept = 0
+                for ((folder, uris) in files) {
+                    if (folder == session || (newest[folder] ?: Long.MAX_VALUE) >= cutoffSec) continue
+                    for (u in uris) {
+                        try { if (contentResolver.delete(u, null, null) > 0) gone++ else kept++ } catch (_: SecurityException) { kept++ }
+                    }
+                }
+                if (gone + kept > 0) main.post { log("files", "older than $KEEP_DAYS days: $gone files deleted" + (if (kept > 0) ", $kept the phone wouldn't let go" else "")) }
+            } catch (e: Exception) { main.post { log("error", "clearing old sessions: ${e.message}") } }
+        }.start()
+    }
     /** this session's report.json, so it is rewritten rather than written again */
     @Volatile private var reportUri: android.net.Uri? = null
 
@@ -756,7 +821,7 @@ class MainActivity : Activity() {
         sessionFrom = results.length()
         eventsFrom = eventsEnd
         reportUri = null
-        synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0 }
+        synchronized(sessionFiles) { sessionFiles.clear(); sessionBytes = 0; sessionClips = 0 }
     }
 
     /** a file into this session's folder (on its own thread), then logged */
@@ -778,7 +843,7 @@ class MainActivity : Activity() {
                     }
                     write(counting); counting.flush()
                 } ?: throw IllegalStateException("couldn't open the new file")
-                synchronized(sessionFiles) { sessionFiles.add(uri); sessionBytes += n }
+                synchronized(sessionFiles) { sessionFiles.add(uri); sessionBytes += n; if (mime == "video/mp4") sessionClips++ }
                 if (mime == "video/mp4") main.post { log("saved", "Download/ServeCoach/$folder/$name") }
             } catch (e: Exception) { main.post { log("error", "save $name: ${e.message}") } }
         }.start()
@@ -796,7 +861,7 @@ class MainActivity : Activity() {
         saveToSession("serve%02d.json".format(id), "application/json") { it.write(rec.toString().toByteArray()) }
     }
 
-    /** at Stop: the report into the session's folder, then offer to send the whole folder on */
+    /** at Stop: the report into the session's folder, then (only if turned on) offer to send the folder on */
     private fun finishSession(tries: Int = 0) {
         if (session.isEmpty()) return
         // a serve still being measured: its answer (and data) first, up to 30 s
@@ -806,13 +871,16 @@ class MainActivity : Activity() {
         val name = session
         // once the clips still being written are in (they go on their own threads)
         main.postDelayed({
-            val (uris, bytes) = synchronized(sessionFiles) { ArrayList(sessionFiles) to sessionBytes }
+            if (!shareClipsOn) return@postDelayed
+            val (uris, bytes, clips) = synchronized(sessionFiles) { Triple(ArrayList(sessionFiles), sessionBytes, sessionClips) }
             if (uris.size <= 1 || isFinishing) return@postDelayed
+            val what = if (clips == 1) "1 video clip that shows the player" else "$clips video clips that show the player"
             android.app.AlertDialog.Builder(this)
-                .setTitle("Send this session?")
-                .setMessage("${uris.size} files (${bytes / 1_000_000} MB) in Download/ServeCoach/$name, report.json among them. Send them to Drive, into the shared folder, to train the spin model.")
-                .setPositiveButton("Send") { _, _ -> shareSession(uris) }
-                .setNegativeButton("Not now", null)
+                .setTitle("Share this session's clips?")
+                .setMessage("This sends $what, with each serve's data and report.json (${uris.size} files, ${bytes / 1_000_000} MB, in Download/ServeCoach/$name), to wherever you pick next.\n\n" +
+                    "Only share them if the player agreed, and a parent or guardian too if the player is under 18.")
+                .setPositiveButton("Choose where to send") { _, _ -> shareSession(uris) }
+                .setNegativeButton("Don't share", null)
                 .show()
         }, 1500)
     }

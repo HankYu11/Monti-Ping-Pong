@@ -57,12 +57,13 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     val spinBall = SpinBall(ctx)
     val split = SpinSplit(ctx)
     /** setup advice, the AI coach, a video test's progress, or why a serve could not be read */
+    private val coachBox = android.graphics.drawable.GradientDrawable().apply {
+        cornerRadius = dp(6).toFloat(); setColor(Color.argb(150, 0, 20, 30)); setStroke(dp(1), Color.argb(90, 95, 242, 255))
+    }
     val coachText = tv(16f, mono, Color.argb(235, 235, 248, 252)).apply {
         text = "Checking the setup…"; setLineSpacing(0f, 1.15f)
         setPadding(dp(12), dp(9), dp(12), dp(10))
-        background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = dp(6).toFloat(); setColor(Color.argb(150, 0, 20, 30)); setStroke(dp(1), Color.argb(90, 95, 242, 255))
-        }
+        background = coachBox
     }
     /** the screen-wide "ready" flash: a border round the whole picture, seen from across the table */
     private val flash = View(ctx).apply {
@@ -216,14 +217,32 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     /** setting up (before Start): the on-device check's advice; the state line names it */
     fun advice(short: String, text: String, good: Boolean) {
         state("Setup · $short"); tone(if (good) Hud.CYAN else Hud.AMBER)
+        if (problemShowing) { heldAdvice = text; return }
         if (!aiTalking) message(text)
+    }
+
+    /** when the last problem went up: setup advice and the assistant wait [PROBLEM_HOLD_MS] before covering it */
+    private var problemAt = 0L
+    private val problemShowing get() = android.os.SystemClock.uptimeMillis() - problemAt < PROBLEM_HOLD_MS
+    /** advice that came while a problem was up: shown when the hold ends (advice only comes when it changes) */
+    private var heldAdvice: String? = null
+    /**
+     * Something went wrong that the player can act on: in the coaching box, larger, with a red
+     * edge, so it is read from the table. It stays until a reading replaces it; setup advice
+     * (which comes every few seconds) leaves it up for 15 s first.
+     */
+    fun problem(text: String) {
+        problemAt = android.os.SystemClock.uptimeMillis()
+        message("⚠  $text", problem = true)
+        val at = problemAt
+        coachText.postDelayed({ if (problemAt == at) heldAdvice?.let { heldAdvice = null; message(it) } }, PROBLEM_HOLD_MS)
     }
     private var aiLine = StringBuilder()
     private var aiTalking = false
     /** the AI coach's words as they come (a "\n" ends its turn) */
     fun aiText(t: String) {
         if (t == "\n") { aiTalking = false; aiLine = StringBuilder(); return }
-        aiTalking = true; aiLine.append(t); message("ASSISTANT  ${aiLine.toString().trim()}")
+        aiTalking = true; aiLine.append(t); if (!problemShowing) message("ASSISTANT  ${aiLine.toString().trim()}")
     }
     fun aiState(on: Boolean) { aiButton.text = if (on) "SETUP ASSISTANT: ON" else "SETUP ASSISTANT: OFF"; if (!on) aiTalking = false }
     fun windowsState(on: Boolean) { windowsButton.text = if (on) "CHIP WINDOWS: ON" else "CHIP WINDOWS: OFF" }
@@ -246,10 +265,16 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
 
     /** the one line under the readout: it has something to say, or it takes up no room */
-    private fun message(text: String) {
+    private fun message(text: String, problem: Boolean = false) {
+        if (!problem) { problemAt = 0L; heldAdvice = null }   // anything newer replaces a problem
         coachText.text = text
         coachText.visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+        coachText.textSize = if (problem) 20f else 16f
+        coachText.setTextColor(if (problem) Hud.WHITE else Color.argb(235, 235, 248, 252))
+        coachBox.setStroke(dp(if (problem) 3 else 1), if (problem) Hud.RED else Color.argb(90, 95, 242, 255))
     }
+
+    private companion object { const val PROBLEM_HOLD_MS = 15_000L }
 
     /** what the spin was, beside the number and under it: the ball turning, and the three parts */
     private fun showSpin(spin: Spin?) {

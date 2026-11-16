@@ -211,7 +211,8 @@ class MainActivity : Activity() {
             camHandler.post { if (previewing) camera.startPreview(c, holder.surface, camHandler,
                 onError = { msg -> main.post { if (previewing) {
                     log("camera", "preview: $msg")
-                    if (g != null && !guideFailed) { guideFailed = true; stopPreview { startPreview() } } else stopPreview()
+                    if (g != null && !guideFailed) { guideFailed = true; stopPreview { startPreview() } }
+                    else { stopPreview(); screen.problem("The camera didn't open. Close other camera apps, then open Serve Coach again.") }
                 } } },
                 onRunning = { main.post { log("camera", "preview running" + (if (g != null) ", setup check ${g.size.width}x${g.size.height}" else "")); if (aiOn) startCoach() } },
                 analysis = g?.surface) }
@@ -230,11 +231,15 @@ class MainActivity : Activity() {
     private var guide: SetupGuide? = null
     private var guideFailed = false
     private var lastAdviceSaid = 0L
+    private var lastAdviceKind: com.monti.servecoach.core.SetupCheck.Kind? = null
 
-    private fun newGuide(c: HighSpeedCamera.Config) = SetupGuide(this, c.cameraId, camHandler,
-        rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
-        onAdvice = { a -> main.post { showAdvice(a) } },
-        onJpeg = { j -> coach?.sendFrame(j) })
+    private fun newGuide(c: HighSpeedCamera.Config): SetupGuide {
+        lastAdviceKind = null                               // a new setup: its first advice is said
+        return SetupGuide(this, c.cameraId, camHandler,
+            rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
+            onAdvice = { a -> main.post { showAdvice(a) } },
+            onJpeg = { j -> coach?.sendFrame(j) })
+    }
 
     private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
         if (mode != Mode.IDLE || !previewing) return
@@ -253,11 +258,17 @@ class MainActivity : Activity() {
         screen.advice(short, a.text, a.ok)
         log("setup", a.toString())
         // spoken: by the AI coach when it's on (asked with this advice), else the phone's own voice,
-        // not "hold still" (it's said while the phone is being moved), and not more than every 4 s
+        // not "hold still" (it's said while the phone is being moved). New advice is said at once;
+        // the same advice again (it comes back after every "hold still") only after 15 s of quiet.
+        // 0.13.22 said anything every 4 s, so "level the phone" came round and round, and a change
+        // that landed inside the 4 s was never said at all.
         val c = coach
         if (c != null && c.ready) c.ask(a.text)
-        else if (a.kind != com.monti.servecoach.core.SetupCheck.Kind.MOVING && SystemClock.uptimeMillis() - lastAdviceSaid > 4000) {
-            lastAdviceSaid = SystemClock.uptimeMillis(); say(a.text)
+        else if (a.kind != com.monti.servecoach.core.SetupCheck.Kind.MOVING) {
+            val now = SystemClock.uptimeMillis()
+            if (a.kind != lastAdviceKind || now - lastAdviceSaid > ADVICE_REPEAT_MS) {
+                lastAdviceSaid = now; lastAdviceKind = a.kind; say(a.text)
+            }
         }
     }
 
@@ -1116,13 +1127,43 @@ class MainActivity : Activity() {
         turnDone("${SpinLevel.outcome(rpm, type)}, $rpm." + (tip?.let { " Tip: ${it.second}" } ?: ""), r.optInt("capture"))
     }
 
+    private companion object { const val ADVICE_REPEAT_MS = 15_000L }
+
     private fun say(text: String, queue: Boolean = false, id: String = "r") { tts?.speak(text, if (queue) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH, null, id) }
 
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
         events.put(JSONObject().put("t", SystemClock.uptimeMillis()).put("kind", kind).put("text", text))
-        // errors always reach the report; on screen only with the developer row open (a clean demo screen)
+        // errors always reach the report; as written, on screen only with the developer row open (a clean demo screen)
         if (kind == "error" && ::screen.isInitialized && screen.devMode) Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        // the player's own line: only for what they can do something about, in their words
+        if (kind == "error" && ::screen.isInitialized) forPlayer(text)?.let { screen.problem(it) }
+    }
+
+    /**
+     * An error, as the player at the table should hear of it, or null when it isn't theirs: the
+     * app's own fallbacks (shaders, the chip's queue, "the chip's picture doesn't match the
+     * recording"), and anything a later step already covers, stay in the report only.
+     * Keyed on the start of the logged text; the PR that added this lists every source.
+     */
+    private fun forPlayer(text: String): String? {
+        val again = if (mode == Mode.IDLE) "Press Start to try again." else "Press Stop, then Start."
+        return when {
+            // the camera (HighSpeedCamera's messages, while serving)
+            text.startsWith("camera error") || text.startsWith("the camera refused") ||
+                text.startsWith("request:") || text.startsWith("session:") -> "The camera stopped. Press Start to try again."
+            text.startsWith("no frames from the camera") -> "No picture from the camera. $again"
+            // recording: starting it, or the encoder failing while serving
+            text.startsWith("encoder") -> "Recording failed. $again"
+            // watching for serves: those threads end on an error, so nothing more is spotted
+            text.startsWith("decoder:") || text.startsWith("tracker:") -> "Serve watching stopped. $again"
+            text.startsWith("the engine didn't load") -> "The spin measurer didn't load. Close Serve Coach and open it again."
+            text.startsWith("picture check failed") -> "Picture check failed: readings may be off. Watching anyway."
+            text.startsWith("setup check:") -> "Setup check is off. Line up the table by eye."
+            Regex("^#\\d+: no answer in 30 s").containsMatchIn(text) -> "That serve wasn't measured. Serve again."
+            text.startsWith("save ") -> "Couldn't save a clip. Is the phone's storage full?"
+            else -> null
+        }
     }
 
     /** the counters as they stand, into [report]: shared by the file and the clipboard */

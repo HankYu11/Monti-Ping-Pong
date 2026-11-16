@@ -2,7 +2,7 @@ package com.monti.servecoach.desktop
 
 import com.monti.servecoach.core.Capture
 import com.monti.servecoach.core.Plane
-import com.monti.servecoach.core.Predict
+import com.monti.servecoach.core.LiveAim
 import com.monti.servecoach.core.SceneBackground
 import com.monti.servecoach.core.ServeTracker
 import com.monti.servecoach.core.WindowRing
@@ -52,7 +52,7 @@ class RingSim(
     var placed = 0; private set
 
     /** what the tracker had published, by the tracker frame it was published at */
-    private val history = ArrayDeque<Pair<Long, List<FloatArray>>>()
+    private val history = ArrayDeque<Pair<Long, List<FloatArray>?>>()
     private var planSide = 0
 
     /** the same rule the app uses, from core, so the two cannot drift */
@@ -61,47 +61,17 @@ class RingSim(
     private val GRACE = (System.getenv("RINGGRACE") ?: "10").toInt()
     private val PCT = (System.getenv("RINGPCT") ?: "50").toInt()
     var sideUsed = 0; private set
-    private val pick = System.getenv("RINGPICK") ?: "gated"
-    private val minSpeed = (System.getenv("RINGMINSPEED") ?: "2").toFloat()
+    /** RINGPOINTS: the points a live track needs before it is followed (LiveAim.MIN_POINTS) */
+    val points = (System.getenv("RINGPOINTS") ?: LiveAim.MIN_POINTS.toString()).toInt()
 
-    /** the tracker's thread: the track most likely to be the ball, published for the chip */
+    /**
+     * The tracker's thread: the track the chip should follow, by the app's own rule (LiveAim).
+     * A frame with none is recorded as none, as the app takes its plan down: the chip then cuts
+     * nothing, rather than going on extrapolating a track that is no longer there.
+     */
     fun seen(tr: ServeTracker, index: Long) {
-        var best: List<FloatArray>? = null
-        var bestScore = 0f
-        for (t in tr.liveTracks) {
-            val s: Float
-            if (pick == "score") {
-                val a = t[0]; val b = t[t.size - 1]
-                val disp = Math.hypot((b[1] - a[1]).toDouble(), (b[2] - a[2]).toDouble()).toFloat()
-                if (disp < 8f) continue
-                s = t.size * disp
-            } else if (pick == "gated") {
-                // fast enough to be a ball, then the longest of those
-                val k = t.size
-                val a0 = t[maxOf(0, k - 4)]; val b0 = t[k - 1]
-                val df = maxOf(1f, b0[0] - a0[0])
-                val v = (Math.hypot((b0[1] - a0[1]).toDouble(), (b0[2] - a0[2]).toDouble()) / df).toFloat()
-                if (v < minSpeed) continue
-                val a = t[0]; val b = t[t.size - 1]
-                s = t.size * Math.hypot((b[1] - a[1]).toDouble(), (b[2] - a[2]).toDouble()).toFloat()
-            } else {
-                // how fast it is going NOW, over its last few points. A served ball is the
-                // fastest thing in the picture by a long way; length times travel, which is what
-                // the grouping scores a FINISHED track by, picks an arm that has been alive for
-                // a hundred frames over a flight that is ten frames old -- which is exactly the
-                // first part of the flight the window is wanted for.
-                val k = t.size
-                val a = t[maxOf(0, k - 4)]; val b = t[k - 1]
-                val df = maxOf(1f, b[0] - a[0])
-                s = (Math.hypot((b[1] - a[1]).toDouble(), (b[2] - a[2]).toDouble()) / df).toFloat()
-                if (s < minSpeed) continue
-            }
-            if (s > bestScore) { bestScore = s; best = t }
-        }
-        if (best != null) {
-            history.addLast(index to best)
-            while (history.size > 64) history.removeFirst()
-        }
+        history.addLast(index to LiveAim.pick(tr.liveTracks, tr.w, points))
+        while (history.size > 64) history.removeFirst()
     }
 
     /** the frames' thread: this frame's window, where the track as it stood [lag] frames ago says */
@@ -119,10 +89,7 @@ class RingSim(
         val wantSide = sideFor(rs[pick] * QUARTER)
         val side = if (planSide > 0 && wantSide <= planSide && wantSide > planSide * 6 / 10) planSide else wantSide
         planSide = side; sideUsed = side
-        val p = Predict.at(t, frameNo.toFloat() / step, lag = 0f) ?: return
-        val scale = QUARTER
-        val x = Math.round(p[0] * scale - side / 2f).coerceIn(0, maxOf(0, frameW - side)) and 1.inv()
-        val y = Math.round(p[1] * scale - side / 2f).coerceIn(0, maxOf(0, frameH - side)) and 1.inv()
+        val (x, y) = LiveAim.place(t, frameNo.toFloat() / step, side, QUARTER, frameW, frameH, points)?.let { it[0] to it[1] } ?: return
         // the chip's three draws, on the processor: the window in the capture's own layout, and
         // the whole picture's row sample packed as crop_rows.frag reads it back
         val win = Capture(frameW, frameH, intArrayOf(x, y, side, side), false, 240).crop(f)
@@ -221,6 +188,7 @@ class RingSim(
         var flightNeed = 0; var flightGot = 0
         val debug = System.getenv("RINGDEBUG") != null
         val misses = ArrayList<Int>()
+        var firstFit = -1
         for (i in 0 until n) {
             val place = b.placeOf(i)
             val at = taken.at[i]
@@ -239,7 +207,7 @@ class RingSim(
                     misses.add(d)
                     if (debug) println("    frame $i: place ${place[0]},${place[1]} at ${at[0]},${at[1]} off $d ${if (win == null) "MISSED" else ""}")
                 }
-                if (win != null) { got++; if (onFlight) flightGot++ }
+                if (win != null) { got++; if (onFlight) flightGot++; if (firstFit < 0 && i >= (lo - GRACE)) firstFit = i }
             }
             b.addParts(taken.rows[i]?.let { Windows.ringRows(it, rect, frameW, frameH, rowStep) },
                 win, if (i in wanted) crops[i] else null)
@@ -250,7 +218,7 @@ class RingSim(
         val edges = if (fromRoom == null) -1.0 else edgeRms(taken, rect, fromRoom, n)
         val note = (if (fromRoom != null) "scene background (${scene.ready}/${scene.strips} strips, ${scene.taken} readings, edges %.1f, ".format(edges) else "") +
             "ring ${sideUsed}px -> ${side}x$side windows, flight $flightGot of $flightNeed (all $got of $need), " +
-            "off centre: median $med, 90th $p90, worst fitted $worstOk, worst $worst; held ${taken.have} of $n"
+            "first fitted ${if (firstFit < 0) "never" else "${firstFit - (lo - GRACE)} frames"} after the track's first point, off centre: median $med, 90th $p90, worst fitted $worstOk, worst $worst; held ${taken.have} of $n"
         return if (flightNeed == 0 || flightGot < flightNeed * 3 / 4) Built(null, "$note: NOT USED", flightGot, flightNeed, worst)
         else Built(b, note, flightGot, flightNeed, worst)
     }

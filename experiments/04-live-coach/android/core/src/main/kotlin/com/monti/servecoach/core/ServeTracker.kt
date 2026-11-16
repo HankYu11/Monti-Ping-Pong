@@ -267,7 +267,7 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
         for (tr in active) { if (i - tr.last()[0] <= maxGap) still.add(tr) else finish(tr, i) }
         for ((j, c) in cs.withIndex()) if (j !in used) still.add(Track().also { it.pts.add(floatArrayOf(i.toFloat(), c[0], c[1], c[2])) })
         active = still
-        liveTracks = active.mapNotNull { if (it.pts.size >= 4) ArrayList<FloatArray>(it.pts) else null }
+        liveTracks = active.mapNotNull { if (it.pts.size >= livePoints) ArrayList<FloatArray>(it.pts) else null }
     }
 
     /**
@@ -280,6 +280,8 @@ class ServeTracker(val w: Int, val h: Int, private val fps: Int = 240) {
      * can be shallow, since a point never changes once it is added.
      */
     @Volatile var liveTracks: List<List<FloatArray>> = emptyList(); private set
+    /** the points a track needs before it is published in [liveTracks]: see [LiveAim.MIN_POINTS] */
+    @Volatile var livePoints = LiveAim.MIN_POINTS
 
     private fun finish(tr: Track, now: Long) {
         if (tr.pts.size >= 6) { recent.addLast(tr); while (recent.size > 30) recent.removeFirst() }

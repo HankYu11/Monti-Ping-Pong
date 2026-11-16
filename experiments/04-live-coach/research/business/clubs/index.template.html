@@ -64,6 +64,8 @@ td.name{min-width:9em}
 table.clubs td:nth-child(3){white-space:nowrap}
 td.name b{display:block}
 td.name .meta{font-size:12px;color:var(--muted)}
+.chk{display:flex;align-items:center;gap:6px;font-size:14px}
+.chip.yt{background:none;border:1px solid var(--ball);color:var(--ball);margin:2px 0 4px;font-size:11px}
 .chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:var(--chip);white-space:nowrap}
 .prio{font-family:var(--mono);font-weight:500;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
 .prio.A{color:var(--ball);border-color:var(--ball)}
@@ -186,14 +188,15 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
     <h2 id="h-list">Clubs and coaching places</h2>
     <span class="trackmsg" id="trackmsg">Loading the tracker…</span>
   </div>
-  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A1 = Taipei studio or chain with its own YouTube channel (first choice), A = other Taipei studios and chains, B = other Taipei and New Taipei studios, C = the rest. Emails marked in notes as "search snippet" need checking before use. Status and notes save for everyone who can edit this page.</p>
+  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A1 = club or coach in Taipei or New Taipei with its own YouTube channel (first choice), A = other Taipei studios, chains and coaches, B = other Taipei and New Taipei studios, C = the rest. Emails marked in notes as "search snippet" need checking before use. Status and notes save for everyone who can edit this page.</p>
   <div class="toolbar">
     <label for="q" class="eyebrow" hidden>Search</label>
     <input type="search" id="q" placeholder="Search name, district, offer…" aria-label="Search clubs">
     <select id="fcity" aria-label="City"><option value="">All cities</option></select>
     <select id="ftype" aria-label="Type"><option value="">All types</option></select>
-    <select id="fprio" aria-label="Priority"><option value="">All priorities</option><option value="A1">A1 (has YouTube)</option><option>A</option><option>B</option><option>C</option></select>
+    <select id="fprio" aria-label="Priority"><option value="">All priorities</option><option value="A1">A1 (YouTube, Taipei area)</option><option>A</option><option>B</option><option>C</option></select>
     <select id="fstatus" aria-label="Status"><option value="">All statuses</option></select>
+    <label class="chk"><input type="checkbox" id="fyt"> Has YouTube</label>
     <button id="copycsv" type="button">Copy CSV</button>
     <button id="savecsv" type="button" hidden>Save CSV</button>
   </div>
@@ -210,6 +213,14 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
   <p class="trackmsg" id="count"></p>
 </section>
 
+<section aria-labelledby="h-cre">
+  <h2 id="h-cre">Table tennis YouTubers</h2>
+  <p class="trackmsg">Taiwanese creators found by searching YouTube for 桌球教學, 乒乓球教學, 桌球教室 and similar terms (16 Nov 2026). Possible partners for a demo video, not customers. Contacts are only what each channel's description publishes. Subscriber counts and last-upload ages come from YouTube's own pages and change quickly.</p>
+  <div class="tablebox"><table class="clubs" id="creators" style="min-width:900px">
+    <thead><tr><th>Channel</th><th>Kind</th><th>Subscribers</th><th>Videos</th><th>Last upload</th><th>Contact (published)</th><th>Why</th></tr></thead>
+    <tbody id="cbody"></tbody></table></div>
+</section>
+
 <section aria-labelledby="h-msg">
   <h2 id="h-msg">First messages</h2>
   <p class="trackmsg">Drafts in Traditional Chinese. Replace 〔 〕 before sending. Nothing has been sent.</p>
@@ -224,6 +235,7 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
 <script>
 const CLUBS = /*CLUBS*/[];
 const MSGS = /*MSGS*/[];
+const CREATORS = /*CREATORS*/[];
 const STATUSES = [["","Not contacted"],["messaged","Messaged"],["replied","Replied"],["demo_booked","Demo booked"],["demo_done","Demo done"],["pilot","Pilot"],["paying","Paying"],["not_now","Not now"]];
 const SLABEL = Object.fromEntries(STATUSES);
 let track = {};        // id -> {status, note, version-less}
@@ -267,6 +279,7 @@ function rows(){
     if (fc && c.city!==fc) return false;
     if (ft && c.type!==ft) return false;
     if (fp && c.prio!==fp) return false;
+    if ($("#fyt").checked && !c.youtube) return false;
     if (fs && (fs==="none" ? s!=="" : s!==fs)) return false;
     if (q && !(c.name+" "+c.district+" "+c.offer+" "+c.ages+" "+c.notes).toLowerCase().includes(q)) return false;
     return true;
@@ -286,7 +299,7 @@ function render(){
     const opts = STATUSES.map(([k,l])=>`<option value="${k}"${(t.status||"")===k?" selected":""}>${l}</option>`).join("");
     return `<tr data-id="${esc(c.id)}">
       <td><span class="prio ${esc(c.prio)}">${esc(c.prio)}</span></td>
-      <td class="name"><b>${esc(c.name)}</b><span class="meta">${esc(c.district)}${c.tables?" · "+esc(c.tables)+" tables":""}</span></td>
+      <td class="name"><b>${esc(c.name)}</b>${c.youtube?'<span class="chip yt">YouTube</span>':""}<span class="meta">${esc(c.district)}${c.tables?" · "+esc(c.tables)+" tables":""}</span></td>
       <td>${esc(c.city)}</td>
       <td><span class="chip">${esc(c.type)}</span></td>
       <td class="offer">${esc(c.offer)}${c.ages?`<div class="trackmsg">${esc(c.ages)}</div>`:""}${c.notes?`<div class="trackmsg">${esc(c.notes)}</div>`:""}</td>
@@ -300,7 +313,7 @@ function render(){
   stats();
 }
 
-["#q","#fcity","#ftype","#fprio","#fstatus"].forEach(s=>$(s).addEventListener("input",render));
+["#q","#fcity","#ftype","#fprio","#fstatus","#fyt"].forEach(s=>$(s).addEventListener("input",render));
 document.querySelectorAll("table.clubs th").forEach(th=>{ th.tabIndex=0;
   const go=()=>{ if (sortK===th.dataset.k) sortDir*=-1; else {sortK=th.dataset.k; sortDir=1;} render(); };
   th.addEventListener("click",go); th.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();go();} });
@@ -337,6 +350,7 @@ $("#msgs").addEventListener("click", e=>{
 });
 
 render();
+$("#cbody").innerHTML = CREATORS.map(c=>`<tr><td class="name"><b>${link(c.youtube, c.name)}</b></td><td>${esc(c.kind)}</td><td class="num">${Number(c.subscribers).toLocaleString("en")}</td><td class="num">${esc(c.videos)}</td><td>${esc(c.last_upload)}</td><td><div class="contact">${esc(c.contact_published)}</div></td><td class="offer">${esc(c.note)}</td></tr>`).join("");
 
 (async ()=>{
   const timer = setTimeout(()=>{ if(!db) $("#trackmsg").textContent = "Tracker not available in this view. The list still works."; }, 10000);

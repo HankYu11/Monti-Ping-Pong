@@ -11,7 +11,7 @@ COLS = ["name","city","district","type","offer","ages","tables","website","faceb
 OUT_COLS = ["id","prio"] + COLS
 CITY_ORDER = ["台北市","新北市","桃園市","台中市","臺南市","高雄市"]
 CITY_CODE = {"台北市":"tpe","新北市":"ntpc","桃園市":"tyn","台中市":"txg","臺南市":"tnn","高雄市":"khh"}
-TYPE_ORDER = ["chain","private studio","sports centre","school team","community club","association"]
+TYPE_ORDER = ["chain","private studio","independent coach","sports centre","school team","community club","association"]
 
 def norm_city(c):
     c = c.strip().replace("臺北","台北").replace("臺中","台中").replace("台南","臺南")
@@ -19,8 +19,9 @@ def norm_city(c):
 
 def prio(r):
     t = r["type"]
-    if r["city"] == "台北市" and t in ("private studio","chain"): return "A1" if r.get("youtube") else "A"
-    if r["city"] == "台北市" or (r["city"] == "新北市" and t in ("private studio","chain")): return "B"
+    if r["city"] in ("台北市","新北市") and r.get("youtube"): return "A1"
+    if r["city"] == "台北市" and t in ("private studio","chain","independent coach"): return "A"
+    if r["city"] == "台北市" or (r["city"] == "新北市" and t in ("private studio","chain","independent coach")): return "B"
     return "C"
 
 def load_raw(paths):
@@ -72,7 +73,8 @@ def build():
     for i, r in enumerate(rows): r["idx"] = i
     tpl = (HERE/"index.template.html").read_text(encoding="utf-8")
     js = lambda o: json.dumps(o, ensure_ascii=False).replace("</", "<\\/")
-    html = tpl.replace("/*CLUBS*/[]", js(rows)).replace("/*MSGS*/[]", js(messages()))
+    creators = list(csv.DictReader(open(HERE/"creators.csv", encoding="utf-8-sig")))
+    html = tpl.replace("/*CLUBS*/[]", js(rows)).replace("/*MSGS*/[]", js(messages())).replace("/*CREATORS*/[]", js(creators))
     (HERE/"index.html").write_text(html, encoding="utf-8")
     by = {}
     for r in rows: by[r["city"]] = by.get(r["city"], 0) + 1

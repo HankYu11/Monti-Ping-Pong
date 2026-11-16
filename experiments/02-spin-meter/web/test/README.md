@@ -17,6 +17,7 @@ node test/guard.mjs      /tmp/clips/k_*.mp4 # what may be measured along a hande
 bash test/make_gyro_clips.sh /tmp/gyro      # pairs that differ only in which way they drill
 node test/gyrosign.mjs       /tmp/gyro/*.mp4 # the gyro's direction, not just its size
 
+node test/synthpole.mjs                                           # no clips, no browser: CI runs this one
 python3 test/capsanity.py  Session_*/serve*.json                  # do the headers agree with themselves?
 python3 test/wincheck.py   serve01.win.cap ...                    # is the ball actually inside the windows?
 python3 test/capfromclip.py serve01.json serve01.mp4 serve01.cap   # a real serve, off the phone
@@ -27,6 +28,26 @@ node test/capprof.mjs   serve01.cap 3                             # where the en
 
 `make_clips.sh` writes `<clip>.json` beside each clip with the true spin, the axis and the
 ball's track — the track a perfect live tracker would hand the engine.
+
+## synthpole.mjs — the light-flicker fix on tracks with a known answer
+
+Plain Node, no Chromium, no clips, no npm install: it loads `engine.js` directly and calls the
+rate scan on synthetic *pole tracks* (the per-frame direction of the black half that
+`measurePole` hands on), built from a known spin. It is the one harness here that CI runs
+(`.github/workflows/live-coach-tests.yml`).
+
+- A clean half-black ball at 14-63 rev/s, three axes, with and without missing frames, reads its
+  spin within 2% and is called clear.
+- The same 57 rev/s ball plus a lean locked to 120 Hz lights (119.12 rev/s on the engine's clock,
+  as a "240 fps" camera delivering 238.25 sees it) reads the lights raw (~119 rev/s, as live
+  0.13.19 did); the guard (`lightFlicker` / `isClear`) refuses that reading; `lightWobble` finds
+  the wobble at 120 Hz, removes it, and the cleaned pole reads 57 within 2%. A 100 Hz case too.
+- Without flicker `lightWobble` leaves the pole alone; the band edges and `isClear`'s other
+  refusals are pinned.
+
+With the fix reverted (`WOBBLE_SHARE` out of reach, `!r.lights` dropped from `isClear`) 22 checks
+fail. What it cannot tell you is whether real pixels under real lights make a pole like these:
+that is what `capfromclip.py` + `capcheck.mjs` on a saved session are for.
 
 ## bench.mjs — accuracy and time on a whole clip
 

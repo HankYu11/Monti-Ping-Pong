@@ -1053,7 +1053,8 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ report
     private fun log(kind: String, text: String) {
         events.put(JSONObject().put("t", SystemClock.uptimeMillis()).put("kind", kind).put("text", text))
-        if (kind == "error") Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        // errors always reach the report; on screen only with the developer row open (a clean demo screen)
+        if (kind == "error" && ::screen.isInitialized && screen.devMode) Toast.makeText(this, text, Toast.LENGTH_LONG).show()
     }
 
     /** the counters as they stand, into [report]: shared by the file and the clipboard */

@@ -41,7 +41,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     val frame = HudFrame(ctx)
     // 0.13.22 (review 16 Nov): sized for the table, 2-3 m away, not for a hand. The state line was
     // 12.5 sp, the coaching line 12, the qualifier 10.5; only the number could be read.
-    val stateText = tv(20f, monoMed, Hud.CYAN, 0.1f).apply { text = "● STARTING…" }
+    // one line that shrinks (down to 12 sp) rather than run into the readout column on the right
+    val stateText = tv(20f, monoMed, Hud.CYAN, 0.1f).apply { text = "● STARTING…"; maxLines = 1
+        setAutoSizeTextTypeUniformWithConfiguration(12, 20, 1, android.util.TypedValue.COMPLEX_UNIT_SP) }
     val serveLabel = tv(13f, mono, Hud.DIM, 0.18f).apply { text = "SPIN RATE" }
     // a 400 dp column leaves about 270 dp beside the 112 dp ball: room for 64 sp
     val bigText = tv(64f, Hud.display(ctx, 300), Hud.CYAN).apply { text = "----"; setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.argb(150, 95, 242, 255)) }
@@ -87,6 +89,8 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     private lateinit var col: LinearLayout
     /** test video, report, chip windows: the developer's tools, hidden until the version line is long-pressed */
     private lateinit var devTools: LinearLayout
+    /** the long-press developer row is open: error toasts show only then */
+    val devMode get() = devTools.visibility == View.VISIBLE
     private lateinit var ballRow: LinearLayout
     /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
     var source = "SERVE"
@@ -95,7 +99,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(flash, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        root.addView(stateText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { leftMargin = dp(40); topMargin = dp(20) })
+        root.addView(stateText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30), Gravity.TOP or Gravity.START).apply { leftMargin = dp(40); topMargin = dp(20); rightMargin = dp(400 + 16) })
 
         col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.START

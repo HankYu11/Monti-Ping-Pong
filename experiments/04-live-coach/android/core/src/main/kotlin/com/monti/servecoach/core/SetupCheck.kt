@@ -57,6 +57,14 @@ object SetupCheck {
     fun isBackground(share: Float, topEdge: Float, bottomEdge: Float) = share > 0.60f || topEdge >= 0.5f || bottomEdge >= 0.9f
 
     /**
+     * A table seen from anywhere a phone on a tripod stands is wider than it is tall, even from its
+     * end (that view still reads 1.2 and up; END_ON advice is for under 1.8). A taller patch is a
+     * door, a curtain or a shirt: at home, a blue door curtain (aspect 0.4-1.0) passed as a table
+     * on most frames of the 15 Nov sessions and drew "Turn to face the side of the table".
+     */
+    const val MIN_ASPECT = 1.1f
+
+    /**
      * The table: the largest patch of one table colour (the near table; tables behind, shirts are
      * smaller) that isn't a wall or a floor ([isBackground]).
      */
@@ -94,8 +102,10 @@ object SetupCheck {
                 if (size < n / 200 || size <= bestSize) continue          // under half a percent: no table
                 val share = size.toFloat() / n
                 if (isBackground(share, topRow.toFloat() / w, bottomRow.toFloat() / w)) continue
+                val t = Table(share, x0.toFloat() / w, y0.toFloat() / h, (x1 + 1).toFloat() / w, (y1 + 1).toFloat() / h, c)
+                if (t.aspect < MIN_ASPECT) continue                     // taller than wide: a door, a curtain, a shirt
                 bestSize = size
-                best = Table(share, x0.toFloat() / w, y0.toFloat() / h, (x1 + 1).toFloat() / w, (y1 + 1).toFloat() / h, c)
+                best = t
             }
         }
         return best

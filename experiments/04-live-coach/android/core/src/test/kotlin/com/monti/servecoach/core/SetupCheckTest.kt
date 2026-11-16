@@ -117,6 +117,12 @@ class SetupCheckTest {
         assertNull(table(pic(box(0f, 0.6f, 1f, 1f) to BLUE)))
     }
 
+    @Test fun aTallPatchIsNotATable() {
+        // a door curtain beside the player: blue, 25% wide, 60% tall (15 Nov home sessions)
+        val (a, t) = advise(pic(box(0.15f, 0.15f, 0.40f, 0.75f) to BLUE))
+        assertNull(t); assertEquals(SetupCheck.Kind.NO_TABLE, a.kind)
+    }
+
     @Test fun aColourFillingThePictureIsNotATable() {
         assertNull(table(pic(box(0f, 0f, 1f, 1f) to GREEN)))
         assertNull(table(pic(box(0.02f, 0.05f, 0.98f, 0.95f) to BLUE)))   // 85%, edges not touched

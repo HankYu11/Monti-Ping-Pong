@@ -7,8 +7,8 @@ import csv, json, re, sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
-COLS = ["name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","youtube","source_url","notes"]
-OUT_COLS = ["id","prio"] + COLS
+COLS = ["name","city","district","type","offer","ages","tables","website","facebook","instagram","line","phone","email","youtube","address","other_contact","contact_check","source_url","notes"]
+OUT_COLS = ["name","city","district","type","offer","ages","tables","website","facebook","instagram","line","phone","email","youtube","address","other_contact","contact_check","source_url","notes"] + COLS
 CITY_ORDER = ["台北市","新北市","桃園市","台中市","臺南市","高雄市"]
 CITY_CODE = {"台北市":"tpe","新北市":"ntpc","桃園市":"tyn","台中市":"txg","臺南市":"tnn","高雄市":"khh"}
 TYPE_ORDER = ["chain","private studio","independent coach","sports centre","school team","community club","association"]

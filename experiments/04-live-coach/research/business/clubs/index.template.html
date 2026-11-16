@@ -64,6 +64,10 @@ td.name{min-width:9em}
 table.clubs td:nth-child(3){white-space:nowrap}
 td.name b{display:block}
 td.name .meta{font-size:12px;color:var(--muted)}
+.addr{color:var(--muted)}
+.other{font-size:12px}
+.check{color:var(--warn);font-size:12px}
+button.copyc{justify-self:start;font:inherit;font-size:12px;padding:2px 8px;margin-top:4px;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--fg)}
 .chk{display:flex;align-items:center;gap:6px;font-size:14px}
 .chip.yt{background:none;border:1px solid var(--ball);color:var(--ball);margin:2px 0 4px;font-size:11px}
 .chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:var(--chip);white-space:nowrap}
@@ -188,7 +192,7 @@ footer{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
     <h2 id="h-list">Clubs and coaching places</h2>
     <span class="trackmsg" id="trackmsg">Loading the tracker…</span>
   </div>
-  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; check them before use. Priority: A1 = club or coach in Taipei or New Taipei with its own YouTube channel (first choice), A = other Taipei studios, chains and coaches, B = other Taipei and New Taipei studios, C = the rest. Emails marked in notes as "search snippet" need checking before use. Status and notes save for everyone who can edit this page.</p>
+  <p class="trackmsg">Every entry links to the page it came from. Contacts are only what those pages publish; anything marked ⚠ needs checking before use. "Copy contact" copies one club's full contact card. Priority: A1 = club or coach in Taipei or New Taipei with its own YouTube channel (first choice), A = other Taipei studios, chains and coaches, B = other Taipei and New Taipei studios, C = the rest. Emails marked in notes as "search snippet" need checking before use. Status and notes save for everyone who can edit this page.</p>
   <div class="toolbar">
     <label for="q" class="eyebrow" hidden>Search</label>
     <input type="search" id="q" placeholder="Search name, district, offer…" aria-label="Search clubs">
@@ -247,6 +251,17 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 const link = (u, t) => !u ? "" : /^https?:\/\//.test(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`
   : /^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(u) ? `<a href="https://${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>` : `<span>${esc(t)}: ${esc(u)}</span>`;
 
+const linkify = t => esc(t).replace(/https?:\/\/[^\s;]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u.length>40?u.slice(0,38)+"…":u}</a>`);
+function card(c){
+  const L=[c.name, [c.city,c.district].filter(Boolean).join(" "), c.address&&("地址 "+c.address), c.phone&&("電話 "+c.phone), c.email&&("Email "+c.email),
+    c.line&&("LINE "+c.line), c.website&&("網站 "+c.website), c.facebook&&("FB "+c.facebook), c.instagram&&("IG "+c.instagram), c.youtube&&("YouTube "+c.youtube),
+    c.other_contact&&("其他 "+c.other_contact), c.contact_check&&("⚠ "+c.contact_check), "來源 "+c.source_url];
+  return L.filter(Boolean).join("\n");
+}
+function copyText(btn, text, label){
+  navigator.clipboard.writeText(text).then(()=>{ btn.textContent="Copied"; setTimeout(()=>btn.textContent=label,1500); })
+    .catch(()=>{ btn.textContent="Copy blocked"; setTimeout(()=>btn.textContent=label,2000); });
+}
 function fillSelect(sel, vals){ for (const v of vals){ const o=document.createElement("option"); o.value=v[0]; o.textContent=v[1]; sel.appendChild(o);} }
 fillSelect($("#fcity"), [...new Set(CLUBS.map(c=>c.city))].map(v=>[v,v]));
 fillSelect($("#ftype"), [...new Set(CLUBS.map(c=>c.type))].sort().map(v=>[v,v]));
@@ -267,8 +282,13 @@ function contactHtml(c){
   if (c.line) parts.push(c.line.startsWith("http") ? link(c.line,"LINE") : "LINE " + esc(c.line));
   if (c.phone) parts.push(`<span class="num">${esc(c.phone)}</span>`);
   if (c.email) parts.push(`<span class="num">${esc(c.email)}</span>`);
+  if (c.instagram) parts.push(link(c.instagram,"Instagram"));
+  if (c.address) parts.push(`<span class="addr">${esc(c.address)}</span>`);
+  if (c.other_contact) parts.push(`<span class="other">${linkify(c.other_contact)}</span>`);
+  if (c.contact_check) parts.push(`<span class="check">⚠ ${esc(c.contact_check)}</span>`);
   (c.youtube||"").split(";").map(x=>x.trim()).filter(Boolean).forEach((u,i)=>parts.push(link(u, i?"YouTube 2":"YouTube")));
-  parts.push(link(c.source_url,"Source"));
+  (c.source_url||"").split(";").map(x=>x.trim()).filter(Boolean).forEach((u,i)=>parts.push(link(u, i?"Source "+(i+1):"Source")));
+  parts.push(`<button type="button" class="copyc" data-copy="${esc(c.id)}">Copy contact</button>`);
   return `<div class="contact">${parts.filter(Boolean).join("")}</div>`;
 }
 
@@ -281,7 +301,7 @@ function rows(){
     if (fp && c.prio!==fp) return false;
     if ($("#fyt").checked && !c.youtube) return false;
     if (fs && (fs==="none" ? s!=="" : s!==fs)) return false;
-    if (q && !(c.name+" "+c.district+" "+c.offer+" "+c.ages+" "+c.notes).toLowerCase().includes(q)) return false;
+    if (q && !(c.name+" "+c.district+" "+c.offer+" "+c.ages+" "+c.notes+" "+c.address+" "+c.email+" "+c.phone).toLowerCase().includes(q)) return false;
     return true;
   });
   const PR = {A1:0,A:1,B:2,C:3};
@@ -325,13 +345,17 @@ async function save(id, patch){
   try { await db.collection("pipeline").doc(id).set({...track[id], updatedAt: new Date().toISOString()}); $("#trackmsg").textContent = "Saved."; }
   catch(e){ $("#trackmsg").textContent = "Could not save (" + (e?.code||"error") + "). Your change shows here but was not stored."; }
 }
+$("#tbody").addEventListener("click", e=>{
+  const id = e.target.dataset?.copy; if (!id) return;
+  const c = CLUBS.find(x=>x.id===id); if (c) copyText(e.target, card(c), "Copy contact");
+});
 $("#tbody").addEventListener("change", e=>{
   const tr = e.target.closest("tr"); if(!tr) return; const id = tr.dataset.id;
   if (e.target.tagName==="SELECT"){ e.target.dataset.s = e.target.value; save(id,{status:e.target.value}); stats(); }
   else if (e.target.classList.contains("note")) save(id,{note:e.target.value.slice(0,300)});
 });
 
-const CSV_COLS = ["id","prio","name","city","district","type","offer","ages","tables","website","facebook","line","phone","email","youtube","source_url","notes"];
+const CSV_COLS = ["id","prio","name","city","district","type","offer","ages","tables","website","facebook","instagram","line","phone","email","youtube","address","other_contact","contact_check","source_url","notes"];
 function csv(){
   const q = v => `"${String(v??"").replace(/"/g,'""')}"`;
   return [CSV_COLS.concat(["status","note"]).join(","), ...CLUBS.map(c=>CSV_COLS.map(k=>q(c[k])).concat([q(SLABEL[track[c.id]?.status||""]), q(track[c.id]?.note)]).join(","))].join("\n");
@@ -350,7 +374,7 @@ $("#msgs").addEventListener("click", e=>{
 });
 
 render();
-$("#cbody").innerHTML = CREATORS.map(c=>`<tr><td class="name"><b>${link(c.youtube, c.name)}</b></td><td>${esc(c.kind)}</td><td class="num">${Number(c.subscribers).toLocaleString("en")}</td><td class="num">${esc(c.videos)}</td><td>${esc(c.last_upload)}</td><td><div class="contact">${esc(c.contact_published)}</div></td><td class="offer">${esc(c.note)}</td></tr>`).join("");
+$("#cbody").innerHTML = CREATORS.map(c=>`<tr><td class="name"><b>${link(c.youtube, c.name)}</b></td><td>${esc(c.kind)}</td><td class="num">${Number(c.subscribers).toLocaleString("en")}</td><td class="num">${esc(c.videos)}</td><td>${esc(c.last_upload)}</td><td><div class="contact">${linkify(c.contact_published)}</div></td><td class="offer">${esc(c.note)}</td></tr>`).join("");
 
 (async ()=>{
   const timer = setTimeout(()=>{ if(!db) $("#trackmsg").textContent = "Tracker not available in this view. The list still works."; }, 10000);

@@ -39,17 +39,36 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     val root = FrameLayout(ctx).apply { setBackgroundColor(Color.BLACK) }
     val preview = SurfaceView(ctx)
     val frame = HudFrame(ctx)
-    val stateText = tv(12.5f, monoMed, Hud.CYAN, 0.12f).apply { text = "● STARTING…" }
-    val serveLabel = tv(11f, mono, Hud.DIM, 0.2f).apply { text = "SPIN RATE" }
-    // beside a 116 dp ball there is about 150 dp for the number, so 48 sp, not the old 64
-    val bigText = tv(48f, Hud.display(ctx, 300), Hud.CYAN).apply { text = "----"; setShadowLayer(dp(11).toFloat(), 0f, 0f, Color.argb(150, 95, 242, 255)) }
-    val typeText = tv(17f, Hud.display(ctx, 700), Hud.WHITE, 0.1f)
-    val qualText = tv(10.5f, mono, Hud.DIM, 0.04f)
+    // 0.13.22 (review 16 Nov): sized for the table, 2-3 m away, not for a hand. The state line was
+    // 12.5 sp, the coaching line 12, the qualifier 10.5; only the number could be read.
+    // one line that shrinks (down to 12 sp) rather than run into the readout column on the right
+    val stateText = tv(20f, monoMed, Hud.CYAN, 0.1f).apply { text = "● STARTING…"; maxLines = 1
+        setAutoSizeTextTypeUniformWithConfiguration(12, 20, 1, android.util.TypedValue.COMPLEX_UNIT_SP) }
+    val serveLabel = tv(13f, mono, Hud.DIM, 0.18f).apply { text = "SPIN RATE" }
+    // a 400 dp column leaves about 270 dp beside the 112 dp ball: room for 64 sp
+    val bigText = tv(64f, Hud.display(ctx, 300), Hud.CYAN).apply { text = "----"; setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.argb(150, 95, 242, 255)) }
+    /** the outcome, the beginner's line: "STRONG BACKSPIN". Shrinks to fit rather than wrap. */
+    val typeText = tv(28f, Hud.display(ctx, 700), Hud.WHITE, 0.06f).apply {
+        maxLines = 1
+        setAutoSizeTextTypeUniformWithConfiguration(16, 28, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+    }
+    val qualText = tv(14f, mono, Hud.DIM, 0.04f)
     val scale = SpinScale(ctx)
     val spinBall = SpinBall(ctx)
     val split = SpinSplit(ctx)
     /** setup advice, the AI coach, a video test's progress, or why a serve could not be read */
-    val coachText = tv(12f, mono, Color.argb(220, 225, 245, 250)).apply { text = "Checking the setup…" }
+    val coachText = tv(16f, mono, Color.argb(235, 235, 248, 252)).apply {
+        text = "Checking the setup…"; setLineSpacing(0f, 1.15f)
+        setPadding(dp(12), dp(9), dp(12), dp(10))
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(6).toFloat(); setColor(Color.argb(150, 0, 20, 30)); setStroke(dp(1), Color.argb(90, 95, 242, 255))
+        }
+    }
+    /** the screen-wide "ready" flash: a border round the whole picture, seen from across the table */
+    private val flash = View(ctx).apply {
+        alpha = 0f
+        background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(10), Hud.CYAN) }
+    }
     val statsText = tv(9.5f, mono, Hud.DIM)
     val startFace = HexDrawable(ctx.resources.displayMetrics.density)
     val startBtn = Button(ctx).apply {
@@ -67,6 +86,11 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     lateinit var aiButton: TextView; private set
     lateinit var windowsButton: TextView; private set
     private lateinit var bottomLeft: LinearLayout
+    private lateinit var col: LinearLayout
+    /** test video, report, chip windows: the developer's tools, hidden until the version line is long-pressed */
+    private lateinit var devTools: LinearLayout
+    /** the long-press developer row is open: error toasts show only then */
+    val devMode get() = devTools.visibility == View.VISIBLE
     private lateinit var ballRow: LinearLayout
     /** what a reading is labelled with: "SERVE", or "VIDEO TEST · SERVE" while testing with a video */
     var source = "SERVE"
@@ -74,11 +98,12 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     init {
         root.addView(preview, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(frame, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        root.addView(stateText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { leftMargin = dp(52); topMargin = dp(18) })
+        root.addView(flash, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(stateText, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30), Gravity.TOP or Gravity.START).apply { leftMargin = dp(40); topMargin = dp(20); rightMargin = dp(400 + 16) })
 
-        val col = LinearLayout(ctx).apply {
+        col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.START
-            setPadding(dp(8), dp(34), dp(46), dp(84))
+            setPadding(dp(8), dp(22), dp(36), dp(84))
         }
         col.addView(serveLabel)
         // the ball and the number side by side: one glance instead of two, and the scale tucks
@@ -88,18 +113,18 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         numbers.addView(scale, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
         ballRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            addView(spinBall, LinearLayout.LayoutParams(dp(116), ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(spinBall, LinearLayout.LayoutParams(dp(112), ViewGroup.LayoutParams.WRAP_CONTENT))
             addView(numbers, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
         }
         col.addView(ballRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
-        col.addView(typeText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) })
+        col.addView(typeText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(8) })
         col.addView(qualText)
-        col.addView(split, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        col.addView(coachText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
-        root.addView(col, FrameLayout.LayoutParams(dp(330), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+        col.addView(split, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        col.addView(coachText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+        root.addView(col, FrameLayout.LayoutParams(dp(400), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
 
-        root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46); bottomMargin = dp(26) })
-        root.addView(nextBtn, FrameLayout.LayoutParams(dp(160), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(46 + 176 + 14); bottomMargin = dp(26) })
+        root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(36); bottomMargin = dp(24) })
+        root.addView(nextBtn, FrameLayout.LayoutParams(dp(160), dp(48), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(40 + 176 + 14); bottomMargin = dp(24) })
         fun small(label: String, onTap: () -> Unit) = TextView(ctx).apply {
             text = label; textSize = 11f; typeface = monoMed; letterSpacing = 0.14f; setTextColor(Hud.CYAN)
             setPadding(dp(16), dp(8), dp(16), dp(8)); background = HexDrawable(ctx.resources.displayMetrics.density).apply { color = Hud.DIM }
@@ -107,22 +132,26 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         }
         // All three are used before a session and after it, never during: a serve is the only
         // thing on the screen while one runs.
-        aiButton = small("AI COACH: OFF", onAi)
+        // it helps place the phone, and only before Start: "AI COACH" promised more (review 16 Nov)
+        aiButton = small("SETUP ASSISTANT: OFF", onAi)
         // cutting the ball's window on the chip as the serve happens, instead of decoding the
         // serve again afterwards to cut it: new, so it is a choice and not yet the way it works
         windowsButton = small("CHIP WINDOWS: OFF", onWindows)
         val tools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        tools.addView(small("TEST VIDEO", onTest))
-        tools.addView(aiButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
-        tools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
-        val tools2 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-        tools2.addView(windowsButton)
+        tools.addView(aiButton)
+        // the developer's tools: out of a player's (and a demo's) way, a long press on the version
+        // line away for whoever needs them
+        devTools = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE }
+        devTools.addView(small("TEST VIDEO", onTest))
+        devTools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        devTools.addView(windowsButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        statsText.setOnLongClickListener { devTools.visibility = if (devTools.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
         bottomLeft = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             addView(statsText); addView(tools, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
-            addView(tools2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            addView(devTools, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
         }
-        root.addView(bottomLeft, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(52); bottomMargin = dp(26) })
+        root.addView(bottomLeft, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(40); bottomMargin = dp(24) })
         showSpin(null)
     }
 
@@ -131,7 +160,20 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     fun busy(on: Boolean) { spinBall.hold(on) }
     /** the HUD's colour for what is happening: cyan ready, amber measuring, red a problem */
     fun tone(c: Int) { stateText.setTextColor(c); frame.color = c }
+    /** ready for the next serve: the border flashes once, bright enough to see from the table */
+    fun readyCue() {
+        flash.animate().cancel()
+        flash.alpha = 0f
+        flash.animate().alpha(1f).setDuration(140).withEndAction { flash.animate().alpha(0f).setStartDelay(260).setDuration(700) }
+    }
     fun running(on: Boolean) {
+        // while serving, STOP and NEXT SERVE move to the bottom left (where the tools were), so the
+        // readout has the whole height of its column
+        (startBtn.layoutParams as FrameLayout.LayoutParams).apply {
+            gravity = Gravity.BOTTOM or (if (on) Gravity.START else Gravity.END)
+            leftMargin = if (on) dp(40) else 0; rightMargin = if (on) 0 else dp(36)
+        }.also { startBtn.layoutParams = it }
+        col.setPadding(dp(8), dp(22), dp(36), if (on) dp(14) else dp(84))
         startBtn.text = if (on) "STOP" else "START"
         val c = if (on) Hud.RED else Hud.CYAN
         startFace.color = c; startBtn.setTextColor(c)
@@ -143,15 +185,16 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
 
     /** a serve read: its number, RPM (to 10), what the spin is, any warning, and the spin to draw */
     fun reading(serve: Int, rpm: Int, type: String, coach: String, spin: Spin? = null, kmh: Int? = null) {
+        val t = type.lowercase(Locale.US)
         // The speed goes beside the serve's name rather than under the spin: 0.7.9 showed two
         // numbers the same size and the player called it "kinda confusing", and the one big
         // number is still the spin.
         serveLabel.text = "$source %02d".format(serve) + (kmh?.let { " · $it km/h" } ?: "")
         bigText.text = SpannableString("$rpm RPM").apply { setSpan(RelativeSizeSpan(0.3f), "$rpm".length, length, 0) }
-        val t = type.lowercase(Locale.US)
-        // the strength word lived here and on the scale; the scale keeps it. What is left is the
-        // kind of spin, with the qualifier under it instead of wrapping onto a second line.
-        typeText.text = t.substringBefore(" (").substringBefore(" + ").uppercase(Locale.US)
+        // the outcome in two words, strength and kind (0.13.22): the beginner's line, and what the
+        // voice says. 0.10 had dropped the strength here as the scale showed it, but a scale is
+        // read, and from the table a word is what lands.
+        typeText.text = SpinLevel.outcome(rpm, t).uppercase(Locale.US)
         qualText.text = qualifier(t, spin)
         scale.rpm = rpm
         showSpin(spin)
@@ -176,9 +219,9 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     /** the AI coach's words as they come (a "\n" ends its turn) */
     fun aiText(t: String) {
         if (t == "\n") { aiTalking = false; aiLine = StringBuilder(); return }
-        aiTalking = true; aiLine.append(t); message("AI COACH  ${aiLine.toString().trim()}")
+        aiTalking = true; aiLine.append(t); message("ASSISTANT  ${aiLine.toString().trim()}")
     }
-    fun aiState(on: Boolean) { aiButton.text = if (on) "AI COACH: ON" else "AI COACH: OFF"; if (!on) aiTalking = false }
+    fun aiState(on: Boolean) { aiButton.text = if (on) "SETUP ASSISTANT: ON" else "SETUP ASSISTANT: OFF"; if (!on) aiTalking = false }
     fun windowsState(on: Boolean) { windowsButton.text = if (on) "CHIP WINDOWS: ON" else "CHIP WINDOWS: OFF" }
 
     /** a video test started: the file's name, while its frames are read */

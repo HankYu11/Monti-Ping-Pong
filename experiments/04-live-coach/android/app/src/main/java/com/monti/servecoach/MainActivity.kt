@@ -1032,6 +1032,13 @@ class MainActivity : Activity() {
             writeMsOf.remove(id)?.let { r.put("writeMs", it) }
             // from "Got it" to the answer: the wait the player has
             spottedAt.remove(id)?.let { r.put("answerMs", SystemClock.uptimeMillis() - it) }
+            // how far across the picture the capture's track went, for an unread serve's cause (NoRead)
+            try {
+                val head = JSONObject(File(capDir, "cap_$id.json").readText())
+                val t = head.optJSONArray("track")
+                if (t != null) NoRead.crossed((0 until t.length()).map { t.getJSONArray(it).getDouble(1) }, head.optInt("W"))
+                    .takeIf { it.isFinite() }?.let { r.put("crossed", it) }
+            } catch (_: Exception) {}
             results.put(r)
             if (session.isNotEmpty() && mode != Mode.REPLAY) saveServeData(id, r, data)
             LivePipeline.writing.remove(id)
@@ -1127,7 +1134,7 @@ class MainActivity : Activity() {
             val err = if (r.isNull("error")) null else r.optString("error")
             val issues = sv?.optJSONArray("issues")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
             val cause = if (sv == null) null else NoRead.of(sv.optString("marking").takeIf { !sv.isNull("marking") },
-                sv.optDouble("toward", Double.NaN), issues, err)
+                sv.optDouble("toward", Double.NaN), issues, err, r.optDouble("crossed", Double.NaN))
             val (spoken, shown) = noReads.next(cause)
             log("unclear", "#${r.optInt("capture")}: $why" + (cause?.let { " -> ${it.cause}" } ?: ""))
             screen.noRead(r.optInt("capture"), if (cause != null) shown else "Couldn't read it: $why")

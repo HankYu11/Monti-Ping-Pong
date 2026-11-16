@@ -28,7 +28,7 @@ import kotlin.math.roundToInt
  * one vague thing in prose where the three-way split now says three measured ones. What is left
  * is the number, what kind of spin it is, what it is made of, and the ball showing it turn.
  */
-class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}, onNext: () -> Unit = {},
+class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {},
                 onWindows: () -> Unit = {}, onShareClips: () -> Unit = {}) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
@@ -77,13 +77,6 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         setTextColor(Hud.CYAN); background = startFace; stateListAnimator = null
         setOnClickListener { onStart() }
     }
-    /** while a session runs: ready for the next serve now, without waiting for this one's answer (a helper's button) */
-    val nextFace = HexDrawable(ctx.resources.displayMetrics.density)
-    val nextBtn = Button(ctx).apply {
-        text = "NEXT SERVE"; isAllCaps = false; textSize = 13f; typeface = Hud.display(ctx, 700); letterSpacing = 0.2f
-        setTextColor(Hud.CYAN); background = nextFace; stateListAnimator = null; visibility = View.GONE
-        setOnClickListener { onNext() }
-    }
     lateinit var aiButton: TextView; private set
     lateinit var windowsButton: TextView; private set
     /** the developer row's "offer to share clips" (off by default: the clips show the player) */
@@ -127,7 +120,6 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         root.addView(col, FrameLayout.LayoutParams(dp(400), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
 
         root.addView(startBtn, FrameLayout.LayoutParams(dp(176), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(36); bottomMargin = dp(24) })
-        root.addView(nextBtn, FrameLayout.LayoutParams(dp(160), dp(48), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(40 + 176 + 14); bottomMargin = dp(24) })
         fun small(label: String, onTap: () -> Unit) = TextView(ctx).apply {
             text = label; textSize = 11f; typeface = monoMed; letterSpacing = 0.14f; setTextColor(Hud.CYAN)
             setPadding(dp(16), dp(8), dp(16), dp(8)); background = HexDrawable(ctx.resources.displayMetrics.density).apply { color = Hud.DIM }
@@ -172,7 +164,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         flash.animate().alpha(1f).setDuration(140).withEndAction { flash.animate().alpha(0f).setStartDelay(260).setDuration(700) }
     }
     fun running(on: Boolean) {
-        // while serving, STOP and NEXT SERVE move to the bottom left (where the tools were), so the
+        // while serving, STOP moves to the bottom left (where the tools were), so the
         // readout has the whole height of its column
         (startBtn.layoutParams as FrameLayout.LayoutParams).apply {
             gravity = Gravity.BOTTOM or (if (on) Gravity.START else Gravity.END)
@@ -182,7 +174,6 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         startBtn.text = if (on) "STOP" else "START"
         val c = if (on) Hud.RED else Hud.CYAN
         startFace.color = c; startBtn.setTextColor(c)
-        nextBtn.visibility = if (on) View.VISIBLE else View.GONE
         // while serving, the screen carries the serve and nothing else: the tools and the stats
         // are both for the other side of a session
         bottomLeft.visibility = if (on) View.GONE else View.VISIBLE

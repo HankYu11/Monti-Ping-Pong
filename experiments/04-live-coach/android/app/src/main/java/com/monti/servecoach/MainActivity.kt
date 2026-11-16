@@ -404,7 +404,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { tap?.showOn(null) }
         })
         newSession()
-        sinceTip = 0; faults.clear()
+        tips.reset()
         latestSpotted = 0
         screen.source = "SERVE"
         mode = Mode.LIVE
@@ -912,25 +912,8 @@ class MainActivity : Activity() {
     }
 
     // ------------------------------------------------------------------ what to say
-    /** a tip every this many readable serves */
-    private val tipEvery = 3
-    private var sinceTip = 0
-    private val faults = HashMap<String, Int>()
-    /** this serve's fault counted; every [tipEvery] serves, the commonest since the last tip (none if all were good) */
-    private fun nextTip(kind: String): Pair<String, String>? {
-        if (kind.isNotEmpty() && kind != "good" && titles.containsKey(kind)) faults[kind] = (faults[kind] ?: 0) + 1
-        if (++sinceTip < tipEvery) return null
-        sinceTip = 0
-        val worst = faults.maxByOrNull { it.value }?.key
-        faults.clear()
-        return worst?.let { titles[it] }
-    }
-    private val titles = mapOf(
-        "thick" to ("You pushed the ball instead of brushing it" to "Open the face and brush along under the ball."),
-        "good" to ("Strong backspin" to "Keep this contact."),
-        "slip" to ("The ball slid on the rubber" to "Let the ball drop lower and brush slightly into it."),
-        "slow" to ("The brush was too slow" to "Accelerate through the contact: snap the wrist."),
-    )
+    /** a coaching tip every few readable serves, about the commonest fault since the last one */
+    private val tips = TipPicker()
 
     // ------------------------------------------------------------------ turn by turn (live)
     // Ready -> a serve spotted ("Got it", others ignored) -> its answer spoken -> Ready. Answers
@@ -1027,7 +1010,7 @@ class MainActivity : Activity() {
         val closer = if (ballPx in 1.0..24.0) "The ball is only ${ballPx.roundToInt()} px across: move the phone closer." else ""
         // a coaching tip every few readable serves, about the commonest fault since the last one
         // (PLAN.md: the outcome every serve, one cue now and then; 0.13.21 said a sentence a serve)
-        val tip = nextTip(kind)
+        val tip = tips.next(kind)
         // one number (0.7.9 showed rev/s and RPM side by side: "kinda confusing"): RPM, to the nearest 10
         val rpm = (rps * 6).roundToInt() * 10
         // the spin split, for the ball the HUD draws. gyro keeps its sign; its direction is only

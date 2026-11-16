@@ -2682,5 +2682,5 @@
     return analyzeReader(R, { captureFps: cap.fps || 240, rotation: 0 }, o, { name: "live", size: 0 }, tStart);
   }
 
-  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote } };
+  global.SpinMeter = { analyze, measureCapture, parseMp4, coach, COACH, _internals: { webCodecsReader, splitAtKinks, flightRule, ballisticRule, serveBuilder, dropMerged, stoppedAndFell, NET, windowsInto, framePlanes, lumaHalf, chromaHalf, percentile, polyfit, minEnclosingCircle, fitRotatingVector, spinComponents, spinLabel, gyroNote, lightWobble, lightFlicker, flickerBands, isClear } };
 })(typeof window !== "undefined" ? window : globalThis);

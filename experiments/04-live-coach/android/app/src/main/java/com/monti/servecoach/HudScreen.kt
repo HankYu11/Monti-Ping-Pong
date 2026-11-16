@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
  * is the number, what kind of spin it is, what it is made of, and the ball showing it turn.
  */
 class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Unit, onReport: () -> Unit, onAi: () -> Unit = {}, onNext: () -> Unit = {},
-                onWindows: () -> Unit = {}) {
+                onWindows: () -> Unit = {}, onShareClips: () -> Unit = {}) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private val mono = Hud.mono(ctx); private val monoMed = Hud.mono(ctx, medium = true)
     private fun tv(size: Float, face: Typeface, color: Int = Hud.CYAN, spacing: Float = 0f) = TextView(ctx).apply {
@@ -86,6 +86,8 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
     lateinit var aiButton: TextView; private set
     lateinit var windowsButton: TextView; private set
+    /** the developer row's "offer to share clips" (off by default: the clips show the player) */
+    lateinit var shareButton: TextView; private set
     private lateinit var bottomLeft: LinearLayout
     private lateinit var col: LinearLayout
     /** test video, report, chip windows: the developer's tools, hidden until the version line is long-pressed */
@@ -146,6 +148,8 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
         devTools.addView(small("TEST VIDEO", onTest))
         devTools.addView(small("REPORT", onReport), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         devTools.addView(windowsButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        shareButton = small("OFFER TO SHARE CLIPS: OFF", onShareClips)
+        devTools.addView(shareButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         statsText.setOnLongClickListener { devTools.visibility = if (devTools.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
         bottomLeft = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -242,6 +246,7 @@ class HudScreen(private val ctx: Context, onStart: () -> Unit, onTest: () -> Uni
     }
     fun aiState(on: Boolean) { aiButton.text = if (on) "SETUP ASSISTANT: ON" else "SETUP ASSISTANT: OFF"; if (!on) aiTalking = false }
     fun windowsState(on: Boolean) { windowsButton.text = if (on) "CHIP WINDOWS: ON" else "CHIP WINDOWS: OFF" }
+    fun shareState(on: Boolean) { shareButton.text = if (on) "OFFER TO SHARE CLIPS: ON" else "OFFER TO SHARE CLIPS: OFF" }
 
     /** a video test started: the file's name, while its frames are read */
     fun testStarted(name: String) {

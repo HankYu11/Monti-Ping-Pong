@@ -101,16 +101,23 @@ fun writeMp4(frames: List<EncodedFrame>, format: MediaFormat, toUs: Long, out: j
 /**
  * A video file's frames, replayed as if live. Their times and keyframe flags are kept in memory;
  * their bytes are copied once to a file in the app's cache and read back as they are needed
- * (SpilledFrame). Each test gets a file of its own and the previous ones are deleted here: a test's
- * captures and clips are still being written after its frames have played, and a file deleted while
- * open stays readable to whoever has it open, so nothing in flight loses its frames.
+ * (SpilledFrame). Each test gets a file of its own, unlinked as soon as it is open, so its space
+ * comes back the moment it is closed.
+ *
+ * The test that made it closes it ([close]), once its captures are done with it: the test's
+ * pipeline says when (LivePipeline.whenWorkersDone). It used to be closed by the NEXT test, on
+ * the reasoning that a test's captures were finished long before another could be started --
+ * which a second test started straight after the first is not, and its captures lost their
+ * frames part way ("replay spill ended early" / ClosedChannelException).
  */
-class FileFrames(context: android.content.Context, uri: android.net.Uri) : FrameStore {
+class FileFrames(context: android.content.Context, uri: android.net.Uri) : FrameStore, java.io.Closeable {
     val frames = ArrayList<EncodedFrame>()
     override var outputFormat: MediaFormat? = null; private set
     var captureFps = 240; private set
     /** how many bytes of video were copied to the cache instead of into memory */
     var spilledBytes = 0L; private set
+    /** the spill file, open from here until [close] */
+    private val ch: java.nio.channels.FileChannel
 
     init {
         val ex = android.media.MediaExtractor()
@@ -125,9 +132,7 @@ class FileFrames(context: android.content.Context, uri: android.net.Uri) : Frame
         val spill = java.io.File.createTempFile("frames", ".bin", dir)
         val ch = java.io.RandomAccessFile(spill, "rw").channel
         spill.delete()                           // gone from the folder now; readable while ch is open
-        // the previous test's file: its space comes back only when it is closed. Its captures were
-        // finished long before another test can be started.
-        synchronized(FileFrames) { runCatching { open?.close() }; open = ch }
+        this.ch = ch
         val buf = java.nio.ByteBuffer.allocateDirect(8 shl 20)
         val writer = FrameSpill(ch)
         try {
@@ -139,12 +144,14 @@ class FileFrames(context: android.content.Context, uri: android.net.Uri) : Frame
                 frames.add(writer.add(ex.sampleTime, ex.sampleFlags and android.media.MediaExtractor.SAMPLE_FLAG_SYNC != 0, buf))
                 ex.advance()
             }
-        } finally { ex.release() }
+        } catch (e: Throwable) { runCatching { ch.close() }; throw e }
+        finally { ex.release() }
         spilledBytes = writer.bytes
         captureFps = captureFpsOf(frames.map { it.ptsUs })
     }
 
     override fun between(fromUs: Long, toUs: Long) = framesBetween(frames, fromUs, toUs)
 
-    companion object { private var open: java.nio.channels.FileChannel? = null }
+    /** this test's spill file, closed and its space given back; its frames cannot be read after */
+    override fun close() { runCatching { ch.close() } }
 }

@@ -156,6 +156,8 @@ final class LiveCoach {
             DispatchQueue.main.async { self?.vc.captured(id, frames: n, writeMs: ms); self?.vc.log("capture", "#\(id): \(n) frames, written in \(ms) ms") }
             self?.saveClip(id, fromUs, toUs)
         }
+        p.pose = PoseWatcher(fps: c.fps)
+        p.onSkippedSpan = { [weak self] n, why, fromUs, toUs in self?.saveSkipped(n, why, fromUs, toUs) }
         pipeline = p
         p.start()
         let full = camera.fullRange
@@ -209,6 +211,7 @@ final class LiveCoach {
                                     "cameraHeld": camera.lockNote, "rejected": p.rejected]
             if let e = encoder { w["encoderFailures"] = e.failures }
             vc.report.extra["watching"] = w
+            if let pose = p.pose { vc.report.extra["pose"] = pose.reportJson }
         }
         pipeline?.stop(); pipeline = nil
         encoder?.stop(); encoder = nil
@@ -241,6 +244,20 @@ final class LiveCoach {
         let frames = enc.store.between(fromUs, toUs)
         if frames.isEmpty { return }
         save(String(format: "serve%02d.mp4", id), { url in try Encoder.writeClip(frames, format: fmt, to: url) }, clip: true)
+    }
+
+    /** a movement the tracker turned down (up to 30 a session): its clip, 0.5 s before to 0.3 s after */
+    private func saveSkipped(_ n: Int, _ why: String, _ fromUs: Int64, _ toUs: Int64) {
+        guard let enc = encoder else { return }
+        let slug = why.replacingOccurrences(of: "[^a-z]+", with: "-", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var waited = 0
+            while enc.store.newestUs < toUs + 300_000 && waited < 1500 { Thread.sleep(forTimeInterval: 0.02); waited += 20 }
+            guard let fmt = enc.store.format else { return }
+            let frames = enc.store.between(fromUs - 500_000, toUs + 300_000)
+            if frames.isEmpty { return }
+            DispatchQueue.main.async { self?.save("skipped\(n)_\(slug).mp4", { url in try Encoder.writeClip(frames, format: fmt, to: url) }, clip: true) }
+        }
     }
 
     func saveServeData(_ id: Int, _ r: [String: Any], _ data: Any?) {

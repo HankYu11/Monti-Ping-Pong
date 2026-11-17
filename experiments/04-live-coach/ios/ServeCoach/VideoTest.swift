@@ -31,6 +31,7 @@ final class VideoTest {
                 let frames = ff.store.all
                 log("replay", "\(frames.count) frames, \(ff.width)x\(ff.height), filmed at \(ff.captureFps) fps (\(nowMs() - t0) ms to read)")
                 let p = Pipeline(store: ff.store, blocking: true, captureFps: ff.captureFps, captureDir: captureDir, firstId: firstId)
+                p.pose = PoseWatcher(fps: ff.captureFps)
                 pipeline = p
                 p.onError = { e in self.log("error", e) }
                 p.onNote = { e in self.log("note", e) }
@@ -49,6 +50,7 @@ final class VideoTest {
                 let rejected = p.rejected
                 log("replay", "done: \(found) serve(s) spotted, tracker \(String(format: "%.1f", p.trackMsAvg)) ms a frame")
                 log("replay", "tracker turned down: \(rejected)")
+                if let pose = p.pose { log("replay", "pose: looked \(pose.looked), found a player \(pose.found), \(String(format: "%.1f", pose.msAvg)) ms a look, \(pose.rejected) not serves") }
                 p.stop()
                 DispatchQueue.main.async { if !self.cancelled { self.onFinished(found, rejected) } }
             } catch {

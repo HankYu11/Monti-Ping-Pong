@@ -28,6 +28,11 @@ final class Pipeline {
     var onCaptureStarted: ((Int, Int) -> Void)?            // id, frames guessed
     var onCapture: ((Int, Int, String, Int64, Int64, Int64) -> Void)?   // id, n, head, writeMs, fromUs, toUs
     var onNote: (String) -> Void = { _ in }
+    /** is the player walking? (PoseWatcher) A serve it vetoes is not spotted, measured or saved */
+    var pose: PoseWatcher?
+    /** a movement the tracker turned down, as a span of the recording: number, why, from, to (µs) (LivePipeline.watchSkips) */
+    var onSkippedSpan: ((Int, String, Int64, Int64) -> Void)?
+    private(set) var skippedClips = 0
     var onError: (String) -> Void = { _ in }
 
     private let queue: BlockingQueue<EncodedFrame?>
@@ -129,7 +134,7 @@ final class Pipeline {
             for q in qs { print("SCPRIME " + IosDump.shared.line(index: -1, q: q, found: nil)) }
         }
         guard let q = qs.first else { return }
-        let tr = tracker ?? ServeTracker(w: q.w, h: q.h, fps: Int32(captureFps / step))
+        let tr = tracker ?? watchSkips(ServeTracker(w: q.w, h: q.h, fps: Int32(captureFps / step)))
         tracker = tr
         tr.prime(spread: qs)
     }
@@ -197,7 +202,7 @@ final class Pipeline {
         let rows = Downsample.shared.rows(f: yuv)
         shrinkN += 1
         shrinkMsAvg = avg(shrinkMsAvg, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, shrinkN)
-        let tr = tracker ?? ServeTracker(w: rows.w, h: rows.h, fps: Int32(captureFps / step))
+        let tr = tracker ?? watchSkips(ServeTracker(w: rows.w, h: rows.h, fps: Int32(captureFps / step)))
         tracker = tr
         // the background learns from every 24th frame, before that frame's blobs are found
         var q0: Quarter?
@@ -213,6 +218,7 @@ final class Pipeline {
             let t = DispatchTime.now().uptimeNanoseconds
             let q = q0 ?? Downsample.shared.quarter(r: rows)
             let c = IosTrack.shared.find(d: d, q: q, bg: bg)
+            if index % 16 == 0, let pose = self?.pose { pose.offer(q, index * Int64(self?.step ?? 2)) }
             if Pipeline.dumpQ, let self { self.dumps.set(index, IosDump.shared.line(index: index, q: q, found: c)) }
             if let self { self.findMsAvg = self.avg(self.findMsAvg, Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6, index + 1) }
             fut.set(c)
@@ -250,12 +256,28 @@ final class Pipeline {
         }
     }
 
+    private func watchSkips(_ tr: ServeTracker) -> ServeTracker {
+        guard onSkippedSpan != nil else { return tr }
+        tr.onSkipped = { [weak self] f, l, why in
+            guard let self else { return }
+            let st = Int64(self.step)
+            let first = f.int64Value * st, last = l.int64Value * st + st - 1, dec = self.decoded
+            let ring = Int64(self.ptsRing.count)
+            guard !self.paused, self.skippedClips < 30, dec - first <= ring, first < dec else { return }
+            self.skippedClips += 1
+            let fromUs = self.ptsRing[Int(first % ring)] - 1, toUs = self.ptsRing[Int(min(last, dec - 1) % ring)] + 1
+            self.onSkippedSpan?(self.skippedClips, why, fromUs, toUs)
+        }
+        return tr
+    }
+
     // ---- a serve --------------------------------------------------------------------------
 
     private func onServe(_ tr: ServeTracker, _ serve: ServeTracker.Serve) {
         servesFound += 1
         let st = Int64(step)
         var first = serve.first * st, last = serve.last * st + st - 1
+        if let why = pose?.veto(first, last) { onNote("not a serve: \(why)"); return }
         if onSpotted != nil {
             if paused { ignoredWhileMeasuring += 1; onNote("a serve while the last one was being measured: ignored"); return }
             paused = true

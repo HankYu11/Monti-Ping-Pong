@@ -91,7 +91,9 @@ final class Pipeline {
 
     func stop() {
         running = false
-        _ = decoderDone.wait(timeout: .now() + 1); _ = linkerDone.wait(timeout: .now() + 1)
+        // the decoder thread runs only for a video test; live there is none to wait for
+        if blocking { _ = decoderDone.wait(timeout: .now() + 1) }
+        _ = linkerDone.wait(timeout: .now() + 1)
         finders.cancelAllOperations()
     }
 

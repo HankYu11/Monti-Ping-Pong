@@ -14,6 +14,7 @@ enum SelfTest {
         failed = 0; passed = 0
         spinBall()
         words()
+        fonts()
         print("SCTEST \(failed == 0 ? "OK" : "FAILED"): \(passed) passed, \(failed) failed")
         return failed == 0
     }
@@ -66,6 +67,13 @@ enum SelfTest {
         }
         check(hypot(SpinMath.axisOf(Spin(lift: 0, curve: 0, gyro: 46.3, dirKnown: true))![0], SpinMath.axisOf(Spin(lift: 0, curve: 0, gyro: 46.3, dirKnown: true))![1]) < 1e-9, "pure gyro has an axle")
         check(SpinMath.axisOf(Spin(lift: 0, curve: 0, gyro: 0, dirKnown: true)) == nil, "no spin must draw nothing")
+    }
+
+    // ---- the Android app's fonts, loaded (not the system's fallbacks) ----
+    private static func fonts() {
+        check(Hud.mono(12).fontName == "IBMPlexMono-Regular", "mono is \(Hud.mono(12).fontName)")
+        check(Hud.mono(12, medium: true).fontName == "IBMPlexMono-Medium", "mono medium is \(Hud.mono(12, medium: true).fontName)")
+        for w in [300, 600, 700] { check(Hud.display(w, 20).familyName == "Oxanium", "display \(w) is \(Hud.display(w, 20).familyName)") }
     }
 
     // ---- words ----

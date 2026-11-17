@@ -42,7 +42,7 @@ enum Hud {
     /** IBM Plex Mono, regular or medium */
     static func mono(_ size: CGFloat, medium: Bool = false) -> UIFont {
         registerFonts()
-        return UIFont(name: medium ? "IBMPlexMono-Medium" : "IBMPlexMono", size: size)
+        return UIFont(name: medium ? "IBMPlexMono-Medium" : "IBMPlexMono-Regular", size: size)
             ?? UIFont.monospacedSystemFont(ofSize: size, weight: medium ? .medium : .regular)
     }
 

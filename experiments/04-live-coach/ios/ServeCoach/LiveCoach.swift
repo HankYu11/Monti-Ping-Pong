@@ -93,6 +93,8 @@ final class LiveCoach {
                 if let e { self.previewing = false; self.vc.log("error", "camera error: \(e.localizedDescription)")
                     self.vc.screen.problem("The camera didn't open. Close other camera apps, then open Serve Coach again."); return }
                 self.vc.log("camera", "preview running")
+                // the preview's connection exists only once the camera has an input: landscape right, unrotated
+                if let conn = self.previewLayer?.connection, conn.isVideoRotationAngleSupported(0) { conn.videoRotationAngle = 0 }
                 if self.aiOn { self.startAi() }
             }
         }

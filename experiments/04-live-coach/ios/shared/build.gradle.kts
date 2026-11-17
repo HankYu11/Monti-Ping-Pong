@@ -13,7 +13,7 @@ val testSrc = tasks.register<Sync>("androidTests") {
 kotlin {
     val xcf = XCFramework("ServeCoachCore")
     listOf(iosArm64(), iosSimulatorArm64()).forEach {
-        it.binaries.framework { baseName = "ServeCoachCore"; isStatic = true; xcf.add(this) }
+        it.binaries.framework { baseName = "ServeCoachCore"; isStatic = true; binaryOption("bundleId", "com.monti.servecoach.core"); xcf.add(this) }
     }
     // in iosMain, not commonMain: the sources must see the JVM stand-ins in src/iosMain
     sourceSets {

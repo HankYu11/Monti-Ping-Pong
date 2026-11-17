@@ -1,5 +1,6 @@
 // java.io, as `core` uses it to write a capture file: File, FileOutputStream(...).buffered(n)
 // and DataOutputStream's write and big-endian writeInt.
+@file:OptIn(kotlin.experimental.ExperimentalObjCRefinement::class)
 package java.io
 
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -13,6 +14,7 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.toKString
 
+@kotlin.native.HiddenFromObjC
 class File(val path: String) {
     constructor(dir: File, name: String) : this(if (dir.path.isEmpty()) name else dir.path.trimEnd('/') + "/" + name)
     val absoluteFile: File get() = if (path.startsWith("/")) this else File(cwd().trimEnd('/') + (if (path.isEmpty()) "" else "/" + path))
@@ -31,6 +33,7 @@ private fun cwd(): String = kotlinx.cinterop.memScoped {
 
 /** the whole file */
 @OptIn(ExperimentalForeignApi::class)
+@kotlin.native.HiddenFromObjC
 fun readBytesOf(path: String): ByteArray {
     val f = fopen(path, "rb") ?: throw IllegalStateException("can't read $path")
     try {
@@ -41,6 +44,7 @@ fun readBytesOf(path: String): ByteArray {
     } finally { fclose(f) }
 }
 
+@kotlin.native.HiddenFromObjC
 class ByteArrayOutputStream : OutputStream() {
     private var buf = ByteArray(256); private var n = 0
     override fun write(b: ByteArray, off: Int, len: Int) {
@@ -52,12 +56,14 @@ class ByteArrayOutputStream : OutputStream() {
     override fun close() {}
 }
 
+@kotlin.native.HiddenFromObjC
 abstract class OutputStream : AutoCloseable {
     abstract fun write(b: ByteArray, off: Int, len: Int)
     fun write(b: ByteArray) = write(b, 0, b.size)
 }
 
 @OptIn(ExperimentalForeignApi::class)
+@kotlin.native.HiddenFromObjC
 class FileOutputStream(file: File) : OutputStream() {
     private val f: CPointer<FILE> = fopen(file.path, "wb") ?: throw IllegalStateException("can't write ${file.path}")
     override fun write(b: ByteArray, off: Int, len: Int) {
@@ -67,6 +73,7 @@ class FileOutputStream(file: File) : OutputStream() {
     override fun close() { fclose(f) }
 }
 
+@kotlin.native.HiddenFromObjC
 class DataOutputStream(private val out: OutputStream) : OutputStream() {
     private val four = ByteArray(4)
     override fun write(b: ByteArray, off: Int, len: Int) = out.write(b, off, len)

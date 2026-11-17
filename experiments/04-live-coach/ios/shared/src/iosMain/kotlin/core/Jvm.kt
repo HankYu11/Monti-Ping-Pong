@@ -6,6 +6,7 @@
 //
 // One difference: `@Synchronized` is a no-op on Kotlin/Native. `LiveWindows.put/take` and
 // `SceneBackground.add/crop/reset` are called by the iOS app under its own lock (CoreLock.kt).
+@file:OptIn(kotlin.experimental.ExperimentalObjCRefinement::class)
 package com.monti.servecoach.core
 
 import kotlin.math.floor
@@ -23,6 +24,8 @@ fun String.toByteArray(): ByteArray = encodeToByteArray()
 fun <K, V> MutableMap<K, V>.putIfAbsent(key: K, value: V): V? = get(key) ?: run { put(key, value); null }
 
 /** kotlin.collections.ArrayList is final on Kotlin/Native; `class Found : ArrayList<FloatArray>()` needs an open one */
+@OptIn(kotlin.experimental.ExperimentalObjCName::class)
+@kotlin.native.ObjCName("OpenArrayList")
 open class ArrayList<E> private constructor(private val list: kotlin.collections.ArrayList<E>) : MutableList<E> by list, RandomAccess {
     constructor() : this(kotlin.collections.ArrayList<E>())
     constructor(initialCapacity: Int) : this(kotlin.collections.ArrayList<E>(initialCapacity))
@@ -32,6 +35,7 @@ open class ArrayList<E> private constructor(private val list: kotlin.collections
     override fun toString() = list.toString()
 }
 
+@kotlin.native.HiddenFromObjC
 object System {
     @OptIn(ExperimentalForeignApi::class)
     fun nanoTime(): Long = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW.toUInt()).toLong()
@@ -40,6 +44,7 @@ object System {
     fun arraycopy(src: IntArray, srcPos: Int, dest: IntArray, destPos: Int, length: Int) { src.copyInto(dest, destPos, srcPos, srcPos + length) }
 }
 
+@kotlin.native.HiddenFromObjC
 object Math {
     const val PI = kotlin.math.PI
     fun ceil(a: Double) = kotlin.math.ceil(a)

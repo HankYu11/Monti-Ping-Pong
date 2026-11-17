@@ -1,6 +1,8 @@
 // java.util, as `core` calls it by its full name (java.util.Arrays.sort, java.util.Locale.US).
+@file:OptIn(kotlin.experimental.ExperimentalObjCRefinement::class)
 package java.util
 
+@kotlin.native.HiddenFromObjC
 object Arrays {
     fun sort(a: IntArray) = a.sort()
     fun sort(a: FloatArray) = a.sort()
@@ -16,6 +18,7 @@ object Arrays {
     fun fill(a: FloatArray, from: Int, to: Int, v: Float) = a.fill(v, from, to)
 }
 
+@kotlin.native.HiddenFromObjC
 class Locale private constructor() {
     companion object { val US = Locale(); val ROOT = Locale() }
 }

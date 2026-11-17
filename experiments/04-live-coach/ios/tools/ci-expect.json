@@ -1,0 +1,4 @@
+{
+  "s1": {"serves": 1, "readings": [{"rps": 30.15, "phase": "flight", "clear": false}]},
+  "s2": {"serves": 1, "readings": [{"rps": 35.9, "phase": "flight", "clear": true}]}
+}

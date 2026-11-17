@@ -59,8 +59,9 @@ final class LiveCoach {
         vc.report.camera = camera.probe()
         cfg = camera.choose()
         if let c = cfg {
-            vc.report.chosen = ["camera": "back wide", "size": "\(c.width)x\(c.height)", "fps": c.fps, "codec": "video/avc", "encoder": "VideoToolbox"]
+            vc.report.chosen = ["camera": "back wide", "size": "\(c.width)x\(c.height)", "fps": c.fps, "codec": "video/hevc", "encoder": "VideoToolbox"]
         } else { vc.report.chosen = NSNull() }
+        vc.log("camera", cfg.map { "chose \($0.width)x\($0.height) at \($0.fps) fps, \(camera.fullRange ? "full" : "video") range" } ?? "no slow-motion mode")
         vc.state(cfg == nil ? "This phone doesn't offer slow motion to apps" : "Ready")
         if cfg != nil { attachPreview(); startPreview() }
     }
@@ -163,8 +164,11 @@ final class LiveCoach {
         pipeline = p
         p.start()
         let full = camera.fullRange
+        let args = ProcessInfo.processInfo.arguments
+        let noEncode = args.contains("-noencode"), noWatch = args.contains("-nowatch")   // finding the slow part on a phone
         camera.onFrame = { [weak p, weak enc] sb in
-            enc?.encode(sb)
+            if !noEncode { enc?.encode(sb) }
+            if noWatch { return }
             guard let p, let pb = CMSampleBufferGetImageBuffer(sb) else { return }
             let us = Int64((CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sb)) * 1_000_000).rounded())
             VideoDecoder.withYuv(pb, fullRange: full) { p.onCameraFrame(us, $0) }

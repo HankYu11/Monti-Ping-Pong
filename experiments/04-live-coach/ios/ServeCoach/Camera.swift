@@ -135,11 +135,12 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 }
 
 /**
- * ClipRecorder.kt: the camera's frames into H.264 in real time, a keyframe every 0.1 s, no frame
+ * ClipRecorder.kt: the camera's frames into HEVC (H.264 on Android) in real time, a keyframe every 0.1 s, no frame
  * reordering (decode order is display order), kept in a [FrameStore] for the last 5 s.
  */
 final class Encoder {
     let store = FrameStore(keepSeconds: 5)
+    private(set) var codec = "video/hevc"
     private var session: VTCompressionSession?
     private(set) var framesTotal: Int64 = 0
     private(set) var failures = 0
@@ -149,7 +150,12 @@ final class Encoder {
 
     init(width: Int, height: Int, fps: Int) throws {
         var s: VTCompressionSession?
-        let st = VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
+        // HEVC: the iPhone 11 Pro's H.264 encoder gave 184 frames a second at 1080p240, whatever the
+        // settings (speed over quality, not real time, baseline); its HEVC encoder keeps all 240.
+        // Android takes H.264 and falls back to HEVC. (-enc h264 to try H.264 again.)
+        let hevc = !(ProcessInfo.processInfo.arguments.firstIndex(of: "-enc").map { ProcessInfo.processInfo.arguments[$0 + 1].contains("h264") } ?? false)
+        self.codec = hevc ? "video/hevc" : "video/avc"
+        let st = VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height), codecType: hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264,
                                             encoderSpecification: nil,
                                             imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &s)
         guard st == noErr, let s else { throw FileFrames.err("encoder: \(st)") }
@@ -157,13 +163,22 @@ final class Encoder {
         let props: [CFString: Any] = [
             kVTCompressionPropertyKey_RealTime: true,
             kVTCompressionPropertyKey_AllowFrameReordering: false,
-            kVTCompressionPropertyKey_ProfileLevel: kVTProfileLevel_H264_High_AutoLevel,
             kVTCompressionPropertyKey_AverageBitRate: bitrate,
             kVTCompressionPropertyKey_ExpectedFrameRate: fps,
             kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration: 0.1,
             kVTCompressionPropertyKey_MaxKeyFrameInterval: max(1, fps / 10),
         ]
         for (k, v) in props { VTSessionSetProperty(s, key: k, value: v as CFTypeRef) }
+        // trying settings on a phone (-enc speed,norealtime,main)
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-enc"), i + 1 < args.count {
+            let o = args[i + 1].split(separator: ",").map(String.init)
+            if o.contains("speed") { VTSessionSetProperty(s, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue) }
+            if o.contains("norealtime") { VTSessionSetProperty(s, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanFalse) }
+            if o.contains("main") { VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Main_AutoLevel) }
+            if o.contains("baseline") { VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Baseline_AutoLevel) }
+        }
+        if !hevc { VTSessionSetProperty(s, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_High_AutoLevel) }
         VTCompressionSessionPrepareToEncodeFrames(s)
         session = s
     }

@@ -99,9 +99,20 @@ final class CoachViewController: UIViewController, AVSpeechSynthesizerDelegate, 
         Pipeline.dumpQ = args.contains("-dumpq")
         if args.contains("-selftest") { _ = SelfTest.run() }
         if let i = args.firstIndex(of: "-replay"), i + 1 < args.count {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.startVideoTest(URL(fileURLWithPath: args[i + 1]), prime: !args.contains("-noprime")) }
+            // a bare name is a file in the app's Documents (copied there from the Mac)
+            let a = args[i + 1]
+            let url = a.hasPrefix("/") ? URL(fileURLWithPath: a) : FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(a)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.startVideoTest(url, prime: !args.contains("-noprime")) }
         } else {
             live.checkCamera()
+            // testing on a phone nobody is holding: -live <seconds> presses START after 4 s and STOP after that long
+            if let i = args.firstIndex(of: "-live"), i + 1 < args.count, let secs = Double(args[i + 1]) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    guard self.mode == .idle else { return }
+                    self.live.start()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + secs) { if self.mode == .live { self.stopAll() } }
+                }
+            }
         }
     }
 
@@ -115,7 +126,12 @@ final class CoachViewController: UIViewController, AVSpeechSynthesizerDelegate, 
     func state(_ s: String) { screen.state(s); print("SCLOG state: \(s)") }
     func tone(_ c: UIColor) { screen.tone(c) }
 
+    private var statsLogged: Int64 = 0
     private func updateStats() {
+        if mode == .live, nowMs() - statsLogged > 5000, let p = live.pipeline {
+            statsLogged = nowMs()
+            print("SCLOG stats: recording \(Int(live.recordingFps.rounded())) fps, decoded \(p.decoded), gaps \(p.cameraGaps), skipped \(p.skipped), \(String(format: "%.1f", p.trackMsAvg)) ms a frame, \(live.lagMs) ms behind, camera dropped \(live.camera.dropped)")
+        }
         var s = "App \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")\n"
         if let c = live.cfg { s += "Camera \(c.width)×\(c.height) @ \(c.fps) fps\n" }
         if let p = live.pipeline {

@@ -1,0 +1,24 @@
+# Gemini Code Assist on GitHub (https://docs.cloud.google.com/gemini/docs/code-review/customize-repo-review)
+have_fun: false
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1
+  pull_request_opened:
+    help: false
+    summary: true
+    code_review: true
+    include_drafts: false
+ignore_patterns:
+  # recordings, pictures and reference data, not code
+  - "**/*.mp4"
+  - "**/*.png"
+  - "**/*.jpg"
+  - "**/*.ttf"
+  - "**/*.task"
+  - "**/src/iosTest/resources/format-java.txt"
+  - "**/src/test/resources/**"
+  # third-party, minified
+  - "**/mp4box.all.min.js"
+  # build output
+  - "**/build/**"

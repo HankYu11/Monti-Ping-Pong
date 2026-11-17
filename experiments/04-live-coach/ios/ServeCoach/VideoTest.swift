@@ -3,27 +3,26 @@ import ServeCoachCore
 
 /**
  * TEST VIDEO (MainActivity.onActivityResult request 7): a recorded serve video through the same
- * pipeline and engine as the camera, every serve captured (no turns), the engine measuring while
- * the video is still being read.
+ * pipeline as the camera, every serve captured (no turns). It only feeds the pipeline: the captures
+ * go to the controller's engine queue as they start, as live ones do.
  */
 final class VideoTest {
-    let engine: Engine
     let captureDir: URL
-    var log: (String, String) -> Void = { _, _ in }      // kind, text
-    var state: (String) -> Void = { _ in }
-    var onServeResult: (Int, [String: Any]) -> Void = { _, _ in }
-    var onDone: (Int, Int, Int) -> Void = { _, _, _ in }  // spotted, read, clear
-
-    private var waiting: [Int] = []
-    private var engineBusy = false
-    var engineReady = false
-    private var spotted = -1, read = 0, good = 0
+    var log: (String, String) -> Void = { _, _ in }        // kind, text
+    var state: (String) -> Void = { _ in }                 // on the main thread
+    var onCaptureStarted: (Int) -> Void = { _ in }         // on the main thread
+    var onCapture: (Int, Int, Int64) -> Void = { _, _, _ in }  // id, frames, write ms
+    /** on the main thread: serves spotted, the tracker's rejections; or an error */
+    var onFinished: (Int, [String: Int]) -> Void = { _, _ in }
+    var onFailed: (String) -> Void = { _ in }
     private(set) var pipeline: Pipeline?
+    private var cancelled = false
 
-    init(engine: Engine, captureDir: URL) { self.engine = engine; self.captureDir = captureDir }
+    init(captureDir: URL) { self.captureDir = captureDir }
+
+    func cancel() { cancelled = true }
 
     func run(_ url: URL, firstId: Int = 0, prime: Bool = true) {
-        spotted = -1; read = 0; good = 0
         state("Video test: reading the video…")
         Thread.detachNewThread { [self] in
             do {
@@ -35,57 +34,27 @@ final class VideoTest {
                 pipeline = p
                 p.onError = { e in self.log("error", e) }
                 p.onNote = { e in self.log("note", e) }
-                p.onCaptureStarted = { id, _ in DispatchQueue.main.async { self.waiting.append(id); self.next() } }
-                p.onCapture = { id, n, _, ms, _, _ in self.log("capture", "#\(id): \(n) frames, written in \(ms) ms") }
+                p.onCaptureStarted = { id, _ in DispatchQueue.main.async { self.onCaptureStarted(id) } }
+                p.onCapture = { id, n, _, ms, _, _ in self.log("capture", "#\(id): \(n) frames, written in \(ms) ms"); self.onCapture(id, n, ms) }
                 if prime { p.prime(frames) }
                 p.start()
                 for (i, f) in frames.enumerated() {
+                    if cancelled { break }
                     p.offer(f)
-                    if i % 60 == 0 { let pc = i * 100 / max(1, frames.count); DispatchQueue.main.async { self.state("Video test: looking for serves… \(pc)%") } }
+                    if (i + 1) % 60 == 0 { let pc = 100 * (i + 1) / max(1, frames.count); DispatchQueue.main.async { if !self.cancelled { self.state("Video test: looking for serves… \(pc)%") } } }
                 }
                 p.finish()
                 p.waitForWorkers()
                 let found = p.servesFound
+                let rejected = p.rejected
                 log("replay", "done: \(found) serve(s) spotted, tracker \(String(format: "%.1f", p.trackMsAvg)) ms a frame")
-                log("replay", "tracker turned down: \(p.rejected)")
+                log("replay", "tracker turned down: \(rejected)")
                 p.stop()
-                DispatchQueue.main.async {
-                    self.spotted = found
-                    if found == 0 { self.state("Video test done: no serve found"); self.onDone(0, 0, 0) }
-                    else { self.state("Video test: measuring \(found) serve(s)…"); self.finishTest() }
-                }
+                DispatchQueue.main.async { if !self.cancelled { self.onFinished(found, rejected) } }
             } catch {
-                DispatchQueue.main.async { self.state("Video test failed: \(error.localizedDescription)") }
                 log("error", "replay: \(error.localizedDescription)")
+                DispatchQueue.main.async { self.onFailed(error.localizedDescription) }
             }
-        }
-    }
-
-    func next() {
-        guard engineReady, !engineBusy, !waiting.isEmpty else { return }
-        let id = waiting.removeFirst()
-        engineBusy = true
-        state("Measuring serve #\(id)…")
-        engine.analyseCapture(id)
-    }
-
-    func result(_ id: Int, _ json: String) {
-        engineBusy = false
-        Pipeline.writing.remove(id)
-        try? FileManager.default.removeItem(at: captureDir.appendingPathComponent("cap_\(id).bin"))
-        try? FileManager.default.removeItem(at: captureDir.appendingPathComponent("cap_\(id).json"))
-        let r = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
-        read += 1
-        if let s = r["serve"] as? [String: Any], s["clear"] as? Bool == true { good += 1 }
-        onServeResult(id, r)
-        finishTest()
-        next()
-    }
-
-    private func finishTest() {
-        if spotted > 0 && read >= spotted {
-            state("Video test done: \(good) of \(spotted) serve(s) read")
-            onDone(spotted, read, good)
         }
     }
 }

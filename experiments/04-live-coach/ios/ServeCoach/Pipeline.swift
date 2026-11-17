@@ -66,7 +66,7 @@ final class Pipeline {
 
     init(store: FrameStore, blocking: Bool, captureFps: Int, captureDir: URL, firstId: Int = 0) {
         self.store = store; self.blocking = blocking; self.captureFps = captureFps; self.captureDir = captureDir
-        captures = firstId
+        captures = firstId - 1
         queue = BlockingQueue(capacity: blocking ? 64 : 720)
         jobs = BlockingQueue(capacity: blocking ? 16 : 24)
         finders.maxConcurrentOperationCount = 3
@@ -357,6 +357,7 @@ final class WritingTable {
     func set(_ id: Int, _ w: Writing) { lock.lock(); map[id] = w; lock.unlock() }
     func get(_ id: Int) -> Writing? { lock.lock(); defer { lock.unlock() }; return map[id] }
     func remove(_ id: Int) { lock.lock(); map[id] = nil; lock.unlock() }
+    var maxId: Int? { lock.lock(); defer { lock.unlock() }; return map.keys.max() }
 }
 
 final class DumpTable {

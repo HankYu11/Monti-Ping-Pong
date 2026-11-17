@@ -149,7 +149,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# The spin meter engine and its page: the Android app's own files, not a copy in this tree.\nA=\"$PROJECT_DIR/../android/app/src/main/assets\"\nD=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/engine\"\nmkdir -p \"$D\" && cp \"$A/engine.html\" \"$A/engine.js\" \"$A/mp4box.all.min.js\" \"$D/\"\n";
+			shellScript = "# The spin meter engine and its page: the Android app's own files, not a copy in this tree.\nA=\"$PROJECT_DIR/../android/app/src/main/assets\"\nD=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/engine\"\nmkdir -p \"$D\" && cp \"$A/engine.html\" \"$A/engine.js\" \"$A/mp4box.all.min.js\" \"$D/\"\nF=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/fonts\"\nmkdir -p \"$F\" && cp \"$A\"/fonts/* \"$F/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -204,13 +204,16 @@
 				CURRENT_PROJECT_VERSION = 74;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Serve Coach";
+				INFOPLIST_KEY_CFBundleDisplayName = "Serve Coach Live";
 				INFOPLIST_KEY_NSCameraUsageDescription = "The camera watches your serve to measure its spin.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 0.13.24;
 				OTHER_LDFLAGS = "$(inherited) -lc++";
@@ -229,13 +232,16 @@
 				CURRENT_PROJECT_VERSION = 74;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Serve Coach";
+				INFOPLIST_KEY_CFBundleDisplayName = "Serve Coach Live";
 				INFOPLIST_KEY_NSCameraUsageDescription = "The camera watches your serve to measure its spin.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = YES;
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationLandscapeRight;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationLandscapeRight;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 0.13.24;
 				OTHER_LDFLAGS = "$(inherited) -lc++";

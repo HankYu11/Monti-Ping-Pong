@@ -3,12 +3,30 @@
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 plugins { kotlin("multiplatform") version "2.3.20" }
 
+// The Android core's sources, copied with one change: the kotlin.math functions whose Float
+// results differ on Kotlin/Native (src/iosMain/kotlin/jvmmath) are taken from there instead.
+val jvmMath = listOf("hypot", "ln", "atan", "roundToInt")
+fun jvmMathLine(line: String): String {
+    var l = line
+    for (f in jvmMath) {
+        l = l.replace("import kotlin.math.$f\n", "import com.monti.servecoach.jvmmath.$f\n")
+        if (l.trim() == "import kotlin.math.$f") l = "import com.monti.servecoach.jvmmath.$f"
+        l = l.replace("kotlin.math.$f(", "com.monti.servecoach.jvmmath.$f(")
+    }
+    return l
+}
+val coreSrc = tasks.register<Sync>("androidCore") {
+    from("../../android/core/src/main/kotlin")
+    into(layout.buildDirectory.dir("generated/coresrc"))
+    filter { line -> jvmMathLine(line) }
+}
+
 // The Android tests, copied with one change: Kotlin/Native refuses , . ; : / < > [ ] in a
 // `backticked test name`, so those characters become _ in the names. The test bodies are untouched.
 val testSrc = tasks.register<Sync>("androidTests") {
     from("../../android/core/src/test/kotlin")
     into(layout.buildDirectory.dir("generated/testsrc"))
-    filter { line -> Regex("fun `([^`]*)`").replace(line) { m -> "fun `" + m.groupValues[1].replace(Regex("[,.;:/<>\\[\\]]"), "_") + "`" } }
+    filter { line -> jvmMathLine(Regex("fun `([^`]*)`").replace(line) { m -> "fun `" + m.groupValues[1].replace(Regex("[,.;:/<>\\[\\]]"), "_") + "`" }) }
 }
 kotlin {
     val xcf = XCFramework("ServeCoachCore")
@@ -17,7 +35,7 @@ kotlin {
     }
     // in iosMain, not commonMain: the sources must see the JVM stand-ins in src/iosMain
     sourceSets {
-        iosMain { kotlin.srcDir("../../android/core/src/main/kotlin") }
+        iosMain { kotlin.srcDir(coreSrc) }
         // the Android module's own tests, run on the iOS simulator over a JUnit stand-in (src/iosTest)
         // the tests' assert() is experimental on Kotlin/Native
         matching { it.name.endsWith("Test") }.all { languageSettings.optIn("kotlin.experimental.ExperimentalNativeApi") }

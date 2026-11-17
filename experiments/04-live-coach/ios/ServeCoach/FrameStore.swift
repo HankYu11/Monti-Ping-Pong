@@ -32,6 +32,8 @@ final class FrameStore {
         }
     }
 
+    var newestUs: Int64 { lock.lock(); defer { lock.unlock() }; return frames.last?.ptsUs ?? Int64.min }
+
     var all: [EncodedFrame] { lock.lock(); defer { lock.unlock() }; return frames }
 
     /**

@@ -161,6 +161,34 @@ final class Pipeline {
         let n = decoded
         ptsRing[Int(n % Int64(ptsRing.count))] = pts
         decoded = n + 1
+        picture(n, yuv)
+    }
+
+    // ---- live: the camera's own pictures, numbered by their time (GlTap: n = round((ts - t0) * fps)) ----
+    private var t0Us: Int64 = -1
+    private var lastNo: Int64 = -1
+    /** frames the camera never delivered, by their numbers */
+    private(set) var cameraGaps: Int64 = 0
+    /** pictures in arrival time, live: how far the newest picture is behind the clock */
+    private(set) var lastPictureUs: Int64 = 0
+    func onCameraFrame(_ ptsUs: Int64, _ yuv: Yuv) {
+        if t0Us < 0 { t0Us = ptsUs }
+        let n = Int64((Double(ptsUs - t0Us) * Double(captureFps) / 1e6).rounded())
+        if n <= lastNo { return }                               // a repeat
+        let ring = Int64(ptsRing.count)
+        if lastNo >= 0 && n > lastNo + 1 {                      // gaps: their times extrapolated
+            let prev = ptsRing[Int(lastNo % ring)]
+            for k in (lastNo + 1)..<n { ptsRing[Int(k % ring)] = prev + (k - lastNo) * 1_000_000 / Int64(captureFps) }
+            cameraGaps += n - lastNo - 1
+        }
+        ptsRing[Int(n % ring)] = ptsUs
+        lastNo = n
+        decoded = n + 1
+        lastPictureUs = ptsUs
+        picture(n, yuv)
+    }
+
+    private func picture(_ n: Int64, _ yuv: Yuv) {
         if n % Int64(step) != 0 { return }
         let index = n / Int64(step)
         if !blocking && jobs.remainingCapacity == 0 { skipped += 1; return }   // the finders are behind
@@ -274,6 +302,8 @@ final class Pipeline {
         let prog = Writing(per: per)
         Pipeline.writing.set(id, prog)
         defer { prog.finish() }
+        // live: the encoder is a few frames behind the camera; wait (up to 1 s) for it to reach the end
+        if !blocking { var waited = 0; while store.newestUs < toUs && waited < 1000 { Thread.sleep(forTimeInterval: 0.01); waited += 10 } }
         let frames = store.between(fromUs, toUs)
         guard let fmt = store.format else { return }
         if frames.isEmpty { onError("capture #\(id): its frames were no longer in memory"); return }

@@ -134,6 +134,8 @@ final class HudScreen: UIView {
     var onAi: () -> Void = {}
     var onWindows: () -> Void = {}
     var onShareClips: () -> Void = {}
+    /** the camera picture's layer, sized with the screen */
+    var onLayout: (CGRect) -> Void = { _ in }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -189,6 +191,8 @@ final class HudScreen: UIView {
         super.layoutSubviews()
         let W = bounds.width, H = bounds.height, safe = safeAreaInsets
         shade.frame = bounds
+        preview.frame = bounds
+        onLayout(bounds)
         flash.frame = bounds
         let left = max(40, safe.left)
         // the readout column: 400 wide plus whatever the safe area takes from its right padding

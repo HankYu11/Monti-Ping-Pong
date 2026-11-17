@@ -124,6 +124,10 @@ final class Pipeline {
             dec.decode(k) { _, yuv in if qs.count < count { qs.append(Downsample.shared.quarter(f: yuv)) } }
             dec.flush { _, yuv in if qs.count < count { qs.append(Downsample.shared.quarter(f: yuv)) } }
         }
+        if Pipeline.dumpQ {
+            print("SCPRIME keys \(keys.count) picked \(pick.map { $0.ptsUs }) got \(qs.count)")
+            for q in qs { print("SCPRIME " + IosDump.shared.line(index: -1, q: q, found: nil)) }
+        }
         guard let q = qs.first else { return }
         let tr = tracker ?? ServeTracker(w: q.w, h: q.h, fps: Int32(captureFps / step))
         tracker = tr

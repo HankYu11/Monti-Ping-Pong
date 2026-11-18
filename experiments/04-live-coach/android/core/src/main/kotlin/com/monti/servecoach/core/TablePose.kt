@@ -57,7 +57,8 @@ object TablePose {
      * [hfovDeg]: the picture's horizontal field of view. Null when too little edge is seen, or the
      * camera looks too far up to see the table's plane.
      */
-    fun fromMask(mask: BooleanArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? {
+    fun fromMask(mask: BooleanArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double, tableBeyond: ((Int, Int) -> Pair<Int, Int>?)? = null,
+                 centreLine: List<Int>? = null): Pose? {
         val g = unit(down)
         val f = (w / 2.0) / tan(rad(hfovDeg) / 2)
         // the plane's own axes: e1 ahead (the camera's forward, -z, made level), e2 to the right
@@ -66,6 +67,13 @@ object TablePose {
         if (norm(fwd) < 0.5) return null                     // looking straight down: no "ahead"
         val right = unit(cross(g, fwd).let { if (dot(it, doubleArrayOf(1.0, 0.0, 0.0)) < 0) scale(it, -1.0) else it })
         val xs = ArrayList<Double>(); val ys = ArrayList<Double>()
+        val nx = ArrayList<Double>(); val ny = ArrayList<Double>()      // edge points with the same table just beyond: the net
+        netPx.clear()
+        fun onPlane(x: Double, y: Double): DoubleArray? {
+            val ray = doubleArrayOf((x + 0.5 - w / 2.0) / f, (y + 0.5 - h / 2.0) / f, -1.0)
+            val d = dot(ray, g); if (d <= 1e-3) return null
+            val pt = scale(ray, 1.0 / d); return doubleArrayOf(dot(pt, fwd), dot(pt, right))
+        }
         for (y in 1 until h - 1) for (x in 1 until w - 1) {
             val p = y * w + x
             if (!mask[p]) continue
@@ -76,6 +84,11 @@ object TablePose {
             if (down1 <= 1e-3) continue                       // at or above the horizon
             val pt = scale(ray, 1.0 / down1)                  // on the plane one unit below the camera
             xs.add(dot(pt, fwd)); ys.add(dot(pt, right))
+            tableBeyond?.invoke(x, y)?.let { (bx, by) -> onPlane(bx.toDouble(), by.toDouble())?.let { q ->
+                val a = doubleArrayOf(xs.last(), ys.last())
+                // close on the table's plane: the net's width, not a gap of floor to the next table
+                if (kotlin.math.hypot(q[0] - a[0], q[1] - a[1]) < 0.12 * kotlin.math.hypot(a[0], a[1])) { nx.add(a[0]); ny.add(a[1]); netPx.add(y * w + x) }
+            } }
         }
         val n = xs.size
         if (n < 40) return null
@@ -97,8 +110,32 @@ object TablePose {
         val a = rad(bestTh); val b = a + PI / 2
         val ea = extent(xs, ys, a); val eb = extent(xs, ys, b)
         val netA = interiorLine(xs, ys, a, bin); val netB = interiorLine(xs, ys, b, bin)
+        // the net at the region's edge (half a table in view): its points lie along a line, so
+        // they hardly spread along the long axis
+        val seen = nx.size >= max(12, n / 25)
+        debugNet = "net points ${nx.size} of $n, spread a ${if (nx.size > 2) spread(nx, ny, a) else 0.0} b ${if (nx.size > 2) spread(nx, ny, b) else 0.0}, ea $ea eb $eb"
+        val sa = if (seen) spread(nx, ny, a) else 0.0; val sb = if (seen) spread(nx, ny, b) else 0.0
+        // the centre line, white inside the table, runs along the long axis
+        var centre = Double.NaN
+        if (centreLine != null && centreLine.size >= 20) {
+            val cx = ArrayList<Double>(); val cy = ArrayList<Double>()
+            for (p in centreLine) onPlane((p % w).toDouble(), (p / w).toDouble())?.let { cx.add(it[0]); cy.add(it[1]) }
+            if (cx.size >= 20) {
+                // the direction the points line up along: least spread across it
+                var bt = 0.0; var bs = Double.MAX_VALUE; var t = 0.0
+                while (t < 180.0) { val sp = spread(cx, cy, rad(t + 90)); if (sp < bs) { bs = sp; bt = t }; t += 1.0 }
+                val along = spread(cx, cy, rad(bt))
+                if (along > 6 * bs) centre = rad(bt)       // a line, not a blob
+            }
+        }
+        debugCentre = if (centre.isNaN()) "no centre line" else "centre line ${"%.0f".format(deg(centre))} deg (families ${"%.0f".format(bestTh)} / ${"%.0f".format(bestTh + 90)})"
+        fun near(x: Double, y: Double) = abs(((x - y) % PI + PI) % PI).let { min(it, PI - it) } < rad(12.0)
         val long: Double; val sure: Boolean
         when {
+            !centre.isNaN() && near(centre, a) -> { long = a; sure = true }
+            !centre.isNaN() && near(centre, b) -> { long = b; sure = true }
+            seen && sa < 0.5 * sb -> { long = a; sure = true }
+            seen && sb < 0.5 * sa -> { long = b; sure = true }
             netA > 0.3 && netA > 2 * netB -> { long = a; sure = true }      // lines across direction a inside: a is the long axis
             netB > 0.3 && netB > 2 * netA -> { long = b; sure = true }
             else -> { long = if (ea >= eb) a else b; sure = max(ea, eb) / max(1e-9, min(ea, eb)) >= 1.6 }
@@ -218,8 +255,170 @@ object TablePose {
         return Pose(axis, toward, bestCount.toDouble(), sure, pts.size)
     }
     /** the last [fromLines] call's lines (theta index of 0.5 deg, rho, votes) and line pixels, for tools */
+    var debugNet = ""; var debugCentre = ""
+    val netPx = HashSet<Int>()
     var debugLines: List<IntArray> = emptyList(); var debugPts: List<Int> = emptyList()
     private fun angDiff(a: Double, b: Double): Double { val d = abs(((a - b) % 180 + 180) % 180); return min(d, 180 - d) }
+
+
+    // ------------------------------------------------------------------ the table's region, glare and all
+    /**
+     * The table's top as a region, from a picture with nobody in it (see [median]): the patch
+     * [SetupCheck.findTable] finds, grown into pixels of the same hue however pale (glare turns a
+     * blue top grey-blue, 18 Nov), but never across a sharp edge. A glare patch fades in; a table's
+     * edge, its white line, the net and anything in front of it are sharp, so the region stops there.
+     */
+    fun tableRegion(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int): BooleanArray? {
+        val sw = 320; val sh = 180
+        // the seed: the setup check's table, found on a 320 x 180 copy
+        val ys = ByteArray(sw * sh); val us = ByteArray(sw * sh); val vs = ByteArray(sw * sh)
+        for (j in 0 until sh) for (i in 0 until sw) { val p = (j * h / sh) * w + i * w / sw; ys[j * sw + i] = y[p]; us[j * sw + i] = u[p]; vs[j * sw + i] = v[p] }
+        val t = SetupCheck.findTable(ys, us, vs, sw, sh) ?: return null
+        val seedSmall = tableMask(ys, us, vs, sw, sh, t)
+        val n = w * h
+        val seed = BooleanArray(n) { p -> seedSmall[((p / w) * sh / h) * sw + (p % w) * sw / w] &&
+            SetupCheck.colourOf(y[p].toInt() and 0xff, u[p].toInt() and 0xff, v[p].toInt() and 0xff) == t.colour }
+        // the seed's hue
+        var scb = 0.0; var scr = 0.0; var k = 0
+        for (p in 0 until n) if (seed[p]) { scb += (u[p].toInt() and 0xff) - 128; scr += (v[p].toInt() and 0xff) - 128; k++ }
+        if (k < 50) return null
+        val hue = kotlin.math.atan2(scr / k, scb / k)
+        // sharp edges: Sobel on Y, plus a jump in chroma
+        val edge = BooleanArray(n)
+        fun Y(x: Int, yy: Int) = y[yy * w + x].toInt() and 0xff
+        fun U(x: Int, yy: Int) = u[yy * w + x].toInt() and 0xff
+        fun V(x: Int, yy: Int) = v[yy * w + x].toInt() and 0xff
+        for (yy in 1 until h - 1) for (x in 1 until w - 1) {
+            val gx = (Y(x + 1, yy - 1) + 2 * Y(x + 1, yy) + Y(x + 1, yy + 1)) - (Y(x - 1, yy - 1) + 2 * Y(x - 1, yy) + Y(x - 1, yy + 1))
+            val gy = (Y(x - 1, yy + 1) + 2 * Y(x, yy + 1) + Y(x + 1, yy + 1)) - (Y(x - 1, yy - 1) + 2 * Y(x, yy - 1) + Y(x + 1, yy - 1))
+            val cu = abs(U(x + 1, yy) - U(x - 1, yy)) + abs(U(x, yy + 1) - U(x, yy - 1))
+            val cv = abs(V(x + 1, yy) - V(x - 1, yy)) + abs(V(x, yy + 1) - V(x, yy - 1))
+            edge[yy * w + x] = sqrt((gx * gx + gy * gy).toDouble()) > EDGE || cu + cv > CHROMA_EDGE
+        }
+        // grow from the seed through same-hue pixels that are not edges
+        val reg = BooleanArray(n); val stack = IntArray(n); var top = 0
+        for (p in 0 until n) if (seed[p] && !edge[p]) { reg[p] = true; stack[top++] = p }
+        fun like(p: Int): Boolean {
+            if (edge[p]) return false
+            val cb = (u[p].toInt() and 0xff) - 128.0; val cr = (v[p].toInt() and 0xff) - 128.0
+            val m = sqrt(cb * cb + cr * cr)
+            if (m < MIN_CHROMA) return false
+            var d = abs(kotlin.math.atan2(cr, cb) - hue); if (d > PI) d = 2 * PI - d
+            return d < rad(HUE_DEG)
+        }
+        while (top > 0) {
+            val q = stack[--top]; val qx = q % w; val qy = q / w
+            for (nb in intArrayOf(if (qx > 0) q - 1 else -1, if (qx < w - 1) q + 1 else -1, if (qy > 0) q - w else -1, if (qy < h - 1) q + w else -1)) {
+                if (nb < 0 || reg[nb]) continue
+                if (seed[nb] || like(nb)) { reg[nb] = true; stack[top++] = nb }
+            }
+        }
+        // close small holes (the centre line, specks of glare): 2 px dilate then erode
+        return close(reg, w, h, 2)
+    }
+    const val EDGE = 90.0          // Sobel on Y, 0-255 levels: a table's edge is well over, a glare fade under
+    const val CHROMA_EDGE = 26
+    const val MIN_CHROMA = 3.0
+    const val HUE_DEG = 30.0
+
+    private fun close(m: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        fun morph(a: BooleanArray, dil: Boolean): BooleanArray = BooleanArray(w * h) { p ->
+            val x = p % w; val yy = p / w; var res = !dil
+            loop@ for (dy in -r..r) for (dx in -r..r) { val X = x + dx; val Y = yy + dy
+                val v = if (X in 0 until w && Y in 0 until h) a[Y * w + X] else !dil
+                if (dil && v) { res = true; break@loop }; if (!dil && !v) { res = false; break@loop } }
+            res
+        }
+        return morph(morph(m, true), false)
+    }
+
+    /** a picture with nobody in it: each pixel's median over [frames] (each a Y, U, V triple, same size) */
+    fun median(frames: List<Array<ByteArray>>): Array<ByteArray> {
+        val n = frames[0][0].size; val k = frames.size
+        val out = Array(3) { ByteArray(n) }
+        val buf = IntArray(k)
+        for (c in 0 until 3) for (p in 0 until n) {
+            for (i in 0 until k) buf[i] = frames[i][c][p].toInt() and 0xff
+            buf.sort(); out[c][p] = buf[k / 2].toByte()
+        }
+        return out
+    }
+
+    /** the pose from a person-free picture: the table's region (glare included), then [fromMask] */
+    fun ofRegion(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? {
+        val m = tableRegion(y, u, v, w, h) ?: return null
+        lastRegion = m
+        // a table's top is square on its plane; a door curtain or a wall isn't (15 Nov, at home)
+        val corner = cornerAngle(m, w, h, down, hfovDeg) ?: return null
+        lastCorner = corner
+        if (abs(corner - 90) > MAX_CORNER_ERR) return null
+        val beyond = { x: Int, yy: Int ->
+            var hit: Pair<Int, Int>? = null
+            loop@ for (r in 3..14 step 1) for ((dx, dy) in DIRS) {
+                val X = x + dx * r; val Y = yy + dy * r
+                if (X !in 0 until w || Y !in 0 until h) continue
+                val p = Y * w + X
+                if (!m[p] && SetupCheck.colourOf(y[p].toInt() and 0xff, u[p].toInt() and 0xff, v[p].toInt() and 0xff) != null) { hit = X to Y; break@loop }
+            }
+            hit
+        }
+        return fromMask(m, w, h, down, hfovDeg, beyond, centreLine(y, u, v, w, h, m))
+    }
+    /**
+     * The centre line's pixels: white (bright, no colour) inside the region at least 5 px from its
+     * edge, and on the one straight line most of them share (glare specks and a ball lying on the
+     * table don't line up).
+     */
+    private fun centreLine(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int, m: BooleanArray): List<Int>? {
+        val r = 5
+        val pts = ArrayList<Int>()
+        for (yy in r until h - r) for (x in r until w - r) {
+            val p = yy * w + x
+            if (!m[p] || !m[p - r] || !m[p + r] || !m[p - r * w] || !m[p + r * w]) continue
+            val Y = y[p].toInt() and 0xff; val cb = (u[p].toInt() and 0xff) - 128; val cr = (v[p].toInt() and 0xff) - 128
+            // whiter than the table round it: brighter by a margin, chroma near none
+            val Yn = ((y[p - 3].toInt() and 0xff) + (y[p + 3].toInt() and 0xff) + (y[p - 3 * w].toInt() and 0xff) + (y[p + 3 * w].toInt() and 0xff)) / 4
+            if (Y > Yn + 18 && abs(cb) + abs(cr) < 30) pts.add(p)
+        }
+        if (pts.size < 20) return null
+        val nth = 180; val diag = sqrt((w * w + h * h).toDouble()).toInt(); val nr = 2 * diag + 1
+        val acc = IntArray(nth * nr)
+        for (p in pts) { val x = p % w; val yy = p / w; for (t in 0 until nth) { val th = rad(t.toDouble()); acc[t * nr + (x * cos(th) + yy * sin(th)).toInt() + diag]++ } }
+        var best = 0; for (i in acc.indices) if (acc[i] > acc[best]) best = i
+        if (acc[best] < 20) return null
+        val th = rad((best / nr).toDouble()); val rho = (best % nr - diag).toDouble()
+        return pts.filter { p -> abs((p % w) * cos(th) + (p / w) * sin(th) - rho) < 2.0 }
+    }
+    /**
+     * The angle between the table's two edge families on the table's plane, each found on its own
+     * (not forced square): 90 when [down] is right. Checks the phone's gravity, and stands in for it
+     * on clips that carry none (the pitch that makes the table square).
+     */
+    fun cornerAngle(mask: BooleanArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Double? {
+        val g = unit(down); val f = (w / 2.0) / tan(rad(hfovDeg) / 2)
+        val fwd0 = doubleArrayOf(0.0, 0.0, -1.0); val fwd = unit(sub(fwd0, scale(g, dot(fwd0, g))))
+        val right = unit(cross(g, fwd).let { if (dot(it, doubleArrayOf(1.0, 0.0, 0.0)) < 0) scale(it, -1.0) else it })
+        val xs = ArrayList<Double>(); val ys = ArrayList<Double>()
+        for (y in 2 until h - 2) for (x in 2 until w - 2) {
+            val p = y * w + x
+            if (!mask[p] || (mask[p - 1] && mask[p + 1] && mask[p - w] && mask[p + w])) continue
+            val ray = doubleArrayOf((x + 0.5 - w / 2.0) / f, (y + 0.5 - h / 2.0) / f, -1.0)
+            val d = dot(ray, g); if (d <= 1e-3) continue
+            val pt = scale(ray, 1.0 / d); xs.add(dot(pt, fwd)); ys.add(dot(pt, right))
+        }
+        if (xs.size < 40) return null
+        val ext = max(range(xs), range(ys)); val bin = ext / 120.0
+        val sc = DoubleArray(360) { score(xs, ys, rad(it * 0.5), bin) }
+        val t1 = sc.indices.maxByOrNull { sc[it] }!!
+        val t2 = sc.indices.filter { angDiff(it * 0.5, t1 * 0.5) > 30 }.maxByOrNull { sc[it] } ?: return null
+        return angDiff(t1 * 0.5, t2 * 0.5)
+    }
+    private val DIRS = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1, 1 to 1, 1 to -1, -1 to 1, -1 to -1)
+    /** how far from square the table may look before it isn't taken for one, degrees */
+    const val MAX_CORNER_ERR = 10.0
+    var lastCorner = Double.NaN
+    /** the last region [ofRegion] used, for tools */
+    var lastRegion: BooleanArray? = null
 
     // how strongly the points pile up along lines perpendicular to direction [th]: the sum of the
     // squares of a histogram of their offsets (a few full bins score far above many thin ones)
@@ -247,6 +446,10 @@ object TablePose {
         val ends = max(sm.take(nb / 5).maxOrNull() ?: 0, sm.drop(nb - nb / 5).maxOrNull() ?: 0)
         val inside = sm.slice(nb / 5 until nb - nb / 5).maxOrNull() ?: 0
         return if (ends == 0) 0.0 else inside.toDouble() / ends
+    }
+    private fun spread(xs: List<Double>, ys: List<Double>, th: Double): Double {
+        val c = cos(th); val s = sin(th); val v = xs.indices.map { xs[it] * c + ys[it] * s }.sorted()
+        return v[(v.size * 0.9).toInt().coerceAtMost(v.size - 1)] - v[(v.size * 0.1).toInt()]
     }
     // the spread of the points along direction [th], trimmed (2nd-98th percentile) against strays
     private fun extent(xs: List<Double>, ys: List<Double>, th: Double): Double {

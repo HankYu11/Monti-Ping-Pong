@@ -71,6 +71,48 @@ fun main(args: Array<String>) {
         }
         return
     }
+    // posescore sessionDir pitchDeg [hfov]: for every serveNN.mp4, the table pose from a person-free
+    // median picture of the clip (POSE lines; compared with the serves' measured flights elsewhere).
+    // POSEPNG=dir: the region drawn over each picture (scratch only: these clips show players)
+    if (args[0] == "posescore") {
+        val dir = File(args[1]); val pitch = Math.toRadians(args[2].toDouble()); val hfov = args.getOrNull(3)?.toDouble() ?: 70.72
+        val down = doubleArrayOf(0.0, Math.cos(pitch), -Math.sin(pitch))
+        for (clip in dir.listFiles()!!.filter { it.name.matches(Regex("serve\\d+\\.mp4")) }.sortedBy { it.name }) {
+            val (W, H) = probe(clip); val w = 640; val h = 360
+            val frames = ArrayList<Array<ByteArray>>(); var i = 0
+            frames(clip, W, H) { f ->
+                if (i++ % 25 == 0) { val y = ByteArray(w * h); val u = ByteArray(w * h); val v = ByteArray(w * h)
+                    for (yy in 0 until h) for (x in 0 until w) { val X = x * W / w; val Y = yy * H / h; val p = yy * w + x
+                        y[p] = f.y[X, Y].toByte(); u[p] = f.u[X / 2, Y / 2].toByte(); v[p] = f.v[X / 2, Y / 2].toByte() }
+                    frames.add(arrayOf(y, u, v)) }
+            }
+            val m = com.monti.servecoach.core.TablePose.median(frames)
+            // POSEPITCH=auto: no gravity in the clip; take the pitch that makes the table square
+            var dn = down; var pitchUsed = args[2].toDouble()
+            if (System.getenv("POSEPITCH") == "auto") com.monti.servecoach.core.TablePose.tableRegion(m[0], m[1], m[2], w, h)?.let { reg ->
+                var best = 1e9
+                for (pd in 0..25) { val pr = Math.toRadians(pd.toDouble()); val d = doubleArrayOf(0.0, Math.cos(pr), -Math.sin(pr))
+                    val c = com.monti.servecoach.core.TablePose.cornerAngle(reg, w, h, d, hfov) ?: continue
+                    if (Math.abs(c - 90) < best) { best = Math.abs(c - 90); dn = d; pitchUsed = pd.toDouble() } }
+            }
+            val pose = com.monti.servecoach.core.TablePose.ofRegion(m[0], m[1], m[2], w, h, dn, hfov)
+            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitchUsed | ${pose ?: "no pose"} | ${com.monti.servecoach.core.TablePose.debugCentre}")
+            System.getenv("POSEPNG")?.let { out ->
+                val reg = com.monti.servecoach.core.TablePose.lastRegion ?: BooleanArray(w * h)
+                val b = java.io.ByteArrayOutputStream(); b.write("P6 $w $h 255\n".toByteArray())
+                for (p in 0 until w * h) {
+                    val yy = (m[0][p].toInt() and 0xff); val cb = (m[1][p].toInt() and 0xff) - 128; val cr = (m[2][p].toInt() and 0xff) - 128
+                    var rr = (yy + 1.402 * cr).toInt(); var g = (yy - 0.344 * cb - 0.714 * cr).toInt(); var bl = (yy + 1.772 * cb).toInt()
+                    val x = p % w; val yr = p / w
+                    val edge = reg[p] && x in 1 until w - 1 && yr in 1 until h - 1 && !(reg[p - 1] && reg[p + 1] && reg[p - w] && reg[p + w])
+                    if (com.monti.servecoach.core.TablePose.netPx.contains(p)) { rr = 0; g = 255; bl = 255 } else if (edge) { rr = 255; g = 255; bl = 0 } else if (reg[p]) { rr = (rr + 255) / 2; g /= 2; bl /= 2 }
+                    b.write(rr.coerceIn(0, 255)); b.write(g.coerceIn(0, 255)); b.write(bl.coerceIn(0, 255))
+                }
+                File(out).mkdirs(); File(out, clip.nameWithoutExtension + ".ppm").writeBytes(b.toByteArray())
+            }
+        }
+        return
+    }
     // selftest: the tracker on made-up candidates (0.8.0, K2: a serve followed by the ball rolling
     // back, slow and long, which out-scored the serve and took it down as "a body")
     if (args[0] == "selftest") {

@@ -141,6 +141,10 @@ object TablePose {
             else -> { long = if (ea >= eb) a else b; sure = max(ea, eb) / max(1e-9, min(ea, eb)) >= 1.6 }
         }
         val aspect = max(ea, eb) / max(1e-9, min(ea, eb))
+        run {   // for tools: the plane's axes, the long axis and the region's ends along it
+            val c = cos(long); val s2 = sin(long); val al = xs.indices.map { xs[it] * c + ys[it] * s2 }.sorted()
+            lastGeometry = "fwd ${fwd.joinToString(",")} right ${right.joinToString(",")} f $f long $long lo ${al[(al.size * 0.02).toInt()]} hi ${al[(al.size * 0.98).toInt().coerceAtMost(al.size - 1)]}"
+        }
         // in camera axes; toward = the axis's angle from the plane's "right"
         val axis = unit(add(scale(fwd, cos(long)), scale(right, sin(long))))
         val toward = deg(kotlin.math.asin(min(1.0, abs(cos(long)))))
@@ -417,6 +421,7 @@ object TablePose {
     /** how far from square the table may look before it isn't taken for one, degrees */
     const val MAX_CORNER_ERR = 10.0
     var lastCorner = Double.NaN
+    var lastGeometry = ""
     /** the last region [ofRegion] used, for tools */
     var lastRegion: BooleanArray? = null
 

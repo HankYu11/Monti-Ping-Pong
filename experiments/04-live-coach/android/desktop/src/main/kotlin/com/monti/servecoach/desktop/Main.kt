@@ -96,7 +96,7 @@ fun main(args: Array<String>) {
                     if (Math.abs(c - 90) < best) { best = Math.abs(c - 90); dn = d; pitchUsed = pd.toDouble() } }
             }
             val pose = com.monti.servecoach.core.TablePose.ofRegion(m[0], m[1], m[2], w, h, dn, hfov)
-            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitchUsed | ${pose ?: "no pose"} | ${com.monti.servecoach.core.TablePose.debugCentre}")
+            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitchUsed | ${pose ?: "no pose"} | ${com.monti.servecoach.core.TablePose.debugCentre} | GEO ${if (pose != null) com.monti.servecoach.core.TablePose.lastGeometry else ""} down ${dn.joinToString(",")}")
             System.getenv("POSEPNG")?.let { out ->
                 val reg = com.monti.servecoach.core.TablePose.lastRegion ?: BooleanArray(w * h)
                 val b = java.io.ByteArrayOutputStream(); b.write("P6 $w $h 255\n".toByteArray())

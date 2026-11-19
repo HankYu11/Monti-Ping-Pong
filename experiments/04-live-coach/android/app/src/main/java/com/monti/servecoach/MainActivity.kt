@@ -239,8 +239,26 @@ class MainActivity : Activity() {
         return SetupGuide(this, c.cameraId, camHandler,
             rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
             onAdvice = { a -> main.post { showAdvice(a) } },
-            onJpeg = { j -> coach?.sendFrame(j) })
+            onJpeg = { j -> coach?.sendFrame(j) },
+            hfov = { cfg?.let { camera.hfov(it) } ?: 68.0 },
+            onPose = { p -> main.post { notePose(p) } })
     }
+
+    // ------------------------------------------------------------------ the table's pose (19 Nov)
+    /** down, from the accelerometer while the app is open: into every capture header and the report */
+    private val gravity by lazy { Gravity(this) }
+    /** the table's pose from the setup check's last look: kept through a session for its headers */
+    @Volatile private var tablePose: com.monti.servecoach.core.TablePose.Pose? = null
+    private fun notePose(p: com.monti.servecoach.core.TablePose.Pose?) {
+        val old = tablePose
+        if (p != null) tablePose = p          // a look that found no table (someone in front) keeps the last one
+        // logged when it changes: found, lost, or turned more than 5 degrees
+        if ((p == null) != (old == null) || (p != null && old != null && (Math.abs(p.towardDeg - old.towardDeg) > 5 || p.sure != old.sure)))
+            log("setup", "table pose: ${p ?: "no table found"}")
+    }
+    /** for a capture header: ,"gravity":[...],"tablePose":{...} (null when unknown) */
+    private fun poseHeader(): String = ",\"gravity\":" + (gravity.down()?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null") +
+        ",\"tablePose\":" + (tablePose?.json() ?: "null")
 
     private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
         if (mode != Mode.IDLE || !previewing) return
@@ -359,7 +377,9 @@ class MainActivity : Activity() {
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
         val p = newPipeline(rec, blocking = false, firstId = firstFreeCaptureId())
-        p.optics = { camera.optics(c) }
+        p.optics = { camera.optics(c) + poseHeader() }
+        // where the phone stood: the session's report carries it too
+        report.put("setup", JSONObject("{" + poseHeader().drop(1) + "}"))
         p.start()
         // Watching: the camera's recording stream through the graphics chip, which shrinks each
         // frame for the tracker and passes it on to the encoder (GlTap with an encoder); if that
@@ -568,10 +588,10 @@ class MainActivity : Activity() {
         main.post { startPreview() }          // unless something started meanwhile (a restart)
     }
 
-    override fun onResume() { super.onResume(); resumed = true; resumeEngine(); startPreview() }
+    override fun onResume() { super.onResume(); resumed = true; gravity.start(); resumeEngine(); startPreview() }
     // a video test too: left running in the background it kept the codec, the GL threads and the
     // engine busy for nobody (review 16 Nov)
-    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode != Mode.IDLE) stopAll(); pauseEngine() }
+    override fun onPause() { super.onPause(); resumed = false; gravity.stop(); stopPreview(); if (mode != Mode.IDLE) stopAll(); pauseEngine() }
 
     /**
      * The engine's WebView, paused with the app (review 16 Nov: it never was).

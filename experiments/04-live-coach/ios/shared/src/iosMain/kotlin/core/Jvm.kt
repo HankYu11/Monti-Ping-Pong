@@ -56,6 +56,7 @@ object Math {
     fun abs(a: Float) = kotlin.math.abs(a)
     fun abs(a: Int) = kotlin.math.abs(a)
     fun toRadians(deg: Double) = deg / 180.0 * PI
+    fun toDegrees(rad: Double) = rad * 180.0 / PI
     /** java.lang.Math.round: floor(a + 1/2), NaN to 0, clamped to the type's range */
     fun round(a: Float): Int = if (a.isNaN()) 0 else floor(a.toDouble() + 0.5).coerceIn(Int.MIN_VALUE.toDouble(), Int.MAX_VALUE.toDouble()).toInt()
     fun round(a: Double): Long = if (a.isNaN()) 0L else floor(a + 0.5).let { if (it >= Long.MAX_VALUE.toDouble()) Long.MAX_VALUE else if (it <= Long.MIN_VALUE.toDouble()) Long.MIN_VALUE else it.toLong() }

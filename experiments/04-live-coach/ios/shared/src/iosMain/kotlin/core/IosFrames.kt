@@ -6,6 +6,7 @@ package com.monti.servecoach.core
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.get
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
 import platform.posix.memcpy
@@ -27,6 +28,44 @@ object IosFrames {
 
     /** [a]'s bytes copied to [p], which has room for them */
     fun copyOut(a: ByteArray, p: COpaquePointer) { if (a.isNotEmpty()) a.usePinned { memcpy(p, it.addressOf(0), a.size.toULong()) } }
+}
+
+/**
+ * The table's pose on iOS (SetupGuide.kt's part): the setup check's 640 x 360 copies, filled here
+ * from a locked bi-planar buffer (Swift would copy them a byte at a time), the last [keep] kept for
+ * [TablePose.analyse]'s median. Not thread-safe: the caller keeps it to one queue.
+ */
+class IosTablePose(private val keep: Int = 8) {
+    val w = 640; val h = 360
+    private val frames = ArrayDeque<Array<ByteArray>>()
+    val count get() = frames.size
+    fun clear() = frames.clear()
+
+    fun add(width: Int, height: Int, y: COpaquePointer, yRowStride: Int, cbcr: COpaquePointer, cRowStride: Int) {
+        val yp = y.reinterpret<ByteVar>(); val cp = cbcr.reinterpret<ByteVar>()
+        val yy = ByteArray(w * h); val uu = ByteArray(w * h); val vv = ByteArray(w * h)
+        for (j in 0 until h) {
+            val sy = j * height / h; val cy = sy / 2
+            for (i in 0 until w) {
+                val sx = i * width / w; val cx = (sx / 2) * 2; val p = j * w + i
+                yy[p] = yp[sy * yRowStride + sx]
+                uu[p] = cp[cy * cRowStride + cx]; vv[p] = cp[cy * cRowStride + cx + 1]
+            }
+        }
+        frames.addLast(arrayOf(yy, uu, vv))
+        while (frames.size > keep) frames.removeFirst()
+    }
+
+    /** the kept frames, for [TablePose.analyse] on another queue */
+    fun snapshot(): List<Array<ByteArray>> = frames.toList()
+
+    /** the pose from [snapshot] (on any queue): down in camera axes, the field of view in degrees */
+    fun analyse(frames: List<Array<ByteArray>>, dx: Double, dy: Double, dz: Double, hfovDeg: Double): TablePose.Pose? =
+        TablePose.analyse(frames, w, h, doubleArrayOf(dx, dy, dz), hfovDeg)
+
+    /** for a capture header: ,"gravity":[..],"tablePose":{..} (null when unknown) */
+    fun header(down: DoubleArray?, pose: TablePose.Pose?): String =
+        ",\"gravity\":" + (down?.let { TablePose.gravityJson(it) } ?: "null") + ",\"tablePose\":" + (pose?.json() ?: "null")
 }
 
 /** The parts of LivePipeline.writeCapture that are plain Kotlin, kept in Kotlin so they stay exactly Android's. */

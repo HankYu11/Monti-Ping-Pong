@@ -252,6 +252,17 @@ class HighSpeedCamera(private val context: Context) {
      * (or on a camera that reports none) the crop is the whole active array and the lens the
      * first one listed; when even those are missing the engine keeps its 68 degrees.
      */
+    /** the stream's horizontal field of view, degrees, as [optics] works it out; null when unknown */
+    fun hfov(cfg: Config): Double? = try {
+        val ch = manager.getCameraCharacteristics(cfg.cameraId)
+        val phys = ch.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        val pixels = ch.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+        val crop = lastCrop?.takeIf { it.width() > 0 && it.height() > 0 } ?: ch.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+        val focal = lastFocalMm.takeIf { it > 0 } ?: ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+        if (phys == null || pixels == null || crop == null || focal == null) null
+        else Optics.horizontalFov(phys.width.toDouble(), pixels.width, crop.width(), crop.height(), cfg.size.width, cfg.size.height, focal.toDouble())
+    } catch (e: Exception) { null }
+
     fun optics(cfg: Config): String = try {
         val ch = manager.getCameraCharacteristics(cfg.cameraId)
         val phys = ch.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)

@@ -137,20 +137,41 @@ object SetupCheck {
     }
 
     /**
-     * Serves fly more than this toward (or away from) the camera, by the table's axis: advise turning
-     * to face the side. 18 Nov's placement read 15-25 here (the ball-size estimate said 45); the
-     * number is a first guess until a session filmed side on and at an angle sets it.
+     * The table runs more than this toward (or away from) the camera: advise turning to face the
+     * side. 18 Nov's placement read 15-25 here (the ball-size estimate of the serves said 45); the
+     * number is a first guess until a session filmed side on and at an angle sets it. Once advised,
+     * it takes [FACE_SIDE_OK_DEG] or less to stop (so a table near the line doesn't flip the advice).
      */
     const val FACE_SIDE_DEG = 30.0
+    const val FACE_SIDE_OK_DEG = 25.0
 
     /**
-     * The picture's advice, sharpened by the table's pose ([TablePose]): only a "looks good" can
-     * become "face the side", and only on a pose that is sure which way the table runs. Advice, not
-     * a gate: Start works either way.
+     * Whether to advise facing the side, from the table's pose look by look: it changes only when two
+     * looks in a row agree, and a look with no pose (someone in front, the table half out of view)
+     * or an unsure one changes nothing. [reset] when the phone moves.
      */
-    fun withPose(a: Advice, pose: TablePose.Pose?): Advice {
-        if (a.kind != Kind.GOOD || pose == null || !pose.sure || pose.towardDeg <= FACE_SIDE_DEG) return a
-        return Advice(Kind.END_ON, "Turn the phone to face the side of the table: serves here would fly about " +
-            "${(pose.towardDeg / 5).roundToInt() * 5} degrees toward it, and they read best flying across the picture.")
+    class SideCheck {
+        var faceSide = false; private set
+        /** the pose the current answer rests on */
+        var pose: TablePose.Pose? = null; private set
+        private var against = 0
+        fun reset() { faceSide = false; pose = null; against = 0 }
+        fun look(p: TablePose.Pose?) {
+            if (p == null || !p.sure) return
+            val wants = if (faceSide) p.towardDeg > FACE_SIDE_OK_DEG else p.towardDeg > FACE_SIDE_DEG
+            if (wants == faceSide) { against = 0; pose = p; return }
+            if (++against >= 2) { faceSide = wants; against = 0; pose = p }
+        }
+    }
+
+    /**
+     * The picture's advice, sharpened by the table's direction: only a "looks good" can become "face
+     * the side". Advice, not a gate: Start works either way.
+     */
+    fun withPose(a: Advice, side: SideCheck): Advice {
+        val p = side.pose
+        if (a.kind != Kind.GOOD || !side.faceSide || p == null) return a
+        return Advice(Kind.END_ON, "Turn the phone to face the side of the table: from here the table runs about " +
+            "${(p.towardDeg / 5).roundToInt() * 5} degrees toward the phone, and serves read best flying across the picture.")
     }
 }

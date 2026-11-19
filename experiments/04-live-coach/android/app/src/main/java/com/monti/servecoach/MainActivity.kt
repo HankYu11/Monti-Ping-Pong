@@ -241,24 +241,41 @@ class MainActivity : Activity() {
             onAdvice = { a -> main.post { showAdvice(a) } },
             onJpeg = { j -> coach?.sendFrame(j) },
             hfov = { cfg?.let { camera.hfov(it) } ?: 68.0 },
-            onPose = { p -> main.post { notePose(p) } })
+            onPose = { look, dn -> main.post { notePose(look, dn) } })
     }
 
     // ------------------------------------------------------------------ the table's pose (19 Nov)
     /** down, from the accelerometer while the app is open: into every capture header and the report */
     private val gravity by lazy { Gravity(this) }
-    /** the table's pose from the setup check's last look: kept through a session for its headers */
+    /**
+     * The table's pose from the setup check's last look, with the gravity it was taken against: kept
+     * through a session for its headers, but not once the phone has turned since (then it is of
+     * somewhere else, and the headers say null rather than carry an old placement as current).
+     */
     @Volatile private var tablePose: com.monti.servecoach.core.TablePose.Pose? = null
-    private fun notePose(p: com.monti.servecoach.core.TablePose.Pose?) {
-        val old = tablePose
-        if (p != null) tablePose = p          // a look that found no table (someone in front) keeps the last one
-        // logged when it changes: found, lost, or turned more than 5 degrees
-        if ((p == null) != (old == null) || (p != null && old != null && (Math.abs(p.towardDeg - old.towardDeg) > 5 || p.sure != old.sure)))
-            log("setup", "table pose: ${p ?: "no table found"}")
+    @Volatile private var poseDown: DoubleArray? = null
+    private var lastWhy = ""
+    private fun notePose(look: com.monti.servecoach.core.TablePose.Look, dn: DoubleArray) {
+        val p = look.pose; val old = tablePose
+        if (p != null) { tablePose = p; poseDown = dn }    // a look that found no table (someone in front) keeps the last one
+        // logged when it changes: found, lost (and why), or turned more than 5 degrees
+        if ((p == null) != (old == null) || (p != null && old != null && (Math.abs(p.towardDeg - old.towardDeg) > 5 || p.sure != old.sure)) ||
+            (p == null && look.why != lastWhy)) log("setup", "table pose: $look")
+        lastWhy = look.why
     }
-    /** for a capture header: ,"gravity":[...],"tablePose":{...} (null when unknown) */
-    private fun poseHeader(): String = ",\"gravity\":" + (gravity.down()?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null") +
-        ",\"tablePose\":" + (tablePose?.json() ?: "null")
+    /** the kept pose, unless the phone has turned more than 3 degrees since it was taken */
+    private fun currentPose(): com.monti.servecoach.core.TablePose.Pose? {
+        val p = tablePose ?: return null; val then = poseDown ?: return null; val now = gravity.down() ?: return p
+        val c = (then[0] * now[0] + then[1] * now[1] + then[2] * now[2]).coerceIn(-1.0, 1.0)
+        return if (Math.toDegrees(Math.acos(c)) > 3.0) null else p
+    }
+    /** for a capture header: ,"gravity":[..],"tablePose":{..},"tablePoseGravity":[..] (null when unknown) */
+    private fun poseHeader(): String {
+        val p = currentPose()
+        return ",\"gravity\":" + (gravity.down()?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null") +
+            ",\"tablePose\":" + (p?.json() ?: "null") +
+            ",\"tablePoseGravity\":" + (if (p != null) poseDown?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null" else "null")
+    }
 
     private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
         if (mode != Mode.IDLE || !previewing) return

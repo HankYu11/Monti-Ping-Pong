@@ -5,6 +5,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
@@ -52,8 +53,8 @@ object TablePose {
         override fun toString() = "table axis toward ${"%.0f".format(towardDeg)} deg (${if (sure) "by $by" else "unsure"}), " +
             "corner ${"%.0f".format(cornerDeg)} deg, aspect ${"%.2f".format(aspect)}, $edgePoints edge points"
         /** for a capture header or the report */
-        fun json() = "{\"towardDeg\":${"%.1f".format(towardDeg)},\"axis\":[${axis.joinToString(",") { "%.4f".format(it) }}]," +
-            "\"sure\":$sure,\"by\":\"$by\",\"cornerDeg\":${"%.1f".format(cornerDeg)},\"aspect\":${"%.2f".format(aspect)},\"edgePoints\":$edgePoints}"
+        fun json() = "{\"towardDeg\":${num(towardDeg, 1)},\"axis\":[${axis.joinToString(",") { num(it, 4) }}]," +
+            "\"sure\":$sure,\"by\":\"$by\",\"cornerDeg\":${num(cornerDeg, 1)},\"aspect\":${num(aspect, 2)},\"edgePoints\":$edgePoints}"
     }
 
     /**
@@ -65,30 +66,44 @@ object TablePose {
     fun downFromAccel(ax: Double, ay: Double, az: Double): DoubleArray = unit(doubleArrayOf(ay, ax, -az))
 
     /** gravity for a capture header: [x,y,z] (camera axes, unit, down) */
-    fun gravityJson(down: DoubleArray): String = "[${unit(down).joinToString(",") { "%.4f".format(it) }}]"
+    fun gravityJson(down: DoubleArray): String = "[${unit(down).joinToString(",") { num(it, 4) }}]"
+
+    /** a number for JSON: NaN and infinities (which JSON has no word for) as null */
+    fun num(x: Double, places: Int): String = if (x.isNaN() || x.isInfinite()) "null" else "%.${places}f".format(x)
 
     /**
      * The whole thing from a second or two of frames (each a Y, U, V triple at w x h; 640 x 360
      * suits): the median picture, the table's region, its pose. Null when there is no table, the
      * camera can't see its plane, or what was found isn't square (not a table).
      */
-    fun analyse(frames: List<Array<ByteArray>>, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? {
-        if (frames.isEmpty()) return null
+    fun analyse(frames: List<Array<ByteArray>>, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? = look(frames, w, h, down, hfovDeg).pose
+
+    /** one look: the pose, or why there is none (for the report: a session with no pose can say why) */
+    class Look(val pose: Pose?, val why: String) { override fun toString() = pose?.toString() ?: "no table pose: $why" }
+
+    /** [analyse], with the reason when there is no pose */
+    fun look(frames: List<Array<ByteArray>>, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Look {
+        if (frames.isEmpty()) return Look(null, "no pictures")
         val m = if (frames.size == 1) frames[0] else median(frames)
-        return ofPicture(m[0], m[1], m[2], w, h, down, hfovDeg)
+        return lookAt(m[0], m[1], m[2], w, h, down, hfovDeg)
     }
 
     /** the pose from one person-free picture: its region, squareness, then [fromMask] with the centre line */
-    fun ofPicture(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? {
-        val reg = tableRegion(y, u, v, w, h) ?: return null
+    fun ofPicture(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Pose? =
+        lookAt(y, u, v, w, h, down, hfovDeg).pose
+
+    fun lookAt(y: ByteArray, u: ByteArray, v: ByteArray, w: Int, h: Int, down: DoubleArray, hfovDeg: Double): Look {
+        val reg = tableRegion(y, u, v, w, h) ?: return Look(null, "no table colour")
         // a table's top is below the camera's horizon; a curtain or a wall reaches above it
-        val pl = Plane.of(down, w, hfovDeg) ?: return null
+        val pl = Plane.of(down, w, hfovDeg) ?: return Look(null, "the phone points too far down")
         var n = 0; var above = 0
         for (yy in 0 until h step 2) for (x in 0 until w step 2) if (reg[yy * w + x]) { n++; if (pl.project(x + 0.5, yy + 0.5, w, h) == null) above++ }
-        if (n == 0 || above > n / 20) return null
-        val corner = cornerAngle(reg, w, h, down, hfovDeg) ?: return null
-        if (abs(corner - 90) > MAX_CORNER_ERR) return null
-        return fromMask(reg, w, h, down, hfovDeg, centreLine(y, u, v, w, h, reg), corner)
+        if (n == 0) return Look(null, "no table colour")
+        if (above > n / 20) return Look(null, "the patch reaches above the horizon (${100 * above / n}%): a wall or a curtain, not a table top")
+        val corner = cornerAngle(reg, w, h, down, hfovDeg) ?: return Look(null, "too little edge")
+        if (abs(corner - 90) > MAX_CORNER_ERR) return Look(null, "not square on the table's plane (corner ${corner.roundToInt()} deg)")
+        val pose = fromMask(reg, w, h, down, hfovDeg, centreLine(y, u, v, w, h, reg), corner) ?: return Look(null, "too little edge")
+        return Look(pose, "")
     }
 
     /**

@@ -59,13 +59,20 @@ class IosTablePose(private val keep: Int = 8) {
     /** the kept frames, for [TablePose.analyse] on another queue */
     fun snapshot(): List<Array<ByteArray>> = frames.toList()
 
-    /** the pose from [snapshot] (on any queue): down in camera axes, the field of view in degrees */
-    fun analyse(frames: List<Array<ByteArray>>, dx: Double, dy: Double, dz: Double, hfovDeg: Double): TablePose.Pose? =
-        TablePose.analyse(frames, w, h, doubleArrayOf(dx, dy, dz), hfovDeg)
+    /** a look at [snapshot] (on any queue): down in camera axes, the field of view in degrees */
+    fun look(frames: List<Array<ByteArray>>, dx: Double, dy: Double, dz: Double, hfovDeg: Double): TablePose.Look =
+        TablePose.look(frames, w, h, doubleArrayOf(dx, dy, dz), hfovDeg)
 
-    /** for a capture header: ,"gravity":[..],"tablePose":{..} (null when unknown) */
-    fun header(down: DoubleArray?, pose: TablePose.Pose?): String =
-        ",\"gravity\":" + (down?.let { TablePose.gravityJson(it) } ?: "null") + ",\"tablePose\":" + (pose?.json() ?: "null")
+    /** for a capture header: ,"gravity":[..],"tablePose":{..},"tablePoseGravity":[..] (null when unknown) */
+    fun header(down: DoubleArray?, pose: TablePose.Pose?, poseDown: DoubleArray?): String =
+        ",\"gravity\":" + (down?.let { TablePose.gravityJson(it) } ?: "null") + ",\"tablePose\":" + (pose?.json() ?: "null") +
+            ",\"tablePoseGravity\":" + (if (pose != null) poseDown?.let { TablePose.gravityJson(it) } ?: "null" else "null")
+
+    /** the angle between two "down"s, degrees */
+    fun angleDeg(a: DoubleArray, b: DoubleArray): Double {
+        val c = ((a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (kotlin.math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) * kotlin.math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]))).coerceIn(-1.0, 1.0)
+        return kotlin.math.acos(c) * 180.0 / kotlin.math.PI
+    }
 }
 
 /** The parts of LivePipeline.writeCapture that are plain Kotlin, kept in Kotlin so they stay exactly Android's. */

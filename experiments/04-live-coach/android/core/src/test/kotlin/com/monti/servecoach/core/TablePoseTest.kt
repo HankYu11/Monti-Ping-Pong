@@ -207,15 +207,35 @@ class TablePoseTest {
         assertTrue("$diff pixels differ from the empty scene", diff < 50)
     }
 
-    @Test fun `only a sure pose turns looks good into face the side`() {
+    @Test fun `face the side needs two agreeing looks, and a band to leave it`() {
         val good = SetupCheck.Advice(SetupCheck.Kind.GOOD, "Looks good.")
-        val pose18 = TablePose.analyse(listOf(scene(0.9, -1.2, 0.35, 150.0, 10.0)), pw, ph, down(10.0), hfov)
-        assertEquals(SetupCheck.Kind.END_ON, SetupCheck.withPose(good, pose18).kind)
-        val side = TablePose.analyse(listOf(scene(0.0, -2.2, 0.55, 90.0, 12.0)), pw, ph, down(12.0), hfov)
-        assertEquals(SetupCheck.Kind.GOOD, SetupCheck.withPose(good, side).kind)
-        assertEquals(SetupCheck.Kind.GOOD, SetupCheck.withPose(good, null).kind)
+        val pose18 = TablePose.analyse(listOf(scene(0.9, -1.2, 0.35, 150.0, 10.0)), pw, ph, down(10.0), hfov)!!
+        val side = TablePose.analyse(listOf(scene(0.0, -2.2, 0.55, 90.0, 12.0)), pw, ph, down(12.0), hfov)!!
+        val c = SetupCheck.SideCheck()
+        c.look(pose18); assertEquals("one look is not enough", SetupCheck.Kind.GOOD, SetupCheck.withPose(good, c).kind)
+        c.look(null); c.look(pose18)
+        assertEquals("a failed look between changes nothing", SetupCheck.Kind.END_ON, SetupCheck.withPose(good, c).kind)
+        c.look(side); assertEquals("one side-on look doesn't undo it", SetupCheck.Kind.END_ON, SetupCheck.withPose(good, c).kind)
+        c.look(side); assertEquals(SetupCheck.Kind.GOOD, SetupCheck.withPose(good, c).kind)
         val dark = SetupCheck.Advice(SetupCheck.Kind.DARK, "dark")
-        assertEquals("other advice stands", SetupCheck.Kind.DARK, SetupCheck.withPose(dark, pose18).kind)
+        c.look(pose18); c.look(pose18)
+        assertEquals("other advice stands", SetupCheck.Kind.DARK, SetupCheck.withPose(dark, c).kind)
+        c.reset(); assertEquals("the phone moved: start again", SetupCheck.Kind.GOOD, SetupCheck.withPose(good, c).kind)
+    }
+
+    @Test fun `a pose's JSON never holds NaN`() {
+        val m = render(0.0, -2.2, 0.55, 90.0, 12.0)
+        val p = TablePose.fromMask(m.mask, w, h, m.down, hfov)!!          // no corner measured: NaN
+        val j = p.json()
+        assertTrue("JSON must not say NaN: $j", !j.contains("NaN") && !j.contains("Infinity"))
+        assertTrue(j.contains("\"cornerDeg\":null"))
+        assertEquals("[0.0000,1.0000,0.0000]", TablePose.gravityJson(doubleArrayOf(0.0, 2.0, 0.0)))
+    }
+
+    @Test fun `a look says why it found no table`() {
+        val look = TablePose.look(listOf(scene(0.0, 0.0, 0.0, 90.0, 0.0, curtain = true)), pw, ph, down(0.0), hfov)
+        println("curtain: $look")
+        assertEquals(null, look.pose); assertTrue(look.why.isNotEmpty())
     }
 
     private fun dot(a: DoubleArray, b: DoubleArray) = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]

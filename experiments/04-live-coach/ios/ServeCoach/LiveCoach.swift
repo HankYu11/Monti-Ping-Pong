@@ -43,7 +43,7 @@ final class LiveCoach {
         self.vc = vc
         guide.onAdvice = { [weak self] a in DispatchQueue.main.async { self?.showAdvice(a) } }
         guide.onJpeg = { [weak self] j in self?.ai.sendFrame(j) }
-        guide.onPose = { [weak self] p in DispatchQueue.main.async { self?.notePose(p) } }
+        guide.onPose = { [weak self] look, dn in DispatchQueue.main.async { self?.notePose(look, dn) } }
         guide.hfov = { [weak self] in self?.camera.hfov() ?? 68 }
         startGravity()
         ai.onText = { [weak self] t in DispatchQueue.main.async { self?.vc.screen.aiText(t) } }
@@ -131,18 +131,31 @@ final class LiveCoach {
         // Core Motion's gravity points down, in g; downFromAccel takes Android's sign (+ up)
         return TablePose.shared.downFromAccel(ax: -g.0, ay: -g.1, az: -g.2)
     }
-    /** the table's pose from the setup check's last look: kept through a session for its headers */
-    private var tablePose: TablePose.Pose?
+    /**
+     * The table's pose from the setup check's last look, with the gravity it was taken against: kept
+     * through a session for its headers, but not once the phone has turned more than 3 degrees since.
+     */
+    private var tablePose: TablePose.Pose?, poseDown: KotlinDoubleArray?
     private let poseLock = NSLock()
-    private func notePose(_ p: TablePose.Pose?) {
-        poseLock.lock(); let old = tablePose; if let p { tablePose = p }; poseLock.unlock()
+    private var lastWhy = ""
+    private let headerKit = IosTablePose(keep: 1)
+    private func notePose(_ look: TablePose.Look, _ dn: KotlinDoubleArray) {
+        let p = look.pose
+        poseLock.lock(); let old = tablePose; if let p { tablePose = p; poseDown = dn }; poseLock.unlock()
         let changed = (p == nil) != (old == nil) || (p != nil && old != nil && (abs(p!.towardDeg - old!.towardDeg) > 5 || p!.sure != old!.sure))
-        if changed { vc.log("setup", "table pose: \(p.map { $0.description() } ?? "no table found")") }
+        if changed || (p == nil && look.why != lastWhy) { vc.log("setup", "table pose: \(look.description())") }
+        lastWhy = look.why
     }
-    /** for a capture header: ,"gravity":[..],"tablePose":{..} (null when unknown) */
+    private func currentPose() -> (TablePose.Pose, KotlinDoubleArray)? {
+        poseLock.lock(); let p = tablePose, then = poseDown; poseLock.unlock()
+        guard let p, let then else { return nil }
+        if let now = down(), headerKit.angleDeg(a: then, b: now) > 3 { return nil }
+        return (p, then)
+    }
+    /** for a capture header: ,"gravity":[..],"tablePose":{..},"tablePoseGravity":[..] (null when unknown) */
     private func poseHeader() -> String {
-        poseLock.lock(); let p = tablePose; poseLock.unlock()
-        return IosTablePose(keep: 1).header(down: down(), pose: p)
+        let c = currentPose()
+        return headerKit.header(down: down(), pose: c?.0, poseDown: c?.1)
     }
 
     // ------------------------------------------------------------------ setup advice
@@ -415,17 +428,18 @@ final class LiveCoach {
 final class SetupGuide {
     var onAdvice: (SetupCheck.Advice) -> Void = { _ in }
     var onJpeg: ((Data) -> Void)?
-    /** a new table pose or none (on the pose queue) */
-    var onPose: ((TablePose.Pose?) -> Void)?
+    /** each look at the table: its pose or why there is none, and the gravity it was taken against (on the pose queue) */
+    var onPose: ((TablePose.Look, KotlinDoubleArray) -> Void)?
     /** the stream's horizontal field of view, degrees */
     var hfov: () -> Double = { 68 }
     // the table's pose (SetupGuide.kt, 19 Nov): 640 x 360 copies every 250 ms, the last 8; the pose
     // from their median every 2 s on its own queue
     private let poses = IosTablePose(keep: 8)
     private var lastKeep: Int64 = 0, lastPose: Int64 = 0
-    private var poseBusy = false
+    private var poseBusy = false                       // under [lock]
     private let poseQueue = DispatchQueue(label: "table-pose", qos: .utility)
-    private(set) var latestPose: TablePose.Pose?
+    /** whether to advise facing the side: changes only on two agreeing looks (under [lock]) */
+    private let side = SetupCheck.SideCheck()
     private let motion = CMMotionManager()
     private var up: (Double, Double, Double) = (0, 0, 9.8)
     private var movedAt: Int64 = 0
@@ -443,7 +457,7 @@ final class SetupGuide {
     }
 
     func start() {
-        pending = nil; shown = nil; poses.clear(); latestPose = nil
+        pending = nil; shown = nil; poses.clear(); lock.lock(); side.reset(); lock.unlock()
         guard motion.isDeviceMotionAvailable else { return }
         motion.deviceMotionUpdateInterval = 0.06
         motion.startDeviceMotionUpdates(to: OperationQueue()) { [weak self] m, _ in
@@ -473,15 +487,18 @@ final class SetupGuide {
         lock.lock(); let moving = now - movedAt < 600; lock.unlock()
         if now - lastKeep >= 250 {
             lastKeep = now
-            if moving { poses.clear() } else { keep(pb) }
+            // moved: the old pictures and the old answer are both of somewhere else
+            if moving { poses.clear(); lock.lock(); side.reset(); lock.unlock() } else { keep(pb) }
         }
-        if now - lastPose >= 2000 && poses.count >= 6 && !poseBusy {
-            lastPose = now; poseBusy = true
+        lock.lock(); let busy = poseBusy; lock.unlock()
+        if now - lastPose >= 2000 && poses.count >= 6 && !busy {
+            lastPose = now; lock.lock(); poseBusy = true; lock.unlock()
             let frames = poses.snapshot(); let dn = down(); let fov = hfov()
             poseQueue.async { [weak self] in
                 guard let self else { return }
-                let p = self.poses.analyse(frames: frames, dx: dn.get(index: 0), dy: dn.get(index: 1), dz: dn.get(index: 2), hfovDeg: fov)
-                self.latestPose = p; self.onPose?(p); self.poseBusy = false
+                let look = self.poses.look(frames: frames, dx: dn.get(index: 0), dy: dn.get(index: 1), dz: dn.get(index: 2), hfovDeg: fov)
+                self.lock.lock(); self.side.look(p: look.pose); self.poseBusy = false; self.lock.unlock()
+                self.onPose?(look, dn)
             }
         }
         if now - lastCheck < 300 { return }
@@ -490,7 +507,7 @@ final class SetupGuide {
         let r = SetupCheck.shared.advise(y: y, u: u, v: v, w: Int32(w), h: Int32(h), tiltDeg: tilt(), moving: moving)
         // "looks good" from the picture can still be facing down the table: the pose says which way it runs
         guard let a0 = r.first else { return }
-        let a = SetupCheck.shared.withPose(a: a0, pose: moving ? nil : latestPose)
+        lock.lock(); let a = SetupCheck.shared.withPose(a: a0, side: side); lock.unlock()
         if a.kind != pending { pending = a.kind; pendingSince = now }
         if a.kind != shown && now - pendingSince >= 900 { shown = a.kind; onAdvice(a) }
     }

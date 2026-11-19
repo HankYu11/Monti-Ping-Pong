@@ -39,8 +39,8 @@ class SetupGuide(
     private val onJpeg: ((ByteArray) -> Unit)? = null,
     /** the stream's horizontal field of view, degrees (for the table's pose) */
     private val hfov: () -> Double = { 68.0 },
-    /** a new table pose, or none (on the pose thread) */
-    private val onPose: ((com.monti.servecoach.core.TablePose.Pose?) -> Unit)? = null,
+    /** each look at the table: its pose or why there is none, and the gravity it was taken against (on the pose thread) */
+    private val onPose: ((com.monti.servecoach.core.TablePose.Look, DoubleArray) -> Unit)? = null,
 ) : SensorEventListener {
     val size: Size = smallest16x9(cameraId)
     private val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 3)
@@ -61,8 +61,8 @@ class SetupGuide(
     private var lastKeep = 0L; private var lastPose = 0L
     @Volatile private var poseBusy = false
     private val poseThread = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "table-pose").apply { priority = Thread.MIN_PRIORITY } }
-    /** the table's pose from the latest look, or null (none found, or not yet) */
-    @Volatile var latestPose: com.monti.servecoach.core.TablePose.Pose? = null; private set
+    /** whether to advise facing the side: changes only on two agreeing looks (on [handler]'s thread) */
+    private val side = SetupCheck.SideCheck()
     /** down in camera axes from the accelerometer, landscape with the top to the left (null otherwise) */
     fun down(): DoubleArray? = if (rotation() == Surface.ROTATION_90) up.let { com.monti.servecoach.core.TablePose.downFromAccel(it[0].toDouble(), it[1].toDouble(), it[2].toDouble()) } else null
 
@@ -105,17 +105,26 @@ class SetupGuide(
         val now = SystemClock.elapsedRealtime()
         if (onJpeg != null && now - lastJpeg >= 1000) { lastJpeg = now; onJpeg.invoke(jpeg(img)) }
         val moving = now - movedAt < 600
-        if (now - lastKeep >= 250) { lastKeep = now; if (moving) frames.clear() else { frames.addLast(copy(img)); while (frames.size > 8) frames.removeFirst() } }
-        if (now - lastPose >= 2000 && frames.size >= 6 && !poseBusy) {
+        if (now - lastKeep >= 250) {
+            lastKeep = now
+            // moved: the old pictures and the old answer are both of somewhere else
+            if (moving) { frames.clear(); side.reset() } else { frames.addLast(copy(img)); while (frames.size > 8) frames.removeFirst() }
+        }
+        if (now - lastPose >= 2000 && frames.size >= 6 && !poseBusy && !poseThread.isShutdown) {
             val dn = down()
             if (dn != null) {
                 lastPose = now; poseBusy = true
                 val fs = frames.toList(); val fov = hfov()
-                poseThread.execute {
-                    try { latestPose = com.monti.servecoach.core.TablePose.analyse(fs, pw, ph, dn, fov); onPose?.invoke(latestPose) }
-                    catch (e: Exception) { latestPose = null }
-                    finally { poseBusy = false }
-                }
+                try {
+                    poseThread.execute {
+                        try {
+                            val look = com.monti.servecoach.core.TablePose.look(fs, pw, ph, dn, fov)
+                            handler.post { side.look(look.pose) }
+                            onPose?.invoke(look, dn)
+                        } catch (_: Exception) {}
+                        finally { poseBusy = false }
+                    }
+                } catch (_: java.util.concurrent.RejectedExecutionException) { poseBusy = false }    // stopped meanwhile
             }
         }
         if (now - lastCheck < 300) return
@@ -123,7 +132,7 @@ class SetupGuide(
         sample(img)
         val (a0, t) = SetupCheck.advise(y, u, v, w, h, tilt(), moving = moving)
         // "looks good" from the picture can still be facing down the table: the pose says which way it runs
-        val a = SetupCheck.withPose(a0, if (moving) null else latestPose)
+        val a = SetupCheck.withPose(a0, side)
         latest = a; latestTable = t
         // advice is passed on once it held for a moment, so the voice doesn't chase every jiggle
         if (a.kind != pending) { pending = a.kind; pendingSince = now }

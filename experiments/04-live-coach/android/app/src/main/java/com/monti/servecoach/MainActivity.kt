@@ -239,7 +239,42 @@ class MainActivity : Activity() {
         return SetupGuide(this, c.cameraId, camHandler,
             rotation = { @Suppress("DEPRECATION") windowManager.defaultDisplay.rotation },
             onAdvice = { a -> main.post { showAdvice(a) } },
-            onJpeg = { j -> coach?.sendFrame(j) })
+            onJpeg = { j -> coach?.sendFrame(j) },
+            hfov = { cfg?.let { camera.hfov(it) } ?: 68.0 },
+            onPose = { look, dn -> main.post { notePose(look, dn) } })
+    }
+
+    // ------------------------------------------------------------------ the table's pose (19 Nov)
+    /** down, from the accelerometer while the app is open: into every capture header and the report */
+    private val gravity by lazy { Gravity(this) }
+    /**
+     * The table's pose from the setup check's last look, with the gravity it was taken against: kept
+     * through a session for its headers, but not once the phone has turned since (then it is of
+     * somewhere else, and the headers say null rather than carry an old placement as current).
+     */
+    @Volatile private var tablePose: com.monti.servecoach.core.TablePose.Pose? = null
+    @Volatile private var poseDown: DoubleArray? = null
+    private var lastWhy = ""
+    private fun notePose(look: com.monti.servecoach.core.TablePose.Look, dn: DoubleArray) {
+        val p = look.pose; val old = tablePose
+        if (p != null) { tablePose = p; poseDown = dn }    // a look that found no table (someone in front) keeps the last one
+        // logged when it changes: found, lost (and why), or turned more than 5 degrees
+        if ((p == null) != (old == null) || (p != null && old != null && (Math.abs(p.towardDeg - old.towardDeg) > 5 || p.sure != old.sure)) ||
+            (p == null && look.why != lastWhy)) log("setup", "table pose: $look")
+        lastWhy = look.why
+    }
+    /** the kept pose, unless the phone has turned more than 3 degrees since it was taken */
+    private fun currentPose(): com.monti.servecoach.core.TablePose.Pose? {
+        val p = tablePose ?: return null; val then = poseDown ?: return null; val now = gravity.down() ?: return p
+        val c = (then[0] * now[0] + then[1] * now[1] + then[2] * now[2]).coerceIn(-1.0, 1.0)
+        return if (Math.toDegrees(Math.acos(c)) > 3.0) null else p
+    }
+    /** for a capture header: ,"gravity":[..],"tablePose":{..},"tablePoseGravity":[..] (null when unknown) */
+    private fun poseHeader(): String {
+        val p = currentPose()
+        return ",\"gravity\":" + (gravity.down()?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null") +
+            ",\"tablePose\":" + (p?.json() ?: "null") +
+            ",\"tablePoseGravity\":" + (if (p != null) poseDown?.let { com.monti.servecoach.core.TablePose.gravityJson(it) } ?: "null" else "null")
     }
 
     private fun showAdvice(a: com.monti.servecoach.core.SetupCheck.Advice) {
@@ -359,7 +394,9 @@ class MainActivity : Activity() {
         try { rec.start(encHandler) { msg -> main.post { log("error", msg) } } } catch (e: Exception) { log("error", "encoder: ${e.message}"); return }
         recorder = rec
         val p = newPipeline(rec, blocking = false, firstId = firstFreeCaptureId())
-        p.optics = { camera.optics(c) }
+        p.optics = { camera.optics(c) + poseHeader() }
+        // where the phone stood: the session's report carries it too
+        report.put("setup", JSONObject("{" + poseHeader().drop(1) + "}"))
         p.start()
         // Watching: the camera's recording stream through the graphics chip, which shrinks each
         // frame for the tracker and passes it on to the encoder (GlTap with an encoder); if that
@@ -568,10 +605,10 @@ class MainActivity : Activity() {
         main.post { startPreview() }          // unless something started meanwhile (a restart)
     }
 
-    override fun onResume() { super.onResume(); resumed = true; resumeEngine(); startPreview() }
+    override fun onResume() { super.onResume(); resumed = true; gravity.start(); resumeEngine(); startPreview() }
     // a video test too: left running in the background it kept the codec, the GL threads and the
     // engine busy for nobody (review 16 Nov)
-    override fun onPause() { super.onPause(); resumed = false; stopPreview(); if (mode != Mode.IDLE) stopAll(); pauseEngine() }
+    override fun onPause() { super.onPause(); resumed = false; gravity.stop(); stopPreview(); if (mode != Mode.IDLE) stopAll(); pauseEngine() }
 
     /**
      * The engine's WebView, paused with the app (review 16 Nov: it never was).

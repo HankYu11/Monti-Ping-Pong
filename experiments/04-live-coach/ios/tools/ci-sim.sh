@@ -16,6 +16,9 @@ xcrun simctl bootstatus "$SIM" -b >/dev/null
 xcodebuild -project ServeCoach.xcodeproj -scheme ServeCoach -sdk iphonesimulator -destination "id=$SIM" \
   -derivedDataPath "$DD" CODE_SIGNING_ALLOWED=NO build | tail -3
 xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/ServeCoach.app"
+# the camera prompt the app raises at start-up would take focus from the next launch, and a video
+# test stops when the app loses focus (as on Android): grant it up front so no prompt appears
+xcrun simctl privacy "$SIM" grant camera com.monti.servecoach || true
 OUT=$(mktemp -d)
 
 # run the app with arguments until a line matching $2 appears (or $3 seconds pass); log in $OUT/$1.log

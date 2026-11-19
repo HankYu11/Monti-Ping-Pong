@@ -37,6 +37,10 @@ class SetupGuide(
     private val onAdvice: (SetupCheck.Advice) -> Unit,
     /** a JPEG of the picture, about once a second (on [handler]'s thread) */
     private val onJpeg: ((ByteArray) -> Unit)? = null,
+    /** the stream's horizontal field of view, degrees (for the table's pose) */
+    private val hfov: () -> Double = { 68.0 },
+    /** each look at the table: its pose or why there is none, and the gravity it was taken against (on the pose thread) */
+    private val onPose: ((com.monti.servecoach.core.TablePose.Look, DoubleArray) -> Unit)? = null,
 ) : SensorEventListener {
     val size: Size = smallest16x9(cameraId)
     private val reader = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 3)
@@ -48,6 +52,19 @@ class SetupGuide(
     private var pending: SetupCheck.Kind? = null; private var pendingSince = 0L; private var shown: SetupCheck.Kind? = null
     private val w = 320; private val h = 180
     private val y = ByteArray(w * h); private val u = ByteArray(w * h); private val v = ByteArray(w * h)
+
+    // the table's pose (19 Nov): 640 x 360 copies every 250 ms, the last 8; the pose from their
+    // median every 2 s on its own thread (it takes about a tenth of a second; the camera's thread
+    // never waits for it)
+    private val pw = 640; private val ph = 360
+    private val frames = ArrayDeque<Array<ByteArray>>()
+    private var lastKeep = 0L; private var lastPose = 0L
+    @Volatile private var poseBusy = false
+    private val poseThread = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "table-pose").apply { priority = Thread.MIN_PRIORITY } }
+    /** whether to advise facing the side: changes only on two agreeing looks (on [handler]'s thread) */
+    private val side = SetupCheck.SideCheck()
+    /** down in camera axes from the accelerometer, landscape with the top to the left (null otherwise) */
+    fun down(): DoubleArray? = if (rotation() == Surface.ROTATION_90) up.let { com.monti.servecoach.core.TablePose.downFromAccel(it[0].toDouble(), it[1].toDouble(), it[2].toDouble()) } else null
 
     /** the latest advice and the table as found (for the AI coach's prompt, the report) */
     @Volatile var latest: SetupCheck.Advice? = null; private set
@@ -62,6 +79,7 @@ class SetupGuide(
         sensors.unregisterListener(this)
         reader.setOnImageAvailableListener(null, null)
         handler.post { try { reader.close() } catch (_: Exception) {} }
+        poseThread.shutdown()
     }
 
     override fun onSensorChanged(e: SensorEvent) {
@@ -86,14 +104,56 @@ class SetupGuide(
     private fun onImage(img: android.media.Image) {
         val now = SystemClock.elapsedRealtime()
         if (onJpeg != null && now - lastJpeg >= 1000) { lastJpeg = now; onJpeg.invoke(jpeg(img)) }
+        val moving = now - movedAt < 600
+        if (now - lastKeep >= 250) {
+            lastKeep = now
+            // moved: the old pictures and the old answer are both of somewhere else
+            if (moving) { frames.clear(); side.reset() } else { frames.addLast(copy(img)); while (frames.size > 8) frames.removeFirst() }
+        }
+        if (now - lastPose >= 2000 && frames.size >= 6 && !poseBusy && !poseThread.isShutdown) {
+            val dn = down()
+            if (dn != null) {
+                lastPose = now; poseBusy = true
+                val fs = frames.toList(); val fov = hfov()
+                try {
+                    poseThread.execute {
+                        try {
+                            val look = com.monti.servecoach.core.TablePose.look(fs, pw, ph, dn, fov)
+                            handler.post { side.look(look.pose) }
+                            onPose?.invoke(look, dn)
+                        } catch (_: Exception) {}
+                        finally { poseBusy = false }
+                    }
+                } catch (_: java.util.concurrent.RejectedExecutionException) { poseBusy = false }    // stopped meanwhile
+            }
+        }
         if (now - lastCheck < 300) return
         lastCheck = now
         sample(img)
-        val (a, t) = SetupCheck.advise(y, u, v, w, h, tilt(), moving = now - movedAt < 600)
+        val (a0, t) = SetupCheck.advise(y, u, v, w, h, tilt(), moving = moving)
+        // "looks good" from the picture can still be facing down the table: the pose says which way it runs
+        val a = SetupCheck.withPose(a0, side)
         latest = a; latestTable = t
         // advice is passed on once it held for a moment, so the voice doesn't chase every jiggle
         if (a.kind != pending) { pending = a.kind; pendingSince = now }
         if (a.kind != shown && now - pendingSince >= HOLD_MS) { shown = a.kind; onAdvice(a) }
+    }
+
+    /** the picture at 640 x 360: Y, and U, V at the same size (nearest sample), for the table's pose */
+    private fun copy(img: android.media.Image): Array<ByteArray> {
+        val py = img.planes[0]; val pu = img.planes[1]; val pv = img.planes[2]
+        val by = py.buffer; val bu = pu.buffer; val bv = pv.buffer
+        val yy = ByteArray(pw * ph); val uu = ByteArray(pw * ph); val vv = ByteArray(pw * ph)
+        for (j in 0 until ph) {
+            val sy = j * img.height / ph; val cy = sy / 2
+            for (i in 0 until pw) {
+                val sx = i * img.width / pw; val cx = sx / 2; val p = j * pw + i
+                yy[p] = by.get(sy * py.rowStride + sx * py.pixelStride)
+                uu[p] = bu.get(cy * pu.rowStride + cx * pu.pixelStride)
+                vv[p] = bv.get(cy * pv.rowStride + cx * pv.pixelStride)
+            }
+        }
+        return arrayOf(yy, uu, vv)
     }
 
     /** the picture at 320 x 180: Y, and U, V at the same size (nearest sample) */

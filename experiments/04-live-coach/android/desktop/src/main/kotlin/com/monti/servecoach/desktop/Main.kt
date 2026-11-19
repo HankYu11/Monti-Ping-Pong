@@ -33,6 +33,50 @@ fun main(args: Array<String>) {
         val (a, t) = com.monti.servecoach.core.SetupCheck.advise(b.copyOfRange(0, n), b.copyOfRange(n, 2 * n), b.copyOfRange(2 * n, 3 * n), w, h, args.getOrNull(4)?.toFloat() ?: 0f)
         println("${File(args[1]).name}: $a${t?.let { "  ($it)" } ?: ""}"); return
     }
+    // posescore dir pitchDeg [hfov]: TablePose on every serveNN.mp4 in dir, from a person-free median
+    // picture of the clip at 640x360. POSEPITCH=auto: the clips carry no gravity, so take the pitch
+    // that makes the table square. POSEPNG=dir: the region drawn over each picture (scratch only:
+    // these clips show players). Prints POSE lines with the plane geometry for later checks.
+    if (args[0] == "posescore") {
+        val dir = File(args[1]); val hfov = args.getOrNull(3)?.toDouble() ?: 70.72
+        fun down(deg: Double) = Math.toRadians(deg).let { doubleArrayOf(0.0, Math.cos(it), -Math.sin(it)) }
+        for (clip in dir.listFiles()!!.filter { it.name.matches(Regex("serve\\d+\\.mp4")) }.sortedBy { it.name }) {
+            val (W, H) = probe(clip); val w = 640; val h = 360
+            val frames = ArrayList<Array<ByteArray>>(); var i = 0
+            frames(clip, W, H) { f ->
+                if (i++ % 25 == 0) { val y = ByteArray(w * h); val u = ByteArray(w * h); val v = ByteArray(w * h)
+                    for (yy in 0 until h) for (x in 0 until w) { val X = x * W / w; val Y = yy * H / h; val p = yy * w + x
+                        y[p] = f.y[X, Y].toByte(); u[p] = f.u[X / 2, Y / 2].toByte(); v[p] = f.v[X / 2, Y / 2].toByte() }
+                    frames.add(arrayOf(y, u, v)) }
+            }
+            val m = com.monti.servecoach.core.TablePose.median(frames)
+            var pitch = args[2].toDouble()
+            val reg = com.monti.servecoach.core.TablePose.tableRegion(m[0], m[1], m[2], w, h)
+            if (System.getenv("POSEPITCH") == "auto" && reg != null) {
+                var best = 1e9
+                for (pd in 0..25) { val c = com.monti.servecoach.core.TablePose.cornerAngle(reg, w, h, down(pd.toDouble()), hfov) ?: continue
+                    if (Math.abs(c - 90) < best) { best = Math.abs(c - 90); pitch = pd.toDouble() } }
+            }
+            val dn = down(pitch)
+            val pose = com.monti.servecoach.core.TablePose.ofPicture(m[0], m[1], m[2], w, h, dn, hfov)
+            val geo = pose?.let { "fwd ${it.fwd.joinToString(",")} right ${it.right.joinToString(",")} f ${(w / 2.0) / Math.tan(Math.toRadians(hfov) / 2)} long ${it.longRad} lo ${it.alongLo} hi ${it.alongHi}" } ?: ""
+            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitch | ${pose ?: "no pose"} | GEO $geo down ${dn.joinToString(",")}")
+            System.getenv("POSEPNG")?.let { out ->
+                val r = reg ?: BooleanArray(w * h)
+                val b = java.io.ByteArrayOutputStream(); b.write("P6 $w $h 255\n".toByteArray())
+                for (p in 0 until w * h) {
+                    val yy = (m[0][p].toInt() and 0xff); val cb = (m[1][p].toInt() and 0xff) - 128; val cr = (m[2][p].toInt() and 0xff) - 128
+                    var rr = (yy + 1.402 * cr).toInt(); var g = (yy - 0.344 * cb - 0.714 * cr).toInt(); var bl = (yy + 1.772 * cb).toInt()
+                    val x = p % w; val yr = p / w
+                    val edge = r[p] && x in 1 until w - 1 && yr in 1 until h - 1 && !(r[p - 1] && r[p + 1] && r[p - w] && r[p + w])
+                    if (edge) { rr = 255; g = 255; bl = 0 } else if (r[p]) { rr = (rr + 255) / 2; g /= 2; bl /= 2 }
+                    b.write(rr.coerceIn(0, 255)); b.write(g.coerceIn(0, 255)); b.write(bl.coerceIn(0, 255))
+                }
+                File(out).mkdirs(); File(out, clip.nameWithoutExtension + ".ppm").writeBytes(b.toByteArray())
+            }
+        }
+        return
+    }
     // selftest: the tracker on made-up candidates (0.8.0, K2: a serve followed by the ball rolling
     // back, slow and long, which out-scored the serve and took it down as "a body")
     if (args[0] == "selftest") {
@@ -107,6 +151,14 @@ fun main(args: Array<String>) {
     // does, and what thinning was invented to replace. This is how a live failure gets
     // reproduced here instead of guessed at.
     val lose = (System.getenv("LOSE") ?: "0").toInt()
+    // PRIME=a,b,c: as the app's video test does (LivePipeline.prime): the background from these
+    // frames (the keyframes it picks) before the video plays
+    System.getenv("PRIME")?.let { list ->
+        val want = list.split(",").map { it.trim().toLong() }.toSet()
+        val qs = ArrayList<com.monti.servecoach.core.Quarter>(); var k = 0L
+        frames(clip, W, H) { f -> if (k in want) qs.add(Downsample.quarter(f)); k++ }
+        tracker.prime(qs)
+    }
     frames(clip, W, H) { f ->
         if (n % step == 0L && !(thin && (n / step) % 2L == 1L) && !(lose > 0 && (n / step) % 12L < lose)) {
             val a = System.nanoTime()
@@ -115,6 +167,9 @@ fun main(args: Array<String>) {
             val s = if (par == null) tracker.push(q, n / step) else par.push(q, n / step)
             dsNs += b - a; pushNs += System.nanoTime() - b; pushed++
             if (s != null) serves.add(s.copy(first = s.first * step, last = s.last * step + step - 1))
+            if (System.getenv("DUMPQ") != null) { val bg = tracker.background(); var sy = 0.0; for (v in q.y) sy += v; var su = 0.0; for (v in q.u) su += v
+                val c = if (bg == null) emptyList() else dumpD.find(q, bg)
+                println("Q ${n / step} ${"%.2f".format(sy)} ${"%.2f".format(su)} ${c.size} " + c.joinToString(";") { "%.2f,%.2f,%.2f".format(it[0], it[1], it[2]) }) }
             ring?.seen(tracker, n / step)
         }
         ring?.cut(f, n)
@@ -207,6 +262,7 @@ fun countFrames(clip: File): Long {
     return p.inputStream.bufferedReader().readText().trim().toLong()
 }
 
+val dumpD = com.monti.servecoach.core.Detector(480, 270)
 fun frames(clip: File, W: Int, H: Int, each: (Yuv) -> Unit) {
     val p = ProcessBuilder("ffmpeg", "-v", "error", "-i", clip.path, "-f", "rawvideo", "-pix_fmt", "yuv420p", "-").start()
     val ins = DataInputStream(p.inputStream.buffered(1 shl 22))

@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import ServeCoachCore
 
 /**
@@ -22,6 +23,21 @@ final class VideoTest {
 
     func cancel() { cancelled = true }
 
+    /** [n] frames spread evenly over the clip as bi-planar buffers (for the table's pose) */
+    static func spreadFrames(_ url: URL, _ n: Int, _ each: (CVPixelBuffer) -> Void) {
+        let asset = AVURLAsset(url: url)
+        guard let track = asset.tracks(withMediaType: .video).first else { return }
+        let dur = CMTimeGetSeconds(asset.duration)
+        for k in 0..<n {
+            guard let r = try? AVAssetReader(asset: asset) else { return }
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange])
+            r.add(out)
+            r.timeRange = CMTimeRange(start: CMTime(seconds: dur * Double(k) / Double(n), preferredTimescale: 600), duration: CMTime(seconds: 0.05, preferredTimescale: 600))
+            guard r.startReading(), let sb = out.copyNextSampleBuffer(), let pb = CMSampleBufferGetImageBuffer(sb) else { continue }
+            each(pb); r.cancelReading()
+        }
+    }
+
     func run(_ url: URL, firstId: Int = 0, prime: Bool = true) {
         state("Video test: reading the video…")
         Thread.detachNewThread { [self] in
@@ -37,6 +53,26 @@ final class VideoTest {
                 p.onNote = { e in self.log("note", e) }
                 p.onCaptureStarted = { id, _ in DispatchQueue.main.async { self.onCaptureStarted(id) } }
                 p.onCapture = { id, n, _, ms, _, _ in self.log("capture", "#\(id): \(n) frames, written in \(ms) ms"); self.onCapture(id, n, ms) }
+                // -posecheck <pitch>: the table's pose from 8 frames spread over the clip, through the
+                // same IosTablePose path the live setup check takes, at that camera pitch (clips carry
+                // no gravity), then into every capture header as live captures carry it
+                let args = ProcessInfo.processInfo.arguments
+                if let i = args.firstIndex(of: "-posecheck"), i + 1 < args.count, let pitch = Double(args[i + 1]) {
+                    let kit = IosTablePose(keep: 8)
+                    VideoTest.spreadFrames(url, 8) { pb in
+                        CVPixelBufferLockBaseAddress(pb, .readOnly); defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+                        guard let y = CVPixelBufferGetBaseAddressOfPlane(pb, 0), let c = CVPixelBufferGetBaseAddressOfPlane(pb, 1) else { return }
+                        kit.add(width: Int32(CVPixelBufferGetWidth(pb)), height: Int32(CVPixelBufferGetHeight(pb)), y: y,
+                                yRowStride: Int32(CVPixelBufferGetBytesPerRowOfPlane(pb, 0)), cbcr: c, cRowStride: Int32(CVPixelBufferGetBytesPerRowOfPlane(pb, 1)))
+                    }
+                    let r = pitch * .pi / 180
+                    let look = kit.look(frames: kit.snapshot(), dx: 0, dy: cos(r), dz: -sin(r), hfovDeg: 70.72)
+                    log("pose", "\(kit.count) frames at pitch \(pitch): \(look.description())")
+                    let dn = KotlinDoubleArray(size: 3); dn.set(index: 1, value: cos(r)); dn.set(index: 2, value: -sin(r))
+                    let head = kit.header(down: dn, pose: look.pose, poseDown: dn)
+                    log("pose", "header fields \(head)")
+                    p.optics = { head }
+                }
                 if prime { p.prime(frames) }
                 p.start()
                 for (i, f) in frames.enumerated() {

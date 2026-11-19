@@ -115,6 +115,13 @@ final class Camera: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 
     func stop() { queue.async { [self] in if session.isRunning { session.stopRunning() } } }
 
+    /** the format's horizontal field of view, degrees (68 when unknown) */
+    func hfov() -> Double {
+        guard let d = device else { return 68 }
+        let f = Double(d.activeFormat.videoFieldOfView)
+        return (30...120).contains(f) ? f : 68
+    }
+
     /** the capture header's optics: the format's field of view and the exposure now (HighSpeedCamera.optics) */
     func optics() -> String {
         guard let d = device else { return Optics.shared.headerFields(hfov: nil, exposureNs: nil, detail: "") }

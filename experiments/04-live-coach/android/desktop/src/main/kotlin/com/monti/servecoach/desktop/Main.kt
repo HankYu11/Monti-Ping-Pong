@@ -33,50 +33,13 @@ fun main(args: Array<String>) {
         val (a, t) = com.monti.servecoach.core.SetupCheck.advise(b.copyOfRange(0, n), b.copyOfRange(n, 2 * n), b.copyOfRange(2 * n, 3 * n), w, h, args.getOrNull(4)?.toFloat() ?: 0f)
         println("${File(args[1]).name}: $a${t?.let { "  ($it)" } ?: ""}"); return
     }
-    // pose clip.mp4 pitchDeg [hfov]: TablePose on the clip's first frame at 320x180, the phone's
-    // gravity taken as level in roll and pitched down pitchDeg (clips carry no gravity)
-    if (args[0] == "pose") {
-        val clip = File(args[1]); val (W, H) = probe(clip); val pitch = Math.toRadians(args[2].toDouble())
-        val hfov = args.getOrNull(3)?.toDouble() ?: 70.72
-        val w = (System.getenv("POSEW") ?: "320").toInt(); val h = w * 9 / 16; val y = ByteArray(w * h); val u = ByteArray(w * h); val v = ByteArray(w * h)
-        var done = false
-        try { frames(clip, W, H) { f ->
-            if (done) return@frames
-            for (j in 0 until h) for (i in 0 until w) {
-                val xx = i * W / w; val yy = j * H / h; val p = j * w + i
-                y[p] = f.y[xx, yy].toByte(); u[p] = f.u[xx / 2, yy / 2].toByte(); v[p] = f.v[xx / 2, yy / 2].toByte()
-            }
-            done = true; throw EOFException()
-        } } catch (_: EOFException) {}
-        val down = doubleArrayOf(0.0, Math.cos(pitch), -Math.sin(pitch))
-        val t = com.monti.servecoach.core.SetupCheck.findTable(y, u, v, w, h)
-        println("${clip.name} pitch ${args[2]}: ${t ?: "no table"} | patch: ${com.monti.servecoach.core.TablePose.of(y, u, v, w, h, down, hfov) ?: "no pose"} | lines: ${com.monti.servecoach.core.TablePose.fromLines(y, u, v, w, h, down, hfov) ?: "no pose"}")
-        // POSEPPM=out.ppm: the picture with the table mask in red and its edge points in yellow
-        System.getenv("POSEPPM")?.let { out ->
-            val m = if (t == null) BooleanArray(w * h) else com.monti.servecoach.core.TablePose.tableMask(y, u, v, w, h, t)
-            val linePx = com.monti.servecoach.core.TablePose.debugPts.toHashSet()
-            println("lines: " + com.monti.servecoach.core.TablePose.debugLines.joinToString { "th ${it[0] * 0.5} rho ${it[1]} v ${it[2]}" })
-            val b = java.io.ByteArrayOutputStream(); b.write("P6 $w $h 255\n".toByteArray())
-            for (p in 0 until w * h) {
-                val yy = (y[p].toInt() and 0xff); val cb = (u[p].toInt() and 0xff) - 128; val cr = (v[p].toInt() and 0xff) - 128
-                var r = (yy + 1.402 * cr).toInt(); var g = (yy - 0.344 * cb - 0.714 * cr).toInt(); var bl = (yy + 1.772 * cb).toInt()
-                val x = p % w; val yr = p / w
-                val edge = m[p] && x in 1 until w - 1 && yr in 1 until h - 1 && !(m[p - 1] && m[p + 1] && m[p - w] && m[p + w])
-                if (System.getenv("POSELINES") != null) { if (linePx.contains(p)) { r = 255; g = 0; bl = 255 } }
-                else if (edge) { r = 255; g = 255; bl = 0 } else if (m[p]) { r = (r + 255) / 2; g /= 2; bl /= 2 }
-                for (L in com.monti.servecoach.core.TablePose.debugLines) { val th = Math.toRadians(L[0] * 0.5); if (Math.abs(x * Math.cos(th) + yr * Math.sin(th) - L[1]) < 0.8) { r = 0; g = 255; bl = 0 } }
-                b.write(r.coerceIn(0, 255)); b.write(g.coerceIn(0, 255)); b.write(bl.coerceIn(0, 255))
-            }
-            File(out).writeBytes(b.toByteArray())
-        }
-        return
-    }
-    // posescore sessionDir pitchDeg [hfov]: for every serveNN.mp4, the table pose from a person-free
-    // median picture of the clip (POSE lines; compared with the serves' measured flights elsewhere).
-    // POSEPNG=dir: the region drawn over each picture (scratch only: these clips show players)
+    // posescore dir pitchDeg [hfov]: TablePose on every serveNN.mp4 in dir, from a person-free median
+    // picture of the clip at 640x360. POSEPITCH=auto: the clips carry no gravity, so take the pitch
+    // that makes the table square. POSEPNG=dir: the region drawn over each picture (scratch only:
+    // these clips show players). Prints POSE lines with the plane geometry for later checks.
     if (args[0] == "posescore") {
-        val dir = File(args[1]); val pitch = Math.toRadians(args[2].toDouble()); val hfov = args.getOrNull(3)?.toDouble() ?: 70.72
-        val down = doubleArrayOf(0.0, Math.cos(pitch), -Math.sin(pitch))
+        val dir = File(args[1]); val hfov = args.getOrNull(3)?.toDouble() ?: 70.72
+        fun down(deg: Double) = Math.toRadians(deg).let { doubleArrayOf(0.0, Math.cos(it), -Math.sin(it)) }
         for (clip in dir.listFiles()!!.filter { it.name.matches(Regex("serve\\d+\\.mp4")) }.sortedBy { it.name }) {
             val (W, H) = probe(clip); val w = 640; val h = 360
             val frames = ArrayList<Array<ByteArray>>(); var i = 0
@@ -87,25 +50,26 @@ fun main(args: Array<String>) {
                     frames.add(arrayOf(y, u, v)) }
             }
             val m = com.monti.servecoach.core.TablePose.median(frames)
-            // POSEPITCH=auto: no gravity in the clip; take the pitch that makes the table square
-            var dn = down; var pitchUsed = args[2].toDouble()
-            if (System.getenv("POSEPITCH") == "auto") com.monti.servecoach.core.TablePose.tableRegion(m[0], m[1], m[2], w, h)?.let { reg ->
+            var pitch = args[2].toDouble()
+            val reg = com.monti.servecoach.core.TablePose.tableRegion(m[0], m[1], m[2], w, h)
+            if (System.getenv("POSEPITCH") == "auto" && reg != null) {
                 var best = 1e9
-                for (pd in 0..25) { val pr = Math.toRadians(pd.toDouble()); val d = doubleArrayOf(0.0, Math.cos(pr), -Math.sin(pr))
-                    val c = com.monti.servecoach.core.TablePose.cornerAngle(reg, w, h, d, hfov) ?: continue
-                    if (Math.abs(c - 90) < best) { best = Math.abs(c - 90); dn = d; pitchUsed = pd.toDouble() } }
+                for (pd in 0..25) { val c = com.monti.servecoach.core.TablePose.cornerAngle(reg, w, h, down(pd.toDouble()), hfov) ?: continue
+                    if (Math.abs(c - 90) < best) { best = Math.abs(c - 90); pitch = pd.toDouble() } }
             }
-            val pose = com.monti.servecoach.core.TablePose.ofRegion(m[0], m[1], m[2], w, h, dn, hfov)
-            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitchUsed | ${pose ?: "no pose"} | ${com.monti.servecoach.core.TablePose.debugCentre} | GEO ${if (pose != null) com.monti.servecoach.core.TablePose.lastGeometry else ""} down ${dn.joinToString(",")}")
+            val dn = down(pitch)
+            val pose = com.monti.servecoach.core.TablePose.ofPicture(m[0], m[1], m[2], w, h, dn, hfov)
+            val geo = pose?.let { "fwd ${it.fwd.joinToString(",")} right ${it.right.joinToString(",")} f ${(w / 2.0) / Math.tan(Math.toRadians(hfov) / 2)} long ${it.longRad} lo ${it.alongLo} hi ${it.alongHi}" } ?: ""
+            println("POSE ${clip.nameWithoutExtension} ${pose?.towardDeg ?: "nan"} ${pose?.sure ?: false} ${pose?.aspect ?: 0} | pitch $pitch | ${pose ?: "no pose"} | GEO $geo down ${dn.joinToString(",")}")
             System.getenv("POSEPNG")?.let { out ->
-                val reg = com.monti.servecoach.core.TablePose.lastRegion ?: BooleanArray(w * h)
+                val r = reg ?: BooleanArray(w * h)
                 val b = java.io.ByteArrayOutputStream(); b.write("P6 $w $h 255\n".toByteArray())
                 for (p in 0 until w * h) {
                     val yy = (m[0][p].toInt() and 0xff); val cb = (m[1][p].toInt() and 0xff) - 128; val cr = (m[2][p].toInt() and 0xff) - 128
                     var rr = (yy + 1.402 * cr).toInt(); var g = (yy - 0.344 * cb - 0.714 * cr).toInt(); var bl = (yy + 1.772 * cb).toInt()
                     val x = p % w; val yr = p / w
-                    val edge = reg[p] && x in 1 until w - 1 && yr in 1 until h - 1 && !(reg[p - 1] && reg[p + 1] && reg[p - w] && reg[p + w])
-                    if (com.monti.servecoach.core.TablePose.netPx.contains(p)) { rr = 0; g = 255; bl = 255 } else if (edge) { rr = 255; g = 255; bl = 0 } else if (reg[p]) { rr = (rr + 255) / 2; g /= 2; bl /= 2 }
+                    val edge = r[p] && x in 1 until w - 1 && yr in 1 until h - 1 && !(r[p - 1] && r[p + 1] && r[p - w] && r[p + w])
+                    if (edge) { rr = 255; g = 255; bl = 0 } else if (r[p]) { rr = (rr + 255) / 2; g /= 2; bl /= 2 }
                     b.write(rr.coerceIn(0, 255)); b.write(g.coerceIn(0, 255)); b.write(bl.coerceIn(0, 255))
                 }
                 File(out).mkdirs(); File(out, clip.nameWithoutExtension + ".ppm").writeBytes(b.toByteArray())

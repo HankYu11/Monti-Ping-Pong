@@ -135,4 +135,22 @@ object SetupCheck {
         }
         return a to t
     }
+
+    /**
+     * Serves fly more than this toward (or away from) the camera, by the table's axis: advise turning
+     * to face the side. 18 Nov's placement read 15-25 here (the ball-size estimate said 45); the
+     * number is a first guess until a session filmed side on and at an angle sets it.
+     */
+    const val FACE_SIDE_DEG = 30.0
+
+    /**
+     * The picture's advice, sharpened by the table's pose ([TablePose]): only a "looks good" can
+     * become "face the side", and only on a pose that is sure which way the table runs. Advice, not
+     * a gate: Start works either way.
+     */
+    fun withPose(a: Advice, pose: TablePose.Pose?): Advice {
+        if (a.kind != Kind.GOOD || pose == null || !pose.sure || pose.towardDeg <= FACE_SIDE_DEG) return a
+        return Advice(Kind.END_ON, "Turn the phone to face the side of the table: serves here would fly about " +
+            "${(pose.towardDeg / 5).roundToInt() * 5} degrees toward it, and they read best flying across the picture.")
+    }
 }

@@ -98,6 +98,126 @@ class TablePoseTest {
         assertTrue("pitched down: down has a -z part, got ${d2.toList()}", d2[2] < -0.3)
     }
 
+
+    // ------------------------------------------------------------------ drawn pictures (Y, U, V)
+    private val pw = 640; private val ph = 360
+
+    /**
+     * A club scene as Y, U, V planes from a camera at ([cx], [cy], [cz]), heading [yawDeg], pitched
+     * [pitchDeg] down: a grey wall and floor, a blue table with 2 cm white edges and a centre line,
+     * a soft glare patch on its top, the net standing on it, a second table 4 m behind. [curtain]:
+     * a blue curtain on the far wall instead of any table (the 15 Nov home sessions). [person]:
+     * a dark figure standing at X = [person] across the view (for the median).
+     */
+    private fun scene(cx: Double, cy: Double, cz: Double, yawDeg: Double, pitchDeg: Double,
+                      glare: Boolean = true, curtain: Boolean = false, person: Double? = null): Array<ByteArray> {
+        val yaw = Math.toRadians(yawDeg); val p = Math.toRadians(pitchDeg)
+        val fwd = doubleArrayOf(cos(p) * cos(yaw), cos(p) * sin(yaw), -sin(p))
+        val right = unit(cross(fwd, doubleArrayOf(0.0, 0.0, 1.0))); val dn = cross(fwd, right)
+        val f = (pw / 2.0) / tan(Math.toRadians(hfov) / 2)
+        val Y = ByteArray(pw * ph); val U = ByteArray(pw * ph); val V = ByteArray(pw * ph)
+        fun put(i: Int, y: Int, u: Int, v: Int) { Y[i] = y.toByte(); U[i] = u.toByte(); V[i] = v.toByte() }
+        for (yy in 0 until ph) for (x in 0 until pw) {
+            val i = yy * pw + x
+            val rx = (x + 0.5 - pw / 2.0) / f; val ry = (yy + 0.5 - ph / 2.0) / f
+            val ray = add(add(scale(right, rx), scale(dn, ry)), fwd)
+            put(i, 200, 128, 128)                                       // the wall
+            if (ray[2] < 0) put(i, 95, 120, 140)                        // the floor, brown-grey
+            if (curtain) {                                              // a blue curtain on the wall at Y = +3 m
+                if (ray[1] > 1e-6) { val t = (3.0 - cy) / ray[1]; val X = cx + t * ray[0]; val Z = cz + t * ray[2]
+                    if (abs(X) < 0.5 && Z in -0.6..1.3) put(i, 120, 165, 108) }
+                continue
+            }
+            // the net: the plane X = 0, |Y| < 0.9125, 0 < Z < 0.1525 (above the table top at Z = 0)
+            var tNet = Double.MAX_VALUE
+            if (abs(ray[0]) > 1e-9) { val t = -cx / ray[0]
+                if (t > 0) { val Yn = cy + t * ray[1]; val Zn = cz + t * ray[2]; if (abs(Yn) < 0.9125 && Zn in 0.0..0.1525) tNet = t } }
+            for ((oy, top) in listOf(4.0 to false, 0.0 to true)) {   // the far table first, the near one over it
+                if (ray[2] >= -1e-6) continue
+                val t = -cz / ray[2]
+                if (t > tNet) continue
+                val X = cx + t * ray[0]; val Yw = cy + t * ray[1] - oy
+                if (abs(X) <= 1.37 && abs(Yw) <= 0.7625) {
+                    var yv = 70; var uv = 165; var vv = 110                    // blue top
+                    if (glare && top) { val d = kotlin.math.hypot(X + 0.7, Yw); val k = kotlin.math.max(0.0, 1 - d / 0.6)
+                        yv += (90 * k).toInt(); uv -= (25 * k).toInt(); vv += (12 * k).toInt() }
+                    val edge = abs(X) > 1.37 - 0.02 || abs(Yw) > 0.7625 - 0.02 || abs(Yw) < 0.008
+                    if (edge) { yv = 225; uv = 128; vv = 128 }
+                    put(i, yv, uv, vv)
+                }
+            }
+            if (tNet < Double.MAX_VALUE) put(i, 35, 128, 128)            // the net, dark
+            person?.let { px ->                                           // a figure standing at X = px, Y = 0
+                val t = ((px - cx) * ray[0] + (0.0 - cy) * ray[1]) / (ray[0] * ray[0] + ray[1] * ray[1])
+                val Xp = cx + t * ray[0] - px; val Yp = cy + t * ray[1]; val Zp = cz + t * ray[2]
+                if (t > 0 && kotlin.math.hypot(Xp, Yp) < 0.25 && Zp in -0.8..0.9) put(i, 50, 140, 150)
+            }
+        }
+        return arrayOf(Y, U, V)
+    }
+    private fun down(pitchDeg: Double): DoubleArray { val p = Math.toRadians(pitchDeg); return doubleArrayOf(0.0, cos(p), -sin(p)) }
+
+    @Test fun `a drawn table from the side, glare and all`() {
+        val pic = scene(0.0, -2.2, 0.55, 90.0, 12.0)
+        val pose = TablePose.analyse(listOf(pic), pw, ph, down(12.0), hfov)
+        println("drawn side on: $pose"); assertNotNull(pose)
+        assertEquals(0.0, pose!!.towardDeg, 6.0); assertTrue("side on should be sure, got $pose", pose.sure)
+        assertEquals("square on its plane", 90.0, pose.cornerDeg, 4.0)
+    }
+
+    @Test fun `a drawn table past the net, as on 18 Nov, told by its centre line`() {
+        val pic = scene(0.9, -1.2, 0.35, 150.0, 10.0)
+        val pose = TablePose.analyse(listOf(pic), pw, ph, down(10.0), hfov)
+        println("drawn 18 Nov: $pose"); assertNotNull(pose)
+        assertEquals(60.0, pose!!.towardDeg, 7.0); assertTrue("should be sure, got $pose", pose.sure)
+    }
+
+    @Test fun `glare does not stop the region short of the table's edges`() {
+        val pic = scene(0.0, -2.2, 0.55, 90.0, 12.0)
+        val reg = TablePose.tableRegion(pic[0], pic[1], pic[2], pw, ph)!!
+        // the glare's centre, on the table at X = -0.7, Y = 0: find its pixel and check it is in the region
+        val yaw = Math.toRadians(90.0); val p = Math.toRadians(12.0)
+        val fwd = doubleArrayOf(cos(p) * cos(yaw), cos(p) * sin(yaw), -sin(p))
+        val right = unit(cross(fwd, doubleArrayOf(0.0, 0.0, 1.0))); val dn = cross(fwd, right)
+        val pt = doubleArrayOf(-0.7 - 0.0, 0.0 - (-2.2), 0.0 - 0.55)
+        val z = dot(pt, fwd); val f = (pw / 2.0) / tan(Math.toRadians(hfov) / 2)
+        val x = (pw / 2.0 + f * dot(pt, right) / z).toInt(); val y = (ph / 2.0 + f * dot(pt, dn) / z).toInt()
+        assertTrue("the glare's centre ($x, $y) should be table", reg[y * pw + x])
+    }
+
+    @Test fun `a blue curtain on the wall is not a table`() {
+        val pic = scene(0.0, 0.0, 0.0, 90.0, 0.0, curtain = true)
+        assertEquals(null, TablePose.analyse(listOf(pic), pw, ph, down(0.0), hfov))
+    }
+
+    @Test fun `a curtain reaching above the horizon is not a table, whatever its shape`() {
+        // the phone held level (pitch 0): the curtain's top half is above the horizon
+        val pic = scene(0.0, 0.0, 0.0, 90.0, 0.0, curtain = true)
+        val reg = TablePose.tableRegion(pic[0], pic[1], pic[2], pw, ph)
+        println("curtain region: ${reg?.count { it } ?: 0} px")
+        assertEquals(null, TablePose.ofPicture(pic[0], pic[1], pic[2], pw, ph, down(0.0), hfov))
+    }
+
+    @Test fun `the median takes out someone walking past`() {
+        val frames = listOf(-1.0, -0.3, 0.4, 9.0, 9.0).map { scene(0.0, -2.2, 0.55, 90.0, 12.0, person = if (it > 5) null else it) }
+        val m = TablePose.median(frames)
+        val clean = scene(0.0, -2.2, 0.55, 90.0, 12.0)
+        var diff = 0; for (i in m[0].indices) if (m[0][i] != clean[0][i]) diff++
+        // three of five frames have the figure, each in a different place: the median keeps none of it
+        assertTrue("$diff pixels differ from the empty scene", diff < 50)
+    }
+
+    @Test fun `only a sure pose turns looks good into face the side`() {
+        val good = SetupCheck.Advice(SetupCheck.Kind.GOOD, "Looks good.")
+        val pose18 = TablePose.analyse(listOf(scene(0.9, -1.2, 0.35, 150.0, 10.0)), pw, ph, down(10.0), hfov)
+        assertEquals(SetupCheck.Kind.END_ON, SetupCheck.withPose(good, pose18).kind)
+        val side = TablePose.analyse(listOf(scene(0.0, -2.2, 0.55, 90.0, 12.0)), pw, ph, down(12.0), hfov)
+        assertEquals(SetupCheck.Kind.GOOD, SetupCheck.withPose(good, side).kind)
+        assertEquals(SetupCheck.Kind.GOOD, SetupCheck.withPose(good, null).kind)
+        val dark = SetupCheck.Advice(SetupCheck.Kind.DARK, "dark")
+        assertEquals("other advice stands", SetupCheck.Kind.DARK, SetupCheck.withPose(dark, pose18).kind)
+    }
+
     private fun dot(a: DoubleArray, b: DoubleArray) = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
     private fun cross(a: DoubleArray, b: DoubleArray) = doubleArrayOf(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
     private fun add(a: DoubleArray, b: DoubleArray) = doubleArrayOf(a[0] + b[0], a[1] + b[1], a[2] + b[2])

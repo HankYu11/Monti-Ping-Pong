@@ -3,9 +3,10 @@
 #
 # - engine: plain Node, no browser, no npm install (test/synthpole.mjs: the light-flicker fix and
 #   the pole fit on synthetic tracks with a known spin)
-# - iOS (experiments/04-live-coach/ios): the Android core's 94 tests compiled for iOS and run on
-#   an iPhone simulator, then the app built and run on the simulator: its self-tests (-selftest)
-#   and the committed serve clips through the video test, checked against tools/ci-expect.json.
+# - iOS is not checked here: the job took 14-18 minutes, almost all of it Kotlin/Native compiling
+#   the shared core twice. Run experiments/04-live-coach/ios/tools/ci-sim.sh on a Mac instead (the
+#   app's self-tests and the committed clips against tools/ci-expect.json), and
+#   gradle iosSimulatorArm64Test in ios/shared for the core's tests on iOS.
 # - JVM: gradle :core:test :app:testReleaseUnitTest. The app's unit tests include Paparazzi's
 #   HudShot, which renders the HUD headless; it is run as a render (does every screen still draw?)
 #   and the images are uploaded, but not compared against the committed goldens: those predate the
@@ -76,42 +77,4 @@ jobs:
             experiments/04-live-coach/android/core/build/reports/tests/
             experiments/04-live-coach/android/app/build/reports/tests/
             experiments/04-live-coach/android/app/build/reports/paparazzi/
-          if-no-files-found: ignore
-
-  ios:
-    name: iOS (core on the simulator, app self-tests, video test)
-    runs-on: macos-15
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: experiments/04-live-coach/ios
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.14.3"
-      - name: Kotlin/Native toolchain cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('experiments/04-live-coach/ios/shared/build.gradle.kts') }}
-      - name: Android core tests on an iPhone simulator
-        working-directory: experiments/04-live-coach/ios/shared
-        run: gradle --no-daemon iosSimulatorArm64Test assembleServeCoachCoreReleaseXCFramework
-      - name: App self-tests and video test on the simulator
-        run: ./tools/ci-sim.sh
-        env:
-          LOGS: ${{ github.workspace }}/ios-logs
-      - name: Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-logs
-          path: |
-            ios-logs/
-            experiments/04-live-coach/ios/shared/build/reports/tests/
           if-no-files-found: ignore
